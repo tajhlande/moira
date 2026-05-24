@@ -1,0 +1,8 @@
+{
+  "name": "Default Dark",
+  "author": "MOiRA",
+  "version": "1.0.0",
+  "mode": "dark",
+  "css": ["style.css"],
+  "naiveui_overrides": {}
+}

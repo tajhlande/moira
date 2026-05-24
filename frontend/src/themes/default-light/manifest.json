@@ -1,0 +1,8 @@
+{
+  "name": "Default Light",
+  "author": "MOiRA",
+  "version": "1.0.0",
+  "mode": "light",
+  "css": ["style.css"],
+  "naiveui_overrides": {}
+}

@@ -1,0 +1,10 @@
+{
+  "name": "moira",
+  "private": true,
+  "scripts": {
+    "dev": "./run.sh dev",
+    "test": "./run.sh test",
+    "lint": "./run.sh lint",
+    "setup": "./run.sh setup"
+  }
+}

@@ -1,0 +1,88 @@
+# MOiRA Configuration Template
+#
+# Copy this file to moira-config.yaml and edit it.
+# Set MOIRA_CONFIG_FILE to point to your moira-config.yaml before starting the app.
+#
+# NOTE: This template will mutate across phases as new features are built.
+# If you edited your config in a prior phase, you may need to re-merge
+# against the updated template after upgrading.
+
+# --- Database ---
+# Override the database directory with MOIRA_DATA_DIR env var.
+# If set, the database file is $MOIRA_DATA_DIR/moira.db and sqlite_path below is ignored.
+
+database:
+  sqlite_path: ./data/moira.db
+  # lancedb_path: ./data/vectors  # Phase 2
+
+# --- Budget (consumed by Phase 2 workflow) ---
+
+budget:
+  default_limit: 50
+  cost_weights:
+    planning: 2
+    tool_discovery: 1
+    tool_selection: 2
+    research_execution: 5
+    compression: 1
+    draft_synthesis: 3
+    verification: 4
+    report_generation: 3  # budget-exempt: tracked for accounting, never gates execution
+
+# --- Inference ---
+
+inference:
+  endpoints:
+    - name: local
+      base_url: "http://localhost:8080/v1"
+      # API keys can be provided here or via MOIRA_API_KEY_{NAME} env vars.
+      # For example, MOIRA_API_KEY_LOCAL for the endpoint named "local".
+      # Env vars take precedence over this value.
+      api_key: ""
+  models:
+    intelligence:
+      endpoint: ""  # endpoint name (set via UI or here)
+      model: ""     # model ID (set via UI or here)
+    task:
+      endpoint: ""  # endpoint name (set via UI or here)
+      model: ""     # model ID (set via UI or here)
+
+# --- Embeddings (Phase 2) ---
+
+embedding:
+  provider: local  # local | openai_compatible
+  model: all-MiniLM-L6-v2
+  # For openai_compatible:
+  # endpoint: "http://localhost:8080/v1"
+  # model: text-embedding-small
+
+# --- Tools (Phase 2) ---
+
+tools: []
+  # - name: web_search
+  #   description: "Search the web for information"
+  #   type: rest
+  #   endpoint: "https://api.example.com/search"
+  #   method: POST
+  #   argument_schema:
+  #     type: object
+  #     properties:
+  #       query:
+  #         type: string
+  #     required: [query]
+  #   tags: [web, search]
+  #   reliability: high
+
+# --- MCP Servers (Phase 3) ---
+
+mcp_servers: []
+  # - name: filesystem
+  #   address: "http://localhost:3001"
+
+# --- Application ---
+
+app:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "http://localhost:5173"
