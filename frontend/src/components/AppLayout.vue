@@ -7,9 +7,11 @@ import {
 } from "naive-ui";
 import { Pencil, Check, Wand, Trash } from "@vicons/tabler";
 import { useChatStore } from "../stores/chat";
+import { useRouter } from "vue-router";
 import { ref, nextTick, onMounted, onUnmounted } from "vue";
 
 const store = useChatStore();
+const router = useRouter();
 
 const editingId = ref<string | null>(null);
 const editTitle = ref("");
@@ -96,7 +98,11 @@ async function handleGenerateTitle(conversationId: string) {
 
 async function handleDelete(conversationId: string) {
   if (!window.confirm("Delete this conversation?")) return;
+  const wasCurrent = store.currentConversationId === conversationId;
   await store.deleteConversation(conversationId);
+  if (wasCurrent) {
+    router.push({ name: "new-conversation" });
+  }
 }
 
 // A conversation has messages if it's the current one and messages exist,
@@ -119,7 +125,7 @@ function hasMessages(conversationId: string): boolean {
           <NButton
             type="primary"
             block
-            @click="store.startNewChat"
+            @click="router.push({ name: 'new-conversation' })"
             style="margin-bottom: 16px"
           >
             New Chat
@@ -164,7 +170,7 @@ function hasMessages(conversationId: string): boolean {
               <div
                 v-else
                 class="conv-row"
-                @click="store.selectConversation(conversation.id)"
+                @click="router.push({ name: 'conversation', params: { id: conversation.id } })"
               >
                 <span class="conv-title">{{ conversation.title }}</span>
                 <span class="conv-actions">

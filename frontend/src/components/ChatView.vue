@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from "vue";
+import { computed, ref, watch, onMounted, onUnmounted } from "vue";
 import {
   NInput,
   NButton,
@@ -13,8 +13,10 @@ import {
   CircleCheck,
   CircleX,
   Loader,
+  Copy,
 } from "@vicons/tabler";
 import { NIcon } from "naive-ui";
+import { useRoute, useRouter } from "vue-router";
 import { useChatStore } from "../stores/chat";
 import type { ExecutionStep } from "../api/client";
 import RunArtifacts from "./RunArtifacts.vue";
@@ -23,6 +25,8 @@ import MarkdownContent from "./MarkdownContent.vue";
 import "./workflow-artifacts.css";
 
 const store = useChatStore();
+const route = useRoute();
+const router = useRouter();
 const inputText = ref("");
 
 // Live clock: updates every second while a step is running
@@ -35,6 +39,38 @@ onMounted(() => {
 onUnmounted(() => {
   if (clockInterval) clearInterval(clockInterval);
 });
+
+// Sync store state with the current route.
+// - /conversation/new → startNewChat()
+// - /conversation/:id → selectConversation(id) only if not already loaded
+watch(
+  () => ({ name: route.name, id: route.params.id as string | undefined }),
+  (r) => {
+    if (r.name === "new-conversation") {
+      store.startNewChat();
+    } else if (r.id) {
+      // Skip re-fetching if we already have this conversation loaded.
+      // This happens when sendMessage creates a conversation and we
+      // push the route — no need to fetch from the API again.
+      if (store.currentConversationId !== r.id) {
+        store.selectConversation(r.id);
+      }
+    }
+  },
+  { immediate: true }
+);
+
+// When sendMessage creates a new conversation, update the URL.
+// Uses replace (not push) so the /conversation/new entry is overwritten
+// in history — pressing Back doesn't go to a "new" state.
+watch(
+  () => store.currentConversationId,
+  (id) => {
+    if (id && route.name === "new-conversation") {
+      router.replace({ name: "conversation", params: { id } });
+    }
+  }
+);
 
 function formatElapsed(ms: number | undefined): string {
   if (ms === undefined || ms === null) return "";
@@ -91,6 +127,14 @@ function isLiveRun(messageId: number | undefined): boolean {
   if (!messageId || messageId < 0) return true;
   return !store.runs.has(messageId);
 }
+
+const copiedMsgIndex = ref<number | null>(null);
+
+async function copyMessage(content: string, index: number) {
+  await navigator.clipboard.writeText(content);
+  copiedMsgIndex.value = index;
+  setTimeout(() => { copiedMsgIndex.value = null; }, 1500);
+}
 </script>
 
 <template>
@@ -110,6 +154,22 @@ function isLiveRun(messageId: number | undefined): boolean {
             {{ msg.role === "user" ? "You" : "MOiRA" }}
           </div>
           <MarkdownContent class="message-content" :content="msg.content" />
+          <div class="message-actions">
+            <NButton
+              quaternary
+              circle
+              size="tiny"
+              class="copy-btn"
+              @click="copyMessage(msg.content, i)"
+            >
+              <template #icon>
+                <NIcon size="14">
+                  <Copy v-if="copiedMsgIndex !== i" />
+                  <CircleCheck v-else />
+                </NIcon>
+              </template>
+            </NButton>
+          </div>
         </div>
 
         <!-- After a user message: render associated run artifacts -->
@@ -232,6 +292,7 @@ function isLiveRun(messageId: number | undefined): boolean {
   max-width: 80%;
   margin-left: 16px;
   margin-right: 16px;
+  position: relative;
 }
 
 .message.user {
@@ -252,6 +313,26 @@ function isLiveRun(messageId: number | undefined): boolean {
 
 .message-content {
   white-space: pre-wrap;
+}
+
+.message-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.message:hover .message-actions {
+  opacity: 1;
+}
+
+.copy-btn {
+  color: var(--n-text-color-3, #999);
+}
+
+.copy-btn:hover {
+  color: var(--n-primary-color, #18a058);
 }
 
 .input-area {

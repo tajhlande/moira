@@ -254,10 +254,13 @@ async def send_message_streaming(
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-        # Persist the assistant response
+        # Persist the assistant response.
+        # When a report exists, it's stored in both WorkflowRun.report and
+        # an assistant_report message (for prior-report context in multi-turn).
+        # An assistant role message is NOT needed — the ReportPanel renders
+        # the report from WorkflowRun. Only persist a fallback assistant
+        # message when no report was generated.
         if report:
-            report_text = report.get("answer", "")
-            await conversations.insert_message(conversation_id, "assistant", report_text)
             await conversations.insert_message(
                 conversation_id, "assistant_report", json.dumps(report)
             )

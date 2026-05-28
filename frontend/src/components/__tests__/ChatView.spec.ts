@@ -1,7 +1,23 @@
 import { createPinia, setActivePinia } from "pinia";
 import { mount } from "@vue/test-utils";
-import { describe, expect, it, vi, beforeAll } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { nextTick } from "vue";
+import { createRouter, createMemoryHistory, type Router } from "vue-router";
+
+let router: Router;
+
+beforeEach(async () => {
+  router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: "/conversation/new", name: "new-conversation", component: { template: "<div/>" } },
+      { path: "/conversation/:id", name: "conversation", component: { template: "<div/>" }, props: true },
+      { path: "/", redirect: "/conversation/new" },
+    ],
+  });
+  router.push("/conversation/new");
+  await router.isReady();
+});
 
 function createSSEResponse(events: { event: string; data: string }[]) {
   const lines = events
@@ -36,6 +52,7 @@ vi.mock("../../api/client", () => ({
       title: "New Conversation",
       created_at: new Date().toISOString(),
       messages: [],
+      runs: [],
     })),
     getModels: vi.fn(async () => ({
       models: [],
@@ -100,9 +117,8 @@ describe("ChatView", () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const wrapper = mount(ChatView, {
-      global: { plugins: [pinia] },
+      global: { plugins: [pinia, router] },
     });
-
     const store = useChatStore();
     await store.sendMessage("Hello from test");
     await flushUi();
@@ -302,9 +318,8 @@ describe("ChatView", () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const wrapper = mount(ChatView, {
-      global: { plugins: [pinia] },
+      global: { plugins: [pinia, router] },
     });
-
     const store = useChatStore();
     await store.sendMessage("render test");
     await flushUi();
@@ -365,9 +380,8 @@ describe("ChatView", () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const wrapper = mount(ChatView, {
-      global: { plugins: [pinia] },
+      global: { plugins: [pinia, router] },
     });
-
     const store = useChatStore();
     await store.sendMessage("persistence test");
 

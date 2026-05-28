@@ -446,8 +446,9 @@ class TestSSEStreamingEndpoint:
         logger.info("Budget progression: %s", budgets)
 
     async def test_assistant_message_persisted_after_run(self, app_with_fake_inference):
-        """Integration test: after a successful graph run, the assistant's
-        answer and the full report are persisted as messages in the conversation."""
+        """Integration test: after a successful graph run, the full report
+        is persisted as an assistant_report message and the workflow run
+        contains the report data."""
         client, transport = app_with_fake_inference
         logger.info("Integration test: message persistence after graph run")
 
@@ -459,16 +460,29 @@ class TestSSEStreamingEndpoint:
             json={"content": "Persistence test"},
         )
 
-        # Fetch the conversation and check messages
+        # Fetch the conversation and check persisted data
         resp = await client.get(f"/api/conversations/{conversation_id}")
         assert resp.status_code == 200
-        messages = resp.json()["messages"]
+        data = resp.json()
 
-        roles = [m["role"] for m in messages]
+        # The API filters assistant_report from messages, so only user
+        # role should appear (no duplicate assistant bubble).
+        roles = [m["role"] for m in data["messages"]]
         assert "user" in roles
-        # The streaming endpoint persists assistant + assistant_report messages
-        assert "assistant" in roles, f"Expected assistant message, got roles: {roles}"
-        logger.info("Conversation has %d messages with roles: %s", len(messages), roles)
+        assert "assistant" not in roles, (
+            "assistant message should not be persisted when a report exists"
+        )
+
+        # The report is available via workflow_runs
+        assert len(data["runs"]) == 1
+        assert data["runs"][0]["report"] is not None
+        assert data["runs"][0]["report"]["answer"]
+        logger.info(
+            "Conversation has %d messages (roles: %s) and %d runs with report",
+            len(data["messages"]),
+            roles,
+            len(data["runs"]),
+        )
 
     async def test_conversation_not_found_returns_404(self, app_with_fake_inference):
         """Integration test: sending a message to a non-existent conversation
