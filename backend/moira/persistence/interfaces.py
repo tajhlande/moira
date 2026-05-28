@@ -77,6 +77,9 @@ class ConversationRepository(ABC):
     @abstractmethod
     async def get_workflow_runs(self, conversation_id: str) -> list[WorkflowRun]: ...
 
+    @abstractmethod
+    async def delete_conversation(self, conversation_id: str) -> bool: ...
+
 
 class ModelPreferencesRepository(ABC):
     @abstractmethod

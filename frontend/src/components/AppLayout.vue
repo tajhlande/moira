@@ -4,14 +4,11 @@ import {
   NLayoutSider,
   NLayoutContent,
   NButton,
-  NList,
-  NListItem,
-  NText,
   NScrollbar,
   NIcon,
   NInput,
 } from "naive-ui";
-import { Pencil, Check, Wand } from "@vicons/tabler";
+import { Pencil, Check, Wand, Trash } from "@vicons/tabler";
 import { useChatStore } from "../stores/chat";
 import { ref, nextTick, onMounted } from "vue";
 
@@ -64,6 +61,11 @@ async function handleGenerateTitle(conversationId: string) {
   }
 }
 
+async function handleDelete(conversationId: string) {
+  if (!window.confirm("Delete this conversation?")) return;
+  await store.deleteConversation(conversationId);
+}
+
 // A conversation has messages if it's the current one and messages exist,
 // or we optimistically assume past conversations have messages.
 function hasMessages(conversationId: string): boolean {
@@ -92,30 +94,21 @@ function hasMessages(conversationId: string): boolean {
       >
         New Chat
       </NButton>
-      <NList clickable>
-        <NListItem
+      <div class="conv-list">
+        <div
           v-if="store.isNewChat"
-          class="active"
-          style="cursor: pointer; padding: 8px 12px"
+          class="conv-item active"
         >
-          <NText depth="3">New Chat</NText>
-        </NListItem>
-        <NListItem
+          <span class="conv-title-fallback">New Chat</span>
+        </div>
+        <div
           v-for="conversation in store.conversations"
           :key="conversation.id"
-          :class="{
-            active: conversation.id === store.currentConversationId,
-          }"
-          style="cursor: pointer; padding: 8px 12px"
+          :class="['conv-item', { active: conversation.id === store.currentConversationId }]"
         >
           <div
             v-if="editingId === conversation.id"
-            style="
-              display: flex;
-              align-items: center;
-              gap: 4px;
-              width: 100%;
-            "
+            class="conv-row"
             @click.stop
           >
             <NInput
@@ -132,7 +125,6 @@ function hasMessages(conversationId: string): boolean {
               :loading="saving"
               @click.stop="finishEdit(conversation.id)"
               class="icon-btn"
-              style="flex-shrink: 0"
             >
               <template #icon>
                 <NIcon size="22"><Check /></NIcon>
@@ -141,51 +133,50 @@ function hasMessages(conversationId: string): boolean {
           </div>
           <div
             v-else
-            style="
-              display: flex;
-              align-items: center;
-              gap: 4px;
-              width: 100%;
-            "
+            class="conv-row"
             @click="store.selectConversation(conversation.id)"
           >
-            <NText
-              style="
-                flex: 1;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-              "
-            >
-              {{ conversation.title }}
-            </NText>
-            <NButton
-              quaternary
-              circle
-              size="small"
-              @click.stop="startEdit(conversation)"
-              class="icon-btn"
-            >
-              <template #icon>
-                <NIcon size="22"><Pencil /></NIcon>
-              </template>
-            </NButton>
-            <NButton
-              quaternary
-              circle
-              size="small"
-              :disabled="!hasMessages(conversation.id)"
-              :loading="generatingTitleId === conversation.id"
-              @click.stop="handleGenerateTitle(conversation.id)"
-              class="icon-btn"
-            >
-              <template #icon>
-                <NIcon size="18"><Wand /></NIcon>
-              </template>
-            </NButton>
+            <span class="conv-title">{{ conversation.title }}</span>
+            <span class="conv-actions">
+              <NButton
+                quaternary
+                circle
+                size="small"
+                @click.stop="startEdit(conversation)"
+                class="icon-btn"
+              >
+                <template #icon>
+                  <NIcon size="18"><Pencil /></NIcon>
+                </template>
+              </NButton>
+              <NButton
+                quaternary
+                circle
+                size="small"
+                :disabled="!hasMessages(conversation.id)"
+                :loading="generatingTitleId === conversation.id"
+                @click.stop="handleGenerateTitle(conversation.id)"
+                class="icon-btn"
+              >
+                <template #icon>
+                  <NIcon size="18"><Wand /></NIcon>
+                </template>
+              </NButton>
+              <NButton
+                quaternary
+                circle
+                size="small"
+                @click.stop="handleDelete(conversation.id)"
+                class="icon-btn icon-btn-delete"
+              >
+                <template #icon>
+                  <NIcon size="18"><Trash /></NIcon>
+                </template>
+              </NButton>
+            </span>
           </div>
-        </NListItem>
-      </NList>
+        </div>
+      </div>
     </NLayoutSider>
     <NLayoutContent
       content-style="display: flex; flex-direction: column; height: 100vh;"
@@ -205,18 +196,61 @@ function hasMessages(conversationId: string): boolean {
   opacity: 0.85;
 }
 
-.active {
-  background-color: var(--moira-border, #e0e0e0);
+.conv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.conv-item {
+  cursor: pointer;
+  padding: 8px 12px;
   border-radius: 4px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.conv-item.active {
+  background-color: var(--moira-border, #e0e0e0);
+}
+
+.conv-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.conv-title {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  min-width: 0;
+  margin-right: 4px;
+}
+
+.conv-title-fallback {
+  color: var(--n-text-color-3, #999);
+}
+
+.conv-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  flex-shrink: 0;
 }
 
 .icon-btn {
-  flex-shrink: 0;
   color: var(--n-primary-color);
   opacity: 0.65;
 }
 
 .icon-btn:hover {
   opacity: 1;
+}
+
+.icon-btn-delete:hover {
+  color: var(--n-error-color, #d03050);
 }
 </style>

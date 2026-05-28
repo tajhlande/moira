@@ -121,6 +121,11 @@ export const api = {
       method: "POST",
     }),
 
+  deleteConversation: (id: string) =>
+    request<{ status: string }>(`/conversations/${id}`, {
+      method: "DELETE",
+    }),
+
   getModels: () => request<ModelsResponse>("/models"),
 
   setModels: (assignments: ModelAssignments) =>

@@ -107,11 +107,20 @@ export const useChatStore = defineStore("chat", () => {
     });
 
     try {
+      let createdNewConversation = false;
       if (!currentConversationId.value) {
         const conversation = await api.createConversation();
         currentConversationId.value = conversation.id;
         isNewChat.value = false;
         conversations.value.unshift(conversation);
+        createdNewConversation = true;
+      }
+
+      // Fire title generation immediately on first message — don't wait
+      // for the workflow to complete. The task model generates a title
+      // from the user's message content. Only runs for new conversations.
+      if (createdNewConversation) {
+        generateTitle(currentConversationId.value);
       }
 
       const responseText = await streamMessage(
@@ -129,16 +138,6 @@ export const useChatStore = defineStore("chat", () => {
           content: responseText,
           created_at: new Date().toISOString(),
         });
-      }
-
-      // Auto-rename if the conversation still has the default title.
-      // Fire-and-forget — don't block the UI on title generation.
-      const convId = currentConversationId.value;
-      if (convId) {
-        const conv = conversations.value.find((c) => c.id === convId);
-        if (conv && conv.title === "New Conversation") {
-          generateTitle(convId);
-        }
       }
     } catch (e: any) {
       error.value = e.message;
@@ -344,6 +343,21 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
+  async function deleteConversation(id: string) {
+    try {
+      await api.deleteConversation(id);
+      conversations.value = conversations.value.filter((c) => c.id !== id);
+      if (currentConversationId.value === id) {
+        currentConversationId.value = null;
+        messages.value = [];
+        runs.value.clear();
+        resetWorkflowState();
+      }
+    } catch (e: any) {
+      error.value = e.message;
+    }
+  }
+
   function getRunForMessage(messageId: number | undefined): WorkflowRunInfo | null {
     if (!messageId) return null;
     return runs.value.get(messageId) || null;
@@ -374,6 +388,7 @@ export const useChatStore = defineStore("chat", () => {
     sendMessage,
     renameConversation,
     generateTitle,
+    deleteConversation,
     getRunForMessage,
   };
 });

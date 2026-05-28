@@ -1,7 +1,10 @@
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
 from moira.config import (
+    DatabaseConfig,
     InferenceConfig,
     InferenceEndpointConfig,
     InferenceModelsConfig,
@@ -72,6 +75,12 @@ class FakeConversationRepo(ConversationRepository):
     async def get_workflow_runs(self, conversation_id: str) -> list[WorkflowRun]:
         return []
 
+    async def delete_conversation(self, conversation_id: str) -> bool:
+        if conversation_id in self._conversations:
+            del self._conversations[conversation_id]
+            return True
+        return False
+
 
 class FakePrefsRepo(ModelPreferencesRepository):
     def __init__(self):
@@ -90,8 +99,12 @@ class FakePrefsRepo(ModelPreferencesRepository):
         self._prefs = preferences
 
 
-def _config():
+def _config(tmp_dir: str):
     return MoiraConfig(
+        database=DatabaseConfig(
+            sqlite_path=str(Path(tmp_dir) / "test.db"),
+            lancedb_path=str(Path(tmp_dir) / "vectors"),
+        ),
         inference=InferenceConfig(
             providers=[InferenceEndpointConfig(name="test", base_url="http://localhost:9999/v1")],
             models=InferenceModelsConfig(
@@ -100,13 +113,13 @@ def _config():
                 task_endpoint="",
                 task_model="",
             ),
-        )
+        ),
     )
 
 
 @pytest.fixture
-async def app_client():
-    config = _config()
+async def app_client(tmp_path):
+    config = _config(str(tmp_path))
     conversation_repo = FakeConversationRepo()
     prefs_repo = FakePrefsRepo()
     await init_services(config, conversation_repo=conversation_repo, prefs_repo=prefs_repo)
@@ -180,6 +193,23 @@ def test_update_conversation_empty_title(app_client):
 
     resp = app_client.patch(f"/api/conversations/{conversation_id}", json={"title": ""})
     assert resp.status_code == 400
+
+
+def test_delete_conversation(app_client):
+    create_resp = app_client.post("/api/conversations")
+    conversation_id = create_resp.json()["id"]
+
+    delete_resp = app_client.delete(f"/api/conversations/{conversation_id}")
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["status"] == "deleted"
+
+    get_resp = app_client.get(f"/api/conversations/{conversation_id}")
+    assert get_resp.status_code == 404
+
+
+def test_delete_conversation_not_found(app_client):
+    resp = app_client.delete("/api/conversations/nonexistent")
+    assert resp.status_code == 404
 
 
 def test_models_endpoint(app_client):

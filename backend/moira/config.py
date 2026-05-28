@@ -125,27 +125,31 @@ def load_config() -> MoiraConfig:
     return MoiraConfig.model_validate(raw)
 
 
+def _repo_root() -> str:
+    """Return the absolute path to the MOiRA project root.
+
+    Walks up from this file (backend/moira/config.py) to find the directory
+    containing the 'backend/' folder. This keeps data paths stable regardless
+    of the process working directory.
+    """
+    return str(Path(__file__).resolve().parent.parent.parent)
+
+
 def resolve_data_dir(config: MoiraConfig) -> str:
-    """Return the base directory for all persistent data.
+    """Return the absolute base directory for all persistent data.
 
-    MOIRA_DATA_DIR env var takes precedence over config file paths.
-    This ensures SQLite, LanceDB, and any future stores all land in
-    the same location regardless of how the app is started.
-
-    Falls back to the parent directory of the config's sqlite_path,
-    which keeps the default working when running outside run.sh.
+    MOIRA_DATA_DIR env var takes precedence. Otherwise falls back to
+    <repo_root>/data/ so that running from any CWD (backend/, repo root,
+    etc.) always produces the same path.
     """
     logger.debug("Resolving data directory")
     data_dir = os.environ.get("MOIRA_DATA_DIR")
     if data_dir:
         logger.info("Using MOIRA_DATA_DIR=%s", data_dir)
         return data_dir
-    # Derive from the config's sqlite_path so that running without
-    # MOIRA_DATA_DIR (e.g. direct uvicorn from backend/) still works.
-    # sqlite_path "./data/moira.db" -> data dir "./data"
-    config_dir = str(Path(config.database.sqlite_path).parent)
-    logger.info("Using derived data_dir=%s from sqlite_path", config_dir)
-    return config_dir
+    derived = str(Path(_repo_root()) / "data")
+    logger.info("Using derived data_dir=%s (repo root)", derived)
+    return derived
 
 
 def resolve_db_path(config: MoiraConfig) -> str:

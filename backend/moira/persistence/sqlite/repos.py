@@ -196,6 +196,26 @@ class SqliteConversationRepository(ConversationRepository):
         finally:
             conn.close()
 
+    async def delete_conversation(self, conversation_id: str) -> bool:
+        logger.debug("Deleting conversation %s and all dependent records", conversation_id)
+        conn = self._connect()
+        try:
+            # Delete dependents first — foreign keys lack ON DELETE CASCADE.
+            conn.execute(
+                "DELETE FROM workflow_runs WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            conn.execute(
+                "DELETE FROM messages WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            cursor = conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+            deleted = cursor.rowcount > 0
+            conn.commit()
+            return deleted
+        finally:
+            conn.close()
+
 
 class SqliteModelPreferencesRepository(ModelPreferencesRepository):
     def __init__(self, db_path: str):

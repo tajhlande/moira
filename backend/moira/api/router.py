@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 TITLE_GENERATION_SYSTEM = (
     "You generate short conversation titles. "
-    "Given the user's message, produce a concise 3-6 word title that captures "
+    "Given the user's message, produce a concise title that captures "
     "the topic. Output ONLY the title text with no quotes, no punctuation at "
     "the end, and no explanation."
 )
@@ -152,6 +152,18 @@ async def list_models():
     }
 
 
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    conversations: ConversationRepository = Depends(_conversations),
+):
+    deleted = await conversations.delete_conversation(conversation_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    logger.info("Deleted conversation %s", conversation_id)
+    return {"status": "deleted"}
+
+
 @router.put("/models", response_model=dict)
 async def set_model_assignments(body: dict[str, Any]):
     intel = body.get("intelligence", {})
@@ -212,6 +224,7 @@ async def generate_conversation_title(
 
     updated = await conversations.update_conversation(conversation_id, title)
     logger.info("Generated title for conversation %s: '%s'", conversation_id, title)
+    assert updated
     return {
         "id": updated.id,
         "title": updated.title,
