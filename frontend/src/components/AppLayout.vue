@@ -1,8 +1,5 @@
 <script setup lang="ts">
 import {
-  NLayout,
-  NLayoutSider,
-  NLayoutContent,
   NButton,
   NScrollbar,
   NIcon,
@@ -10,7 +7,7 @@ import {
 } from "naive-ui";
 import { Pencil, Check, Wand, Trash } from "@vicons/tabler";
 import { useChatStore } from "../stores/chat";
-import { ref, nextTick, onMounted } from "vue";
+import { ref, nextTick, onMounted, onUnmounted } from "vue";
 
 const store = useChatStore();
 
@@ -20,6 +17,42 @@ const editInput = ref<InstanceType<typeof NInput> | null>(null);
 
 const saving = ref(false);
 const generatingTitleId = ref<string | null>(null);
+
+const siderWidth = ref(260);
+const SIDER_MIN = 180;
+const SIDER_MAX = 480;
+let dragging = false;
+let dragStartX = 0;
+let dragStartWidth = 0;
+
+function onDragStart(e: MouseEvent) {
+  dragging = true;
+  dragStartX = e.clientX;
+  dragStartWidth = siderWidth.value;
+  document.addEventListener("mousemove", onDragMove);
+  document.addEventListener("mouseup", onDragEnd);
+  document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
+}
+
+function onDragMove(e: MouseEvent) {
+  if (!dragging) return;
+  const delta = e.clientX - dragStartX;
+  siderWidth.value = Math.min(SIDER_MAX, Math.max(SIDER_MIN, dragStartWidth + delta));
+}
+
+function onDragEnd() {
+  dragging = false;
+  document.removeEventListener("mousemove", onDragMove);
+  document.removeEventListener("mouseup", onDragEnd);
+  document.body.style.cursor = "";
+  document.body.style.userSelect = "";
+}
+
+onUnmounted(() => {
+  document.removeEventListener("mousemove", onDragMove);
+  document.removeEventListener("mouseup", onDragEnd);
+});
 
 onMounted(() => {
   store.fetchConversations();
@@ -78,115 +111,141 @@ function hasMessages(conversationId: string): boolean {
 </script>
 
 <template>
-  <NLayout has-sider style="height: 100vh">
-    <NLayoutSider
-      bordered
-      width="260"
-      :native-scrollbar="false"
-      content-style="padding: 16px;"
-    >
-      <div class="sidebar-title">MOiRA</div>
-      <NButton
-        type="primary"
-        block
-        @click="store.startNewChat"
-        style="margin-bottom: 16px"
-      >
-        New Chat
-      </NButton>
-      <div class="conv-list">
-        <div
-          v-if="store.isNewChat"
-          class="conv-item active"
-        >
-          <span class="conv-title-fallback">New Chat</span>
-        </div>
-        <div
-          v-for="conversation in store.conversations"
-          :key="conversation.id"
-          :class="['conv-item', { active: conversation.id === store.currentConversationId }]"
-        >
-          <div
-            v-if="editingId === conversation.id"
-            class="conv-row"
-            @click.stop
+  <div style="display: flex; height: 100vh">
+    <div class="sider-panel" :style="{ width: siderWidth + 'px' }">
+      <NScrollbar>
+        <div style="padding: 16px">
+          <div class="sidebar-title">MOiRA</div>
+          <NButton
+            type="primary"
+            block
+            @click="store.startNewChat"
+            style="margin-bottom: 16px"
           >
-            <NInput
-              ref="editInput"
-              v-model:value="editTitle"
-              size="small"
-              @keydown.enter.prevent="finishEdit(conversation.id)"
-              @keydown.escape="cancelEdit"
-            />
-            <NButton
-              size="small"
-              quaternary
-              circle
-              :loading="saving"
-              @click.stop="finishEdit(conversation.id)"
-              class="icon-btn"
+            New Chat
+          </NButton>
+          <div class="conv-list">
+            <div
+              v-if="store.isNewChat"
+              class="conv-item active"
             >
-              <template #icon>
-                <NIcon size="22"><Check /></NIcon>
-              </template>
-            </NButton>
-          </div>
-          <div
-            v-else
-            class="conv-row"
-            @click="store.selectConversation(conversation.id)"
-          >
-            <span class="conv-title">{{ conversation.title }}</span>
-            <span class="conv-actions">
-              <NButton
-                quaternary
-                circle
-                size="small"
-                @click.stop="startEdit(conversation)"
-                class="icon-btn"
+              <span class="conv-title-fallback">New Chat</span>
+            </div>
+            <div
+              v-for="conversation in store.conversations"
+              :key="conversation.id"
+              :class="['conv-item', { active: conversation.id === store.currentConversationId }]"
+            >
+              <div
+                v-if="editingId === conversation.id"
+                class="conv-row"
+                @click.stop
               >
-                <template #icon>
-                  <NIcon size="18"><Pencil /></NIcon>
-                </template>
-              </NButton>
-              <NButton
-                quaternary
-                circle
-                size="small"
-                :disabled="!hasMessages(conversation.id)"
-                :loading="generatingTitleId === conversation.id"
-                @click.stop="handleGenerateTitle(conversation.id)"
-                class="icon-btn"
+                <NInput
+                  ref="editInput"
+                  v-model:value="editTitle"
+                  size="small"
+                  @keydown.enter.prevent="finishEdit(conversation.id)"
+                  @keydown.escape="cancelEdit"
+                />
+                <NButton
+                  size="small"
+                  quaternary
+                  circle
+                  :loading="saving"
+                  @click.stop="finishEdit(conversation.id)"
+                  class="icon-btn"
+                >
+                  <template #icon>
+                    <NIcon size="22"><Check /></NIcon>
+                  </template>
+                </NButton>
+              </div>
+              <div
+                v-else
+                class="conv-row"
+                @click="store.selectConversation(conversation.id)"
               >
-                <template #icon>
-                  <NIcon size="18"><Wand /></NIcon>
-                </template>
-              </NButton>
-              <NButton
-                quaternary
-                circle
-                size="small"
-                @click.stop="handleDelete(conversation.id)"
-                class="icon-btn icon-btn-delete"
-              >
-                <template #icon>
-                  <NIcon size="18"><Trash /></NIcon>
-                </template>
-              </NButton>
-            </span>
+                <span class="conv-title">{{ conversation.title }}</span>
+                <span class="conv-actions">
+                  <NButton
+                    quaternary
+                    circle
+                    size="small"
+                    @click.stop="startEdit(conversation)"
+                    class="icon-btn"
+                  >
+                    <template #icon>
+                      <NIcon size="18"><Pencil /></NIcon>
+                    </template>
+                  </NButton>
+                  <NButton
+                    quaternary
+                    circle
+                    size="small"
+                    :disabled="!hasMessages(conversation.id)"
+                    :loading="generatingTitleId === conversation.id"
+                    @click.stop="handleGenerateTitle(conversation.id)"
+                    class="icon-btn"
+                  >
+                    <template #icon>
+                      <NIcon size="18"><Wand /></NIcon>
+                    </template>
+                  </NButton>
+                  <NButton
+                    quaternary
+                    circle
+                    size="small"
+                    @click.stop="handleDelete(conversation.id)"
+                    class="icon-btn icon-btn-delete"
+                  >
+                    <template #icon>
+                      <NIcon size="18"><Trash /></NIcon>
+                    </template>
+                  </NButton>
+                </span>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-    </NLayoutSider>
-    <NLayoutContent
-      content-style="display: flex; flex-direction: column; height: 100vh;"
-    >
+      </NScrollbar>
+    </div>
+    <div class="sider-handle" @mousedown="onDragStart"></div>
+    <div class="main-content">
       <slot />
-    </NLayoutContent>
-  </NLayout>
+    </div>
+  </div>
 </template>
 
 <style scoped>
+.sider-panel {
+  flex-shrink: 0;
+  height: 100%;
+  border-right: 1px solid var(--n-border-color, #e0e0e0);
+  overflow: hidden;
+}
+
+.sider-handle {
+  flex-shrink: 0;
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s;
+  z-index: 10;
+}
+
+.sider-handle:hover {
+  background: var(--n-primary-color, #18a058);
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
 .sidebar-title {
   font-size: 1.4em;
   font-weight: 700;
