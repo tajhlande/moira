@@ -173,4 +173,224 @@ describe("ChatView", () => {
     expect(run!.report!.answer).toBe("Done");
     expect(run!.total_elapsed_ms).toBe(5000);
   });
+
+  it("shows steps when run_complete arrives before final node_end (backend event order)", async () => {
+    // The backend report_generation node emits run_complete BEFORE node_end.
+    // This test reproduces that exact event ordering to verify steps don't disappear.
+    mockFetch.mockResolvedValueOnce(
+      createSSEResponse([
+        {
+          event: "node_start",
+          data: JSON.stringify({
+            node: "planning",
+            started_at: new Date().toISOString(),
+          }),
+        },
+        {
+          event: "node_end",
+          data: JSON.stringify({
+            node: "planning",
+            budget_remaining: 48,
+            elapsed_ms: 1000,
+          }),
+        },
+        {
+          event: "node_start",
+          data: JSON.stringify({
+            node: "report_generation",
+            started_at: new Date().toISOString(),
+          }),
+        },
+        // run_complete fires BEFORE report_generation's node_end
+        {
+          event: "run_complete",
+          data: JSON.stringify({
+            report: {
+              answer: "Final answer",
+              citations: [],
+              support: [],
+              critiques: [],
+              unverified_claims: [],
+              budget_consumed: 10,
+            },
+            total_elapsed_ms: 8000,
+          }),
+        },
+        // node_end for report_generation arrives AFTER run_complete
+        {
+          event: "node_end",
+          data: JSON.stringify({
+            node: "report_generation",
+            budget_remaining: 40,
+            elapsed_ms: 2000,
+          }),
+        },
+      ])
+    );
+
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const store = useChatStore();
+
+    await store.sendMessage("test ordering");
+    await flushUi();
+
+    // Both steps must be in the finalized run
+    const userMsg = store.messages.find((m) => m.role === "user");
+    const run = store.getRunForMessage(userMsg!.id);
+    expect(run).not.toBeNull();
+    expect(run!.execution_steps.length).toBe(2);
+    expect(run!.execution_steps[0].label).toBe("Planning");
+    expect(run!.execution_steps[1].label).toBe("Generating Report");
+    expect(run!.report).not.toBeNull();
+    expect(run!.report!.answer).toBe("Final answer");
+  });
+
+  it("renders steps via RunArtifacts after finalizeRun, not just live state", async () => {
+    // This test verifies the rendered DOM contains steps after the workflow completes.
+    // The bug symptom: steps disappear when finalizeRun switches rendering from
+    // live template to RunArtifacts component.
+    mockFetch.mockResolvedValueOnce(
+      createSSEResponse([
+        {
+          event: "node_start",
+          data: JSON.stringify({
+            node: "planning",
+            started_at: new Date().toISOString(),
+          }),
+        },
+        {
+          event: "node_end",
+          data: JSON.stringify({
+            node: "planning",
+            budget_remaining: 48,
+            elapsed_ms: 1000,
+          }),
+        },
+        {
+          event: "node_start",
+          data: JSON.stringify({
+            node: "report_generation",
+            started_at: new Date().toISOString(),
+          }),
+        },
+        {
+          event: "run_complete",
+          data: JSON.stringify({
+            report: {
+              answer: "Rendered answer",
+              citations: [],
+              support: [],
+              critiques: [],
+              unverified_claims: [],
+              budget_consumed: 10,
+            },
+            total_elapsed_ms: 8000,
+          }),
+        },
+        {
+          event: "node_end",
+          data: JSON.stringify({
+            node: "report_generation",
+            budget_remaining: 40,
+            elapsed_ms: 2000,
+          }),
+        },
+      ])
+    );
+
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const wrapper = mount(ChatView, {
+      global: { plugins: [pinia] },
+    });
+
+    const store = useChatStore();
+    await store.sendMessage("render test");
+    await flushUi();
+
+    // Verify the run was finalized and stored
+    const userMsg = store.messages.find((m) => m.role === "user");
+    const run = store.getRunForMessage(userMsg!.id);
+    expect(run).not.toBeNull();
+    expect(run!.execution_steps.length).toBe(2);
+
+    const text = wrapper.text();
+    // Steps must be visible in the rendered output
+    expect(text).toContain("Planning");
+    expect(text).toContain("Generating Report");
+    // Report answer must be visible
+    expect(text).toContain("Rendered answer");
+    // Total elapsed must be visible
+    expect(text).toContain("Total:");
+  });
+
+  it("steps persist in DOM after assistant message is added", async () => {
+    // After streamMessage returns, sendMessage pushes an assistant message.
+    // This changes the messages array and re-renders. Steps must survive this.
+    mockFetch.mockResolvedValueOnce(
+      createSSEResponse([
+        {
+          event: "node_start",
+          data: JSON.stringify({
+            node: "planning",
+            started_at: new Date().toISOString(),
+          }),
+        },
+        {
+          event: "node_end",
+          data: JSON.stringify({
+            node: "planning",
+            budget_remaining: 48,
+            elapsed_ms: 1000,
+          }),
+        },
+        {
+          event: "run_complete",
+          data: JSON.stringify({
+            report: {
+              answer: "Persisted answer",
+              citations: [],
+              support: [],
+              critiques: [],
+              unverified_claims: [],
+              budget_consumed: 5,
+            },
+            total_elapsed_ms: 3000,
+          }),
+        },
+      ])
+    );
+
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const wrapper = mount(ChatView, {
+      global: { plugins: [pinia] },
+    });
+
+    const store = useChatStore();
+    await store.sendMessage("persistence test");
+
+    // Wait for multiple flush cycles to ensure Vue has processed all updates
+    for (let i = 0; i < 5; i++) {
+      await flushUi();
+    }
+
+    const text = wrapper.text();
+
+    // User message must be present
+    expect(text).toContain("persistence test");
+
+    // Steps must still be visible after assistant message was added
+    expect(text).toContain("Planning");
+
+    // Report must be visible (from RunArtifacts)
+    expect(text).toContain("Persisted answer");
+
+    // Assistant message must also be present
+    expect(text).toContain("Persisted answer");
+
+    // Total elapsed
+    expect(text).toContain("Total:");
+  });
 });

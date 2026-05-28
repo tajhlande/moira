@@ -612,14 +612,14 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
 
     writer(
         {
-            "event": "run_complete",
-            "payload": {"report": report},
+            "event": "node_end",
+            "payload": {"node": node, "timestamp": _now(), "budget_remaining": new_budget},
         }
     )
     writer(
         {
-            "event": "node_end",
-            "payload": {"node": node, "timestamp": _now(), "budget_remaining": new_budget},
+            "event": "run_complete",
+            "payload": {"report": report},
         }
     )
 

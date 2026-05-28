@@ -16,7 +16,9 @@ import {
 } from "@vicons/tabler";
 import { NIcon } from "naive-ui";
 import { useChatStore } from "../stores/chat";
-import type { WorkflowRunInfo, ExecutionStep, ResearchReport } from "../api/client";
+import type { ExecutionStep } from "../api/client";
+import RunArtifacts from "./RunArtifacts.vue";
+import ReportPanel from "./ReportPanel.vue";
 
 const store = useChatStore();
 const inputText = ref("");
@@ -195,124 +197,6 @@ function isLiveRun(messageId: number | undefined): boolean {
     </div>
   </div>
 </template>
-
-<!-- Sub-component: renders persisted run artifacts (steps, tool calls, report) -->
-<script lang="ts">
-import { defineComponent, type PropType } from "vue";
-import {
-  NCollapse,
-  NCollapseItem,
-  NIcon,
-} from "naive-ui";
-import { CircleCheck, CircleX } from "@vicons/tabler";
-
-const RunArtifacts = defineComponent({
-  name: "RunArtifacts",
-  components: { NCollapse, NCollapseItem, NIcon, CircleCheck, CircleX },
-  props: {
-    run: { type: Object as PropType<WorkflowRunInfo>, required: true },
-  },
-  methods: {
-    formatElapsed(ms: number | undefined): string {
-      if (ms === undefined || ms === null) return "";
-      const totalSec = Math.floor(ms / 1000);
-      const min = Math.floor(totalSec / 60);
-      const sec = totalSec % 60;
-      return `${min}:${sec.toString().padStart(2, "0")}`;
-    },
-  },
-  template: `
-    <div>
-      <div v-if="run.execution_steps.length > 0" class="steps-container">
-        <div
-          v-for="(step, si) in run.execution_steps"
-          :key="'rs-' + si"
-          :class="['step-row', step.status]"
-        >
-          <NIcon v-if="step.status === 'completed'" :size="16" color="#18a058">
-            <CircleCheck />
-          </NIcon>
-          <NIcon v-else :size="16" color="#d03050">
-            <CircleX />
-          </NIcon>
-          <span class="step-label">{{ step.label }}</span>
-          <span v-if="step.status === 'completed'" class="step-cost">-{{ step.cost }}</span>
-          <span v-if="step.elapsed_ms != null" class="step-elapsed">{{ formatElapsed(step.elapsed_ms) }}</span>
-          <span v-if="step.status === 'completed'" class="step-budget">{{ step.budget_remaining }} remaining</span>
-          <span v-if="step.status === 'error' && step.error" class="step-error-msg">{{ step.error }}</span>
-        </div>
-      </div>
-
-      <NCollapse v-if="run.tool_executions.length > 0" class="tool-calls-panel">
-        <NCollapse-item :title="'Tool Executions (' + run.tool_executions.length + ')'" name="tools">
-          <div v-for="(tc, tci) in run.tool_executions" :key="tci" class="tool-call">
-            <span :class="['tool-name', tc.success ? 'success' : 'error']">
-              {{ tc.tool }}
-            </span>
-            <span class="tool-duration">{{ tc.duration_ms }}ms</span>
-            <pre class="tool-output">{{ tc.result?.slice(0, 200) }}</pre>
-          </div>
-        </NCollapse-item>
-      </NCollapse>
-
-      <ReportPanel v-if="run.report" :report="run.report" />
-
-      <div v-if="run.total_elapsed_ms != null" class="total-elapsed">
-        Total: {{ formatElapsed(run.total_elapsed_ms) }}
-      </div>
-
-      <div v-if="run.error && run.status === 'error'" class="run-error">
-        Run failed: {{ run.error }}
-      </div>
-    </div>
-  `,
-});
-
-const ReportPanel = defineComponent({
-  name: "ReportPanel",
-  props: {
-    report: { type: Object as PropType<ResearchReport>, required: true },
-  },
-  template: `
-    <div class="report-panel">
-      <h3>Research Report</h3>
-      <div class="report-answer">{{ report.answer }}</div>
-
-      <div v-if="report.citations.length > 0" class="report-section">
-        <h4>Citations</h4>
-        <ul>
-          <li v-for="(c, ci) in report.citations" :key="ci">
-            {{ c.source }}{{ c.url ? ' — ' + c.url : '' }}
-            <span v-if="c.excerpt" class="citation-excerpt">{{ c.excerpt }}</span>
-          </li>
-        </ul>
-      </div>
-
-      <div v-if="report.critiques.length > 0" class="report-section">
-        <h4>Critiques</h4>
-        <ul>
-          <li v-for="(c, ci) in report.critiques" :key="ci">{{ c }}</li>
-        </ul>
-      </div>
-
-      <div v-if="report.unverified_claims.length > 0" class="report-section">
-        <h4>Unverified Claims</h4>
-        <ul>
-          <li v-for="(c, ci) in report.unverified_claims" :key="ci" class="unverified">
-            {{ c }}
-          </li>
-        </ul>
-      </div>
-
-      <div class="budget-consumed">
-        Budget consumed: {{ report.budget_consumed.toFixed(0) }}
-      </div>
-    </div>
-  `,
-});
-
-export { RunArtifacts, ReportPanel };
-</script>
 
 <style scoped>
 .chat-container {
