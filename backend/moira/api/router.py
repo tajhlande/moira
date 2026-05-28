@@ -79,6 +79,7 @@ async def get_conversation(
                 "created_at": m.created_at,
             }
             for m in messages
+            if m.role in ("user", "assistant")
         ],
         "runs": [
             {

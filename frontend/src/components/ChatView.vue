@@ -19,6 +19,8 @@ import { useChatStore } from "../stores/chat";
 import type { ExecutionStep } from "../api/client";
 import RunArtifacts from "./RunArtifacts.vue";
 import ReportPanel from "./ReportPanel.vue";
+import MarkdownContent from "./MarkdownContent.vue";
+import "./workflow-artifacts.css";
 
 const store = useChatStore();
 const inputText = ref("");
@@ -107,7 +109,7 @@ function isLiveRun(messageId: number | undefined): boolean {
           <div class="message-role">
             {{ msg.role === "user" ? "You" : "MOiRA" }}
           </div>
-          <div class="message-content">{{ msg.content }}</div>
+          <MarkdownContent class="message-content" :content="msg.content" />
         </div>
 
         <!-- After a user message: render associated run artifacts -->
@@ -223,10 +225,13 @@ function isLiveRun(messageId: number | undefined): boolean {
 }
 
 .message {
+  margin-top: 16px;
   margin-bottom: 16px;
   padding: 12px 16px;
   border-radius: 8px;
   max-width: 80%;
+  margin-left: 16px;
+  margin-right: 16px;
 }
 
 .message.user {
@@ -247,179 +252,6 @@ function isLiveRun(messageId: number | undefined): boolean {
 
 .message-content {
   white-space: pre-wrap;
-}
-
-.steps-container {
-  margin: 12px 0;
-  padding: 12px 16px;
-  background-color: var(--moira-sidebar-bg, #f5f5f5);
-  border-radius: 8px;
-  max-width: 80%;
-}
-
-.step-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-  font-size: 0.9em;
-  border-bottom: 1px solid var(--moira-border, #e0e0e0);
-}
-
-.step-row:last-child {
-  border-bottom: none;
-}
-
-.step-row.completed {
-  opacity: 0.75;
-}
-
-.step-row.running {
-  font-weight: 500;
-}
-
-.step-row.error {
-  color: #d03050;
-}
-
-.step-label {
-  flex: 1;
-}
-
-.step-cost {
-  font-family: monospace;
-  font-size: 0.85em;
-  color: #d03050;
-}
-
-.step-budget {
-  font-family: monospace;
-  font-size: 0.8em;
-  opacity: 0.6;
-}
-
-.step-elapsed {
-  font-family: monospace;
-  font-size: 0.8em;
-  opacity: 0.7;
-  min-width: 3.5em;
-  text-align: right;
-}
-
-.total-elapsed {
-  margin-top: 8px;
-  padding: 6px 0;
-  font-family: monospace;
-  font-size: 0.85em;
-  opacity: 0.7;
-  max-width: 80%;
-}
-
-.step-error-msg {
-  font-size: 0.8em;
-  opacity: 0.8;
-  margin-left: auto;
-}
-
-.spinning {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.tool-calls-panel {
-  border-top: none;
-  padding: 0 0;
-  max-width: 80%;
-}
-
-.tool-call {
-  padding: 4px 0;
-  border-bottom: 1px solid var(--moira-border, #e0e0e0);
-}
-
-.tool-name {
-  font-weight: 600;
-  font-family: monospace;
-}
-
-.tool-name.success {
-  color: #18a058;
-}
-
-.tool-name.error {
-  color: #d03050;
-}
-
-.tool-duration {
-  margin-left: 8px;
-  font-size: 0.85em;
-  opacity: 0.6;
-}
-
-.tool-output {
-  font-size: 0.85em;
-  margin: 4px 0 0 0;
-  max-height: 60px;
-  overflow: hidden;
-  white-space: pre-wrap;
-}
-
-.report-panel {
-  padding: 16px 0;
-  max-width: 80%;
-}
-
-.report-panel h3 {
-  margin: 0 0 8px 0;
-}
-
-.report-answer {
-  white-space: pre-wrap;
-  line-height: 1.5;
-}
-
-.report-section {
-  margin-top: 12px;
-}
-
-.report-section h4 {
-  margin: 0 0 4px 0;
-  font-size: 0.9em;
-  opacity: 0.7;
-}
-
-.report-section ul {
-  margin: 0;
-  padding-left: 20px;
-  font-size: 0.9em;
-}
-
-.citation-excerpt {
-  display: block;
-  opacity: 0.7;
-  font-style: italic;
-  font-size: 0.9em;
-}
-
-.unverified {
-  color: #d03050;
-}
-
-.budget-consumed {
-  margin-top: 8px;
-  font-size: 0.85em;
-  opacity: 0.6;
-}
-
-.run-error {
-  padding: 8px 16px;
-  color: #d03050;
-  font-size: 0.9em;
-  max-width: 80%;
 }
 
 .input-area {

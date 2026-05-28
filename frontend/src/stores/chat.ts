@@ -119,12 +119,17 @@ export const useChatStore = defineStore("chat", () => {
         content,
         tempId
       );
-      messages.value.push({
-        id: -Date.now(),
-        role: "assistant",
-        content: responseText,
-        created_at: new Date().toISOString(),
-      });
+      // Only push an assistant message bubble when there's no report panel
+      // to display the answer. When a report exists, the ReportPanel component
+      // renders the answer along with citations, critiques, etc.
+      if (!currentReport.value) {
+        messages.value.push({
+          id: -Date.now(),
+          role: "assistant",
+          content: responseText,
+          created_at: new Date().toISOString(),
+        });
+      }
     } catch (e: any) {
       error.value = e.message;
     } finally {
@@ -189,7 +194,7 @@ export const useChatStore = defineStore("chat", () => {
     }
 
     return (
-      answerText || currentReport.value?.answer || "No response generated."
+      answerText || currentReport.value?.answer || "Unable to generate a research report."
     );
   }
 
