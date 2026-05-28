@@ -11,7 +11,7 @@ import {
   NIcon,
   NInput,
 } from "naive-ui";
-import { Pencil, Check } from "@vicons/tabler";
+import { Pencil, Check, Wand } from "@vicons/tabler";
 import { useChatStore } from "../stores/chat";
 import { ref, nextTick, onMounted } from "vue";
 
@@ -22,6 +22,7 @@ const editTitle = ref("");
 const editInput = ref<InstanceType<typeof NInput> | null>(null);
 
 const saving = ref(false);
+const generatingTitleId = ref<string | null>(null);
 
 onMounted(() => {
   store.fetchConversations();
@@ -51,6 +52,26 @@ async function finishEdit(conversationId: string) {
 
 function cancelEdit() {
   editingId.value = null;
+}
+
+async function handleGenerateTitle(conversationId: string) {
+  if (generatingTitleId.value) return;
+  generatingTitleId.value = conversationId;
+  try {
+    await store.generateTitle(conversationId);
+  } finally {
+    generatingTitleId.value = null;
+  }
+}
+
+// A conversation has messages if it's the current one and messages exist,
+// or we optimistically assume past conversations have messages.
+function hasMessages(conversationId: string): boolean {
+  if (conversationId === store.currentConversationId) {
+    return store.messages.length > 0;
+  }
+  // Past conversations always have at least one message
+  return true;
 }
 </script>
 
@@ -147,6 +168,19 @@ function cancelEdit() {
             >
               <template #icon>
                 <NIcon size="22"><Pencil /></NIcon>
+              </template>
+            </NButton>
+            <NButton
+              quaternary
+              circle
+              size="small"
+              :disabled="!hasMessages(conversation.id)"
+              :loading="generatingTitleId === conversation.id"
+              @click.stop="handleGenerateTitle(conversation.id)"
+              class="icon-btn"
+            >
+              <template #icon>
+                <NIcon size="18"><Wand /></NIcon>
               </template>
             </NButton>
           </div>

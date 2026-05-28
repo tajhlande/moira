@@ -116,6 +116,11 @@ export const api = {
       body: JSON.stringify({ title }),
     }),
 
+  generateTitle: (id: string) =>
+    request<ConversationInfo>(`/conversations/${id}/generate-title`, {
+      method: "POST",
+    }),
+
   getModels: () => request<ModelsResponse>("/models"),
 
   setModels: (assignments: ModelAssignments) =>

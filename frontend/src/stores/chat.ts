@@ -130,6 +130,16 @@ export const useChatStore = defineStore("chat", () => {
           created_at: new Date().toISOString(),
         });
       }
+
+      // Auto-rename if the conversation still has the default title.
+      // Fire-and-forget — don't block the UI on title generation.
+      const convId = currentConversationId.value;
+      if (convId) {
+        const conv = conversations.value.find((c) => c.id === convId);
+        if (conv && conv.title === "New Conversation") {
+          generateTitle(convId);
+        }
+      }
     } catch (e: any) {
       error.value = e.message;
     } finally {
@@ -322,6 +332,18 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
+  async function generateTitle(id: string) {
+    try {
+      const updated = await api.generateTitle(id);
+      const idx = conversations.value.findIndex((c) => c.id === id);
+      if (idx !== -1) {
+        conversations.value[idx].title = updated.title;
+      }
+    } catch (e: any) {
+      error.value = e.message;
+    }
+  }
+
   function getRunForMessage(messageId: number | undefined): WorkflowRunInfo | null {
     if (!messageId) return null;
     return runs.value.get(messageId) || null;
@@ -351,6 +373,7 @@ export const useChatStore = defineStore("chat", () => {
     selectConversation,
     sendMessage,
     renameConversation,
+    generateTitle,
     getRunForMessage,
   };
 });

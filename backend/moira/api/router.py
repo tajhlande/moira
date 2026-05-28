@@ -13,6 +13,13 @@ from moira.service_setup import service_provider
 
 logger = logging.getLogger(__name__)
 
+TITLE_GENERATION_SYSTEM = (
+    "You generate short conversation titles. "
+    "Given the user's message, produce a concise 3-6 word title that captures "
+    "the topic. Output ONLY the title text with no quotes, no punctuation at "
+    "the end, and no explanation."
+)
+
 router = APIRouter()
 
 
@@ -158,3 +165,55 @@ async def set_model_assignments(body: dict[str, Any]):
         task_model=task.get("model", ""),
     )
     return {"intelligence": intel, "task": task}
+
+
+@router.post("/conversations/{conversation_id}/generate-title")
+async def generate_conversation_title(
+    conversation_id: str,
+    conversations: ConversationRepository = Depends(_conversations),
+):
+    """Use the task model to generate a short title from conversation messages."""
+    conversation = await conversations.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    messages = await conversations.get_messages(conversation_id)
+    user_messages = [m for m in messages if m.role == "user"]
+    if not user_messages:
+        raise HTTPException(status_code=400, detail="No user messages in conversation")
+
+    # Build a summary of the conversation for the title model.
+    # Use the first and most recent user messages to keep the prompt small.
+    first = user_messages[0].content[:500]
+    last = user_messages[-1].content[:500] if len(user_messages) > 1 else ""
+    context = f"First message: {first}"
+    if last:
+        context += f"\nLatest message: {last}"
+
+    registry = _registry()
+    try:
+        resolved = await registry.resolve("task")
+        raw = await resolved.client.chat_completion(
+            model=resolved.model_id,
+            messages=[
+                {"role": "system", "content": TITLE_GENERATION_SYSTEM},
+                {"role": "user", "content": context},
+            ],
+            temperature=0.5,
+            max_tokens=30,
+        )
+    except (ValueError, Exception) as e:
+        logger.warning("Title generation failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"Title generation failed: {e}")
+
+    title = raw.content.strip().strip('"').strip("'")[:100]
+    if not title:
+        raise HTTPException(status_code=502, detail="Model returned empty title")
+
+    updated = await conversations.update_conversation(conversation_id, title)
+    logger.info("Generated title for conversation %s: '%s'", conversation_id, title)
+    return {
+        "id": updated.id,
+        "title": updated.title,
+        "created_at": updated.created_at,
+    }
