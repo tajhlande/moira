@@ -15,12 +15,24 @@ class ModelInfo:
     source_endpoint: str = ""
 
 
+@dataclass
+class ChatResponse:
+    """Structured response from a chat completion call. Captures both the
+    model's content and its thinking/reasoning content when available
+    (e.g. Qwen models that return reasoning_content)."""
+
+    content: str
+    thinking: str = ""
+    model: str = ""
+    finish_reason: str = ""
+
+
 class InferenceClient:
     # Two-phase initialization: __init__ stores config, start() creates the
     # async client. Required because httpx.AsyncClient must be created inside
     # an event loop. Callers must call start() before use and stop() to
     # release the connection pool.
-    def __init__(self, base_url: str, api_key: str = "", timeout: float = 120.0):
+    def __init__(self, base_url: str, api_key: str = "", timeout: float = 600.0):
         self._base_url = base_url.rstrip("/")
         self._headers: dict[str, str] = {}
         if api_key:
@@ -57,11 +69,8 @@ class InferenceClient:
         model: str,
         messages: list[dict[str, str]],
         temperature: float = 0.7,
-        max_tokens: int = 2048,
-    ) -> str:
-        # Default temperature and max_tokens are reasonable for chat but should
-        # be configurable per-purpose (intelligence vs. task) when the workflow
-        # engine is implemented.
+        max_tokens: int = 16384,
+    ) -> ChatResponse:
         assert self._client is not None, "Client not started"
         logger.info("Chat completion request: model=%s, messages=%d", model, len(messages))
         payload = {
@@ -73,7 +82,14 @@ class InferenceClient:
         resp = await self._client.post("/chat/completions", json=payload)
         resp.raise_for_status()
         data = resp.json()
-        # No response validation -- assumes a well-formed OpenAI-compatible
-        # response with at least one choice. Will raise KeyError if the
-        # provider returns tool calls instead of content.
-        return data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        message = choice["message"]
+        thinking = message.get("reasoning_content", "")
+        if thinking:
+            logger.debug("Model thinking (reasoning_content): %s", thinking[:2000])
+        return ChatResponse(
+            content=message.get("content", ""),
+            thinking=thinking,
+            model=data.get("model", model),
+            finish_reason=choice.get("finish_reason", ""),
+        )

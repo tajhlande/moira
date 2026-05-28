@@ -2,8 +2,8 @@ import pytest
 
 from moira.persistence.interfaces import DEFAULT_USER_ID
 from moira.persistence.sqlite.repos import (
+    SqliteConversationRepository,
     SqliteModelPreferencesRepository,
-    SqliteSessionRepository,
 )
 from moira.persistence.sqlite.schema import run_migrations
 
@@ -14,9 +14,9 @@ def db_path(tmp_path):
 
 
 @pytest.fixture
-def session_repo(db_path):
+def conversation_repo(db_path):
     run_migrations(db_path)
-    return SqliteSessionRepository(db_path)
+    return SqliteConversationRepository(db_path)
 
 
 @pytest.fixture
@@ -26,35 +26,37 @@ def prefs_repo(db_path):
 
 
 @pytest.mark.asyncio
-async def test_create_and_get_session(session_repo):
-    session = await session_repo.create_session(DEFAULT_USER_ID, "Test Session")
-    assert session.id
-    assert session.title == "Test Session"
-    assert session.user_id == DEFAULT_USER_ID
+async def test_create_and_get_conversation(conversation_repo):
+    conversation = await conversation_repo.create_conversation(
+        DEFAULT_USER_ID, "Test Conversation"
+    )
+    assert conversation.id
+    assert conversation.title == "Test Conversation"
+    assert conversation.user_id == DEFAULT_USER_ID
 
-    fetched = await session_repo.get_session(session.id)
+    fetched = await conversation_repo.get_conversation(conversation.id)
     assert fetched is not None
-    assert fetched.id == session.id
-    assert fetched.title == "Test Session"
+    assert fetched.id == conversation.id
+    assert fetched.title == "Test Conversation"
 
 
 @pytest.mark.asyncio
-async def test_list_sessions(session_repo):
-    s1 = await session_repo.create_session(DEFAULT_USER_ID, "Session 1")
-    s2 = await session_repo.create_session(DEFAULT_USER_ID, "Session 2")
-    sessions = await session_repo.list_sessions(DEFAULT_USER_ID)
-    ids = {s.id for s in sessions}
-    assert s1.id in ids
-    assert s2.id in ids
+async def test_list_conversations(conversation_repo):
+    c1 = await conversation_repo.create_conversation(DEFAULT_USER_ID, "Conversation 1")
+    c2 = await conversation_repo.create_conversation(DEFAULT_USER_ID, "Conversation 2")
+    conversations = await conversation_repo.list_conversations(DEFAULT_USER_ID)
+    ids = {c.id for c in conversations}
+    assert c1.id in ids
+    assert c2.id in ids
 
 
 @pytest.mark.asyncio
-async def test_insert_and_get_messages(session_repo):
-    session = await session_repo.create_session(DEFAULT_USER_ID, "Chat")
-    await session_repo.insert_message(session.id, "user", "Hello")
-    await session_repo.insert_message(session.id, "assistant", "Hi there")
+async def test_insert_and_get_messages(conversation_repo):
+    conversation = await conversation_repo.create_conversation(DEFAULT_USER_ID, "Chat")
+    await conversation_repo.insert_message(conversation.id, "user", "Hello")
+    await conversation_repo.insert_message(conversation.id, "assistant", "Hi there")
 
-    messages = await session_repo.get_messages(session.id)
+    messages = await conversation_repo.get_messages(conversation.id)
     assert len(messages) == 2
     assert messages[0].role == "user"
     assert messages[0].content == "Hello"
@@ -63,8 +65,8 @@ async def test_insert_and_get_messages(session_repo):
 
 
 @pytest.mark.asyncio
-async def test_get_session_not_found(session_repo):
-    result = await session_repo.get_session("nonexistent")
+async def test_get_conversation_not_found(conversation_repo):
+    result = await conversation_repo.get_conversation("nonexistent")
     assert result is None
 
 

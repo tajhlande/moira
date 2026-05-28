@@ -42,6 +42,8 @@ The system must prioritize:
 
 The frontend is NaiveUI and Typescript.
 
+Icons use Tabler Icons via `@vicons/tabler`, rendered inside NaiveUI's `NIcon` wrapper.
+
 The backend is Python 3.13, with the following additional component libraries:
 
 * FastAPI
@@ -52,7 +54,7 @@ The backend is Python 3.13, with the following additional component libraries:
 
 The system uses two storage backends, both in-process with file-on-disk persistence and no required infrastructure:
 
-* **SQLite** — relational data: sessions, users, projects, tool metadata, workflow checkpoints (via LangGraph's `SqliteSaver`)
+* **SQLite** — relational data: conversations, users, projects, tool metadata, workflow checkpoints (via LangGraph's `SqliteSaver`)
 * **LanceDB** — vector data: tool embeddings, semantic tool discovery, embedding search
 
 All database-specific code must live behind an agnostic persistence API layer. See Loose Coupling and Component Replaceability below.
@@ -69,7 +71,7 @@ All database-specific code must be contained behind an agnostic API layer of rep
 
 ### Store Responsibilities
 
-* **SQLite** — relational data: sessions, users, projects, tool metadata, workflow state, LangGraph checkpoints
+* **SQLite** — relational data: conversations, users, projects, tool metadata, workflow state, LangGraph checkpoints
 * **LanceDB** — vector data: tool description embeddings, semantic similarity search, tool discovery queries
 
 ### Repository Pattern
@@ -86,7 +88,7 @@ Repository Implementations (moira.persistence.sqlite, moira.persistence.lancedb)
 Database Drivers (sqlite3, lancedb)
 ```
 
-Repository interfaces must define all operations the application needs (e.g., `get_tools_by_domain`, `search_tools_by_embedding`, `save_session`, `load_checkpoint`) without exposing the underlying database technology.
+Repository interfaces must define all operations the application needs (e.g., `get_tools_by_domain`, `search_tools_by_embedding`, `save_conversation`, `load_checkpoint`) without exposing the underlying database technology.
 
 ### Migration Path
 
@@ -115,8 +117,8 @@ service_setup.service_provider(name)   # retrieve a service by registered name
 FastAPI route handlers receive services via `Depends`:
 
 ```python
-session_service: SessionService = Depends(
-    lambda: service_provider("session_service")
+session_service: ConversationService = Depends(
+    lambda: service_provider("conversation_service")
 )
 ```
 
@@ -236,9 +238,9 @@ The full chat transcript is **not** included in context by default. Instead, the
 
 This ensures the context window is not always stuffed with conversation history that may not be relevant. The report summarizes what matters; the transcript provides detail when the agent needs it.
 
-### Session Continuity
+### Conversation Continuity
 
-* Each conversation is a session containing multiple turns
+* Each conversation contains multiple turns
 * Each turn produces a ResearchReport, persisted in the database
 * The UI displays the sequence of reports as a conversation
 * Follow-up questions see the prior report, enabling iterative research without full context reloading
@@ -249,7 +251,7 @@ This ensures the context window is not always stuffed with conversation history 
 
 The system is single-user by default for the MVP. No authentication is required.
 
-The data model supports user identity from the start — sessions, projects, and research state include a user ID field. This allows multi-user support to be added later without schema migration.
+The data model supports user identity from the start — conversations, projects, and research state include a user ID field. This allows multi-user support to be added later without schema migration.
 
 Future capabilities:
 
@@ -440,7 +442,7 @@ Each graph node declares a **cost weight** — a relative cost value that is ded
 
 When `budget_remaining` falls below a node's cost weight, that node cannot execute and the graph must terminate.
 
-Budget is initialized per research session from a configurable `budget_limit`.
+Budget is initialized per research conversation from a configurable `budget_limit`.
 
 ### Default Cost Weights
 
@@ -461,7 +463,7 @@ Report Generation is budget-exempt. Its cost weight (3) is tracked for accountin
 
 ### Configurability
 
-Cost weights and the default `budget_limit` must be configurable. For the minimum viable prototype, configuration should be stored in a source file (e.g., YAML or Python config). Future versions may support per-user or per-session budget overrides from the UI.
+Cost weights and the default `budget_limit` must be configurable. For the minimum viable prototype, configuration should be stored in a source file (e.g., YAML or Python config). Future versions may support per-user or per-conversation budget overrides from the UI.
 
 ### Budget and Verification Interaction
 
@@ -477,7 +479,7 @@ The budget is part of the workflow state and must be visible to the user. The UI
 
 * current budget remaining
 * budget consumed per node execution
-* total budget consumed per research session
+* total budget consumed per research conversation
 
 This supports the system's transparency and inspectability principles.
 
@@ -804,7 +806,7 @@ The output is a `ResearchReport` object written to state:
 * **support** — corroborating evidence gathered during research that substantiates the answer, as structured records
 * **critiques** — weaknesses, limitations, or objections discovered during verification and research. Includes any unsupported claims folded into critiques when the verification-pass path is taken
 * **unverified_claims** — populated when the report is generated after budget exhaustion or node failure. Lists specific claims that could not be verified, with an explanation of what evidence was missing
-* **budget_consumed** — total budget consumed across all attempts in this research session
+* **budget_consumed** — total budget consumed across all attempts in this research conversation
 
 The number of verification attempts is computed at report generation time from `len(verification_history)` and is not stored as a separate field.
 
@@ -853,7 +855,7 @@ Users should be able to inspect:
 * what tools were used
 * what evidence was gathered
 * current step-cost budget remaining
-* budget consumed per node and per session
+* budget consumed per node and per conversation
 * verification history and retry attempts
 
 ---
@@ -989,7 +991,7 @@ The system should log:
 * report generation outputs
 * node-level errors and error handler invocations
 
-Execution history should be inspectable per session.
+Execution history should be inspectable per conversation.
 
 ---
 
@@ -1029,7 +1031,7 @@ Add:
 * execution tracing
 * streaming node visibility
 * citation management
-* session persistence
+* conversation persistence
 * structured report rendering in UI
 
 ## Phase 3

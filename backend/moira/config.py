@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 class DatabaseConfig(BaseModel):
     sqlite_path: str = "./data/moira.db"
+    lancedb_path: str = "./data/vectors"
 
 
 class CostWeights(BaseModel):
@@ -42,7 +43,7 @@ class InferenceModelsConfig(BaseModel):
 
 
 class InferenceConfig(BaseModel):
-    endpoints: list[InferenceEndpointConfig] = []
+    providers: list[InferenceEndpointConfig] = []
     models: InferenceModelsConfig = InferenceModelsConfig()
 
 
@@ -124,15 +125,34 @@ def load_config() -> MoiraConfig:
     return MoiraConfig.model_validate(raw)
 
 
-def resolve_db_path(config: MoiraConfig) -> str:
-    # MOIRA_DATA_DIR takes precedence over config file's sqlite_path.
-    # Allows overriding the database location at deploy time without
-    # modifying the config file (e.g., container volume mounts, test
-    # isolation). When set, the filename is always "moira.db".
-    logger.debug("Resolving database path")
+def resolve_data_dir(config: MoiraConfig) -> str:
+    """Return the base directory for all persistent data.
+
+    MOIRA_DATA_DIR env var takes precedence over config file paths.
+    This ensures SQLite, LanceDB, and any future stores all land in
+    the same location regardless of how the app is started.
+
+    Falls back to the parent directory of the config's sqlite_path,
+    which keeps the default working when running outside run.sh.
+    """
+    logger.debug("Resolving data directory")
     data_dir = os.environ.get("MOIRA_DATA_DIR")
     if data_dir:
         logger.info("Using MOIRA_DATA_DIR=%s", data_dir)
-        return str(Path(data_dir) / "moira.db")
-    logger.info("Using config sqlite_path=%s", config.database.sqlite_path)
-    return config.database.sqlite_path
+        return data_dir
+    # Derive from the config's sqlite_path so that running without
+    # MOIRA_DATA_DIR (e.g. direct uvicorn from backend/) still works.
+    # sqlite_path "./data/moira.db" -> data dir "./data"
+    config_dir = str(Path(config.database.sqlite_path).parent)
+    logger.info("Using derived data_dir=%s from sqlite_path", config_dir)
+    return config_dir
+
+
+def resolve_db_path(config: MoiraConfig) -> str:
+    """Convenience: returns the SQLite database file path."""
+    return str(Path(resolve_data_dir(config)) / "moira.db")
+
+
+def resolve_lancedb_path(config: MoiraConfig) -> str:
+    """Convenience: returns the LanceDB storage directory path."""
+    return str(Path(resolve_data_dir(config)) / "vectors")

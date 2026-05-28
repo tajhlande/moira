@@ -8,53 +8,68 @@ from moira.config import (
     MoiraConfig,
 )
 from moira.persistence.interfaces import (
+    Conversation,
+    ConversationRepository,
     Message,
     ModelPreferences,
     ModelPreferencesRepository,
-    Session,
-    SessionRepository,
+    WorkflowRun,
 )
 from moira.service_setup import init_services, shutdown_services
 
 
-class FakeSessionRepo(SessionRepository):
+class FakeConversationRepo(ConversationRepository):
     def __init__(self):
-        self._sessions: dict[str, Session] = {}
+        self._conversations: dict[str, Conversation] = {}
         self._counter = 0
 
-    async def create_session(self, user_id: str, title: str) -> Session:
+    async def create_conversation(self, user_id: str, title: str) -> Conversation:
         import uuid
         from datetime import datetime, timezone
 
-        sid = str(uuid.uuid4())
-        s = Session(
-            id=sid,
+        cid = str(uuid.uuid4())
+        c = Conversation(
+            id=cid,
             user_id=user_id,
             title=title,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
-        self._sessions[sid] = s
-        return s
+        self._conversations[cid] = c
+        return c
 
-    async def get_session(self, session_id: str) -> Session | None:
-        return self._sessions.get(session_id)
+    async def get_conversation(self, conversation_id: str) -> Conversation | None:
+        return self._conversations.get(conversation_id)
 
-    async def list_sessions(self, user_id: str) -> list[Session]:
-        return list(self._sessions.values())
+    async def list_conversations(self, user_id: str) -> list[Conversation]:
+        return list(self._conversations.values())
 
-    async def insert_message(self, session_id: str, role: str, content: str):
+    async def insert_message(self, conversation_id: str, role: str, content: str):
         from datetime import datetime, timezone
 
         self._counter += 1
         return Message(
             id=self._counter,
-            session_id=session_id,
+            conversation_id=conversation_id,
             role=role,
             content=content,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
 
-    async def get_messages(self, session_id: str):
+    async def get_messages(self, conversation_id: str):
+        return []
+
+    async def update_conversation(self, conversation_id: str, title: str) -> Conversation | None:
+        c = self._conversations.get(conversation_id)
+        if c is None:
+            return None
+        updated = Conversation(id=c.id, user_id=c.user_id, title=title, created_at=c.created_at)
+        self._conversations[conversation_id] = updated
+        return updated
+
+    async def save_workflow_run(self, run: WorkflowRun) -> None:
+        pass
+
+    async def get_workflow_runs(self, conversation_id: str) -> list[WorkflowRun]:
         return []
 
 
@@ -78,7 +93,7 @@ class FakePrefsRepo(ModelPreferencesRepository):
 def _config():
     return MoiraConfig(
         inference=InferenceConfig(
-            endpoints=[InferenceEndpointConfig(name="test", base_url="http://localhost:9999/v1")],
+            providers=[InferenceEndpointConfig(name="test", base_url="http://localhost:9999/v1")],
             models=InferenceModelsConfig(
                 intelligence_endpoint="test",
                 intelligence_model="test-model",
@@ -92,9 +107,9 @@ def _config():
 @pytest.fixture
 async def app_client():
     config = _config()
-    session_repo = FakeSessionRepo()
+    conversation_repo = FakeConversationRepo()
     prefs_repo = FakePrefsRepo()
-    await init_services(config, session_repo=session_repo, prefs_repo=prefs_repo)
+    await init_services(config, conversation_repo=conversation_repo, prefs_repo=prefs_repo)
     from moira.main import create_app
 
     app = create_app()
@@ -109,34 +124,62 @@ def test_health_endpoint(app_client):
     assert resp.json() == {"status": "ok"}
 
 
-def test_create_session(app_client):
-    resp = app_client.post("/api/sessions")
+def test_create_conversation(app_client):
+    resp = app_client.post("/api/conversations")
     assert resp.status_code == 200
     data = resp.json()
     assert "id" in data
-    assert data["title"] == "New Session"
+    assert data["title"] == "New Conversation"
 
 
-def test_list_sessions(app_client):
-    app_client.post("/api/sessions")
-    app_client.post("/api/sessions")
-    resp = app_client.get("/api/sessions")
+def test_list_conversations(app_client):
+    app_client.post("/api/conversations")
+    app_client.post("/api/conversations")
+    resp = app_client.get("/api/conversations")
     assert resp.status_code == 200
     assert len(resp.json()) == 2
 
 
-def test_get_session(app_client):
-    create_resp = app_client.post("/api/sessions")
-    session_id = create_resp.json()["id"]
+def test_get_conversation(app_client):
+    create_resp = app_client.post("/api/conversations")
+    conversation_id = create_resp.json()["id"]
 
-    get_resp = app_client.get(f"/api/sessions/{session_id}")
+    get_resp = app_client.get(f"/api/conversations/{conversation_id}")
     assert get_resp.status_code == 200
-    assert get_resp.json()["id"] == session_id
+    assert get_resp.json()["id"] == conversation_id
 
 
-def test_get_session_not_found(app_client):
-    resp = app_client.get("/api/sessions/nonexistent")
+def test_get_conversation_not_found(app_client):
+    resp = app_client.get("/api/conversations/nonexistent")
     assert resp.status_code == 404
+
+
+def test_update_conversation_title(app_client):
+    create_resp = app_client.post("/api/conversations")
+    conversation_id = create_resp.json()["id"]
+
+    patch_resp = app_client.patch(
+        f"/api/conversations/{conversation_id}",
+        json={"title": "Renamed Conversation"},
+    )
+    assert patch_resp.status_code == 200
+    assert patch_resp.json()["title"] == "Renamed Conversation"
+
+    get_resp = app_client.get(f"/api/conversations/{conversation_id}")
+    assert get_resp.json()["title"] == "Renamed Conversation"
+
+
+def test_update_conversation_not_found(app_client):
+    resp = app_client.patch("/api/conversations/nonexistent", json={"title": "x"})
+    assert resp.status_code == 404
+
+
+def test_update_conversation_empty_title(app_client):
+    create_resp = app_client.post("/api/conversations")
+    conversation_id = create_resp.json()["id"]
+
+    resp = app_client.patch(f"/api/conversations/{conversation_id}", json={"title": ""})
+    assert resp.status_code == 400
 
 
 def test_models_endpoint(app_client):

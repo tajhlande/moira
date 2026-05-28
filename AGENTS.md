@@ -68,6 +68,7 @@ The system must prioritize:
 - Preserve existing style, naming, formatting, and architecture unless there is a clear reason to change them.
 - Use comments to explain important implementation decisions to reading developers.
 - Use logging to log important code events.
+
 ## Verification
 - After code changes, run the project's relevant typecheck, lint, and tests when available.
 - Do not claim work is complete without saying what verification ran.
@@ -90,8 +91,11 @@ The system must prioritize:
 
 "MOiRA" stands for "My Own intelligent Research Agent".  Use `moira` as the base name or namespace for code or configuration for this project. 
 
-## Architecture
+## Other resources
 
-See [agent-docs/architecture.md](agent-docs/architecture.md) for application architecture specification. 
+The [agent-docs](agent-docs) directory contains specific guidance for architecture, design, 
+user experience, and critique notes. 
+See [agent-docs/index.md](agent-docs/index.md) for a list of documents and what they contain. 
+
 
 

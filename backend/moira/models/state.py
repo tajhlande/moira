@@ -1,11 +1,18 @@
 from typing import NotRequired, TypedDict
 
+from moira.tools.base import ToolDefinition
+
 
 class VerificationReport(TypedDict):
-    failed_claims: list[str]
+    outcome: str  # "accept", "retry", or "error"
+    case: int  # 1-11 matching the verification prompt cases
+    assessment: str
+    supported_claims: list[str]
+    unsupported_claims: list[str]
     contradictions: list[str]
-    missing_evidence: list[str]
-    suggestions: list[str]
+    relevance: str  # "on_topic" or "off_topic"
+    depth: str  # "sufficient" or "too_shallow"
+    guidance: str
 
 
 class Finding(TypedDict):
@@ -21,16 +28,17 @@ class ResearchReport(TypedDict):
     support: list[dict]
     critiques: list[str]
     unverified_claims: list[str]
+    # Denormalized convenience copy; authoritative source is
+    # workflow_runs.budget_consumed
     budget_consumed: float
+    # Why report_generation ran: "verified", "budget_exhausted", or "error"
+    generation_path: NotRequired[str]
 
 
 class ResearchState(TypedDict):
     question: str
     plan: str
-    # active_tools is untyped because the tool representation has not yet
-    # been defined. When the tool catalog is implemented, this should be
-    # list[Tool] (or whatever the canonical tool type is named).
-    active_tools: list
+    active_tools: list[ToolDefinition]
     findings: list[Finding]
     compressed_findings: list[Finding]
     draft: str
@@ -40,3 +48,7 @@ class ResearchState(TypedDict):
     budget_limit: float
     verification_history: list[VerificationReport]
     unverified_claims: list[str]
+    # Error tracking for node failure path
+    error: str
+    # Accumulated model thinking/reasoning traces keyed by node name
+    thinking_traces: dict[str, str]

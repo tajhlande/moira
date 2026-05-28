@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from moira.inference.registry import ModelRegistry
 from moira.persistence.interfaces import (
     DEFAULT_USER_ID,
+    ConversationRepository,
     ModelPreferencesRepository,
-    SessionRepository,
 )
 from moira.service_setup import service_provider
 
@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _sessions() -> SessionRepository:
-    return cast(SessionRepository, service_provider("session_repository"))
+def _conversations() -> ConversationRepository:
+    return cast(ConversationRepository, service_provider("conversation_repository"))
 
 
 def _prefs() -> ModelPreferencesRepository:
@@ -33,88 +33,93 @@ async def health():
     return {"status": "ok"}
 
 
-@router.post("/sessions", response_model=dict)
-async def create_session(
-    sessions: SessionRepository = Depends(_sessions),
+@router.post("/conversations", response_model=dict)
+async def create_conversation(
+    conversations: ConversationRepository = Depends(_conversations),
 ):
-    logger.info("Creating new session")
-    session = await sessions.create_session(user_id=DEFAULT_USER_ID, title="New Session")
-    logger.info("Created session %s", session.id)
-    return {"id": session.id, "title": session.title, "created_at": session.created_at}
-
-
-@router.get("/sessions", response_model=list)
-async def list_sessions(
-    sessions: SessionRepository = Depends(_sessions),
-):
-    result = await sessions.list_sessions(DEFAULT_USER_ID)
-    return [{"id": s.id, "title": s.title, "created_at": s.created_at} for s in result]
-
-
-@router.get("/sessions/{session_id}", response_model=dict)
-async def get_session(
-    session_id: str,
-    sessions: SessionRepository = Depends(_sessions),
-):
-    session = await sessions.get_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    messages = await sessions.get_messages(session_id)
+    logger.info("Creating new conversation")
+    conversation = await conversations.create_conversation(
+        user_id=DEFAULT_USER_ID, title="New Conversation"
+    )
+    logger.info("Created conversation %s", conversation.id)
     return {
-        "id": session.id,
-        "title": session.title,
-        "created_at": session.created_at,
+        "id": conversation.id,
+        "title": conversation.title,
+        "created_at": conversation.created_at,
+    }
+
+
+@router.get("/conversations", response_model=list)
+async def list_conversations(
+    conversations: ConversationRepository = Depends(_conversations),
+):
+    result = await conversations.list_conversations(DEFAULT_USER_ID)
+    return [{"id": c.id, "title": c.title, "created_at": c.created_at} for c in result]
+
+
+@router.get("/conversations/{conversation_id}", response_model=dict)
+async def get_conversation(
+    conversation_id: str,
+    conversations: ConversationRepository = Depends(_conversations),
+):
+    conversation = await conversations.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    messages = await conversations.get_messages(conversation_id)
+    runs = await conversations.get_workflow_runs(conversation_id)
+    return {
+        "id": conversation.id,
+        "title": conversation.title,
+        "created_at": conversation.created_at,
         "messages": [
-            {"role": m.role, "content": m.content, "created_at": m.created_at} for m in messages
+            {
+                "id": m.id,
+                "role": m.role,
+                "content": m.content,
+                "created_at": m.created_at,
+            }
+            for m in messages
+        ],
+        "runs": [
+            {
+                "id": r.id,
+                "user_message_id": r.user_message_id,
+                "execution_steps": r.execution_steps,
+                "tool_executions": r.tool_executions,
+                "verification_attempts": r.verification_attempts,
+                "thinking_traces": r.thinking_traces,
+                "report": r.report,
+                "budget_limit": r.budget_limit,
+                "budget_consumed": r.budget_consumed,
+                "error": r.error,
+                "status": r.status,
+                "started_at": r.started_at,
+                "completed_at": r.completed_at,
+                "total_elapsed_ms": r.total_elapsed_ms,
+            }
+            for r in runs
         ],
     }
 
 
-@router.post("/sessions/{session_id}/messages", response_model=dict)
-async def send_message(
-    session_id: str,
+@router.patch("/conversations/{conversation_id}", response_model=dict)
+async def update_conversation(
+    conversation_id: str,
     body: dict[str, Any],
-    sessions: SessionRepository = Depends(_sessions),
+    conversations: ConversationRepository = Depends(_conversations),
 ):
-    # MVP implementation: proxies messages directly to the resolved LLM.
-    # Does NOT invoke the LangGraph research workflow (planning -> tool
-    # discovery -> tool selection -> research -> compression -> draft
-    # synthesis -> verification -> report generation). When the workflow
-    # engine is implemented, this handler should initiate a graph run.
-    session = await sessions.get_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    user_content = body.get("content", "")
-    if not user_content:
-        raise HTTPException(status_code=400, detail="content is required")
-
-    logger.info("Sending message to session %s", session_id)
-    await sessions.insert_message(session_id, "user", user_content)
-
-    registry = _registry()
-    try:
-        resolved = await registry.resolve("intelligence")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    logger.debug("Using model %s from endpoint for session %s", resolved.model_id, session_id)
-    history = await sessions.get_messages(session_id)
-    messages_payload = [{"role": m.role, "content": m.content} for m in history]
-
-    try:
-        response_text = await resolved.client.chat_completion(
-            model=resolved.model_id,
-            messages=messages_payload,
-        )
-    except Exception as e:
-        logger.error("Model error for session %s: %s", session_id, e)
-        raise HTTPException(status_code=502, detail=f"Model error: {e}")
-
-    await sessions.insert_message(session_id, "assistant", response_text)
-    logger.info("Response received for session %s (%d chars)", session_id, len(response_text))
-
-    return {"role": "assistant", "content": response_text}
+    title = body.get("title")
+    if not title or not isinstance(title, str) or not title.strip():
+        raise HTTPException(status_code=400, detail="title is required")
+    conversation = await conversations.update_conversation(conversation_id, title.strip())
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    logger.info("Updated conversation %s title to '%s'", conversation_id, conversation.title)
+    return {
+        "id": conversation.id,
+        "title": conversation.title,
+        "created_at": conversation.created_at,
+    }
 
 
 @router.get("/models", response_model=dict)

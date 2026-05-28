@@ -1,19 +1,21 @@
+import json
 import logging
 import sqlite3
 from datetime import datetime, timezone
 
 from moira.persistence.interfaces import (
+    Conversation,
+    ConversationRepository,
     Message,
     ModelPreferences,
     ModelPreferencesRepository,
-    Session,
-    SessionRepository,
+    WorkflowRun,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class SqliteSessionRepository(SessionRepository):
+class SqliteConversationRepository(ConversationRepository):
     def __init__(self, db_path: str):
         self._db_path = db_path
 
@@ -29,61 +31,63 @@ class SqliteSessionRepository(SessionRepository):
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
-    async def create_session(self, user_id: str, title: str) -> Session:
-        logger.debug("Creating session for user %s", user_id)
+    async def create_conversation(self, user_id: str, title: str) -> Conversation:
+        logger.debug("Creating conversation for user %s", user_id)
         conn = self._connect()
         try:
             import uuid
 
-            session_id = str(uuid.uuid4())
+            conversation_id = str(uuid.uuid4())
             now = datetime.now(timezone.utc).isoformat()
             conn.execute(
-                "INSERT INTO sessions (id, user_id, title, created_at) VALUES (?, ?, ?, ?)",
-                (session_id, user_id, title, now),
+                "INSERT INTO conversations (id, user_id, title, created_at) VALUES (?, ?, ?, ?)",
+                (conversation_id, user_id, title, now),
             )
             conn.commit()
-            return Session(id=session_id, user_id=user_id, title=title, created_at=now)
+            return Conversation(id=conversation_id, user_id=user_id, title=title, created_at=now)
         finally:
             conn.close()
 
-    async def get_session(self, session_id: str) -> Session | None:
+    async def get_conversation(self, conversation_id: str) -> Conversation | None:
         conn = self._connect()
         try:
             row = conn.execute(
-                "SELECT id, user_id, title, created_at FROM sessions WHERE id = ?",
-                (session_id,),
+                "SELECT id, user_id, title, created_at FROM conversations WHERE id = ?",
+                (conversation_id,),
             ).fetchone()
             if row is None:
                 return None
-            return Session(**dict(row))
+            return Conversation(**dict(row))
         finally:
             conn.close()
 
-    async def list_sessions(self, user_id: str) -> list[Session]:
+    async def list_conversations(self, user_id: str) -> list[Conversation]:
         conn = self._connect()
         try:
             rows = conn.execute(
-                "SELECT id, user_id, title, created_at FROM sessions "
+                "SELECT id, user_id, title, created_at FROM conversations "
                 "WHERE user_id = ? ORDER BY created_at DESC",
                 (user_id,),
             ).fetchall()
-            return [Session(**dict(r)) for r in rows]
+            return [Conversation(**dict(r)) for r in rows]
         finally:
             conn.close()
 
-    async def insert_message(self, session_id: str, role: str, content: str) -> Message:
-        logger.debug("Inserting %s message into session %s", role, session_id)
+    async def insert_message(self, conversation_id: str, role: str, content: str) -> Message:
+        logger.debug("Inserting %s message into conversation %s", role, conversation_id)
         conn = self._connect()
         try:
             now = datetime.now(timezone.utc).isoformat()
             cursor = conn.execute(
-                "INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-                (session_id, role, content, now),
+                "INSERT INTO messages "
+                "(conversation_id, role, content, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (conversation_id, role, content, now),
             )
             conn.commit()
             return Message(
                 id=cursor.lastrowid,
-                session_id=session_id,
+                conversation_id=conversation_id,
                 role=role,
                 content=content,
                 created_at=now,
@@ -91,15 +95,104 @@ class SqliteSessionRepository(SessionRepository):
         finally:
             conn.close()
 
-    async def get_messages(self, session_id: str) -> list[Message]:
+    async def get_messages(self, conversation_id: str) -> list[Message]:
         conn = self._connect()
         try:
             rows = conn.execute(
-                "SELECT id, session_id, role, content, created_at FROM messages "
-                "WHERE session_id = ? ORDER BY created_at ASC",
-                (session_id,),
+                "SELECT id, conversation_id, role, content, created_at "
+                "FROM messages WHERE conversation_id = ? ORDER BY created_at ASC",
+                (conversation_id,),
             ).fetchall()
             return [Message(**dict(r)) for r in rows]
+        finally:
+            conn.close()
+
+    async def update_conversation(self, conversation_id: str, title: str) -> Conversation | None:
+        logger.debug("Updating conversation %s title to '%s'", conversation_id, title)
+        conn = self._connect()
+        try:
+            cursor = conn.execute(
+                "UPDATE conversations SET title = ? WHERE id = ?",
+                (title, conversation_id),
+            )
+            conn.commit()
+            if cursor.rowcount == 0:
+                return None
+            row = conn.execute(
+                "SELECT id, user_id, title, created_at FROM conversations WHERE id = ?",
+                (conversation_id,),
+            ).fetchone()
+            return Conversation(**dict(row)) if row else None
+        finally:
+            conn.close()
+
+    async def save_workflow_run(self, run: WorkflowRun) -> None:
+        logger.debug("Saving workflow run %s for conversation %s", run.id, run.conversation_id)
+        conn = self._connect()
+        try:
+            conn.execute(
+                "INSERT INTO workflow_runs "
+                "(id, conversation_id, user_message_id, thread_id, "
+                "execution_steps, tool_executions, verification_attempts, "
+                "thinking_traces, report, budget_limit, budget_consumed, "
+                "error, status, started_at, completed_at, total_elapsed_ms) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "execution_steps = excluded.execution_steps, "
+                "tool_executions = excluded.tool_executions, "
+                "verification_attempts = excluded.verification_attempts, "
+                "thinking_traces = excluded.thinking_traces, "
+                "report = excluded.report, "
+                "budget_consumed = excluded.budget_consumed, "
+                "error = excluded.error, "
+                "status = excluded.status, "
+                "completed_at = excluded.completed_at, "
+                "total_elapsed_ms = excluded.total_elapsed_ms",
+                (
+                    run.id,
+                    run.conversation_id,
+                    run.user_message_id,
+                    run.thread_id,
+                    json.dumps(run.execution_steps),
+                    json.dumps(run.tool_executions),
+                    json.dumps(run.verification_attempts),
+                    json.dumps(run.thinking_traces),
+                    json.dumps(run.report) if run.report else None,
+                    run.budget_limit,
+                    run.budget_consumed,
+                    run.error,
+                    run.status,
+                    run.started_at,
+                    run.completed_at or None,
+                    run.total_elapsed_ms or None,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    async def get_workflow_runs(self, conversation_id: str) -> list[WorkflowRun]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT id, conversation_id, user_message_id, thread_id, "
+                "execution_steps, tool_executions, verification_attempts, "
+                "thinking_traces, report, budget_limit, budget_consumed, "
+                "error, status, started_at, completed_at, total_elapsed_ms "
+                "FROM workflow_runs WHERE conversation_id = ? ORDER BY started_at ASC",
+                (conversation_id,),
+            ).fetchall()
+            result = []
+            for r in rows:
+                d = dict(r)
+                d["execution_steps"] = json.loads(d["execution_steps"])
+                d["tool_executions"] = json.loads(d["tool_executions"])
+                d["verification_attempts"] = json.loads(d["verification_attempts"])
+                d["thinking_traces"] = json.loads(d["thinking_traces"])
+                d["report"] = json.loads(d["report"]) if d["report"] else None
+                d["total_elapsed_ms"] = d["total_elapsed_ms"] or 0
+                result.append(WorkflowRun(**d))
+            return result
         finally:
             conn.close()
 

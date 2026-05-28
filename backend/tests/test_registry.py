@@ -22,7 +22,7 @@ class FakePrefsRepo(ModelPreferencesRepository):
 @pytest.mark.asyncio
 async def test_model_registry_resolve_from_prefs():
     config = InferenceConfig(
-        endpoints=[InferenceEndpointConfig(name="local", base_url="http://localhost:8080/v1")],
+        providers=[InferenceEndpointConfig(name="local", base_url="http://localhost:8080/v1")],
         models=InferenceModelsConfig(
             intelligence_endpoint="local",
             intelligence_model="llama3:70b",
@@ -51,7 +51,7 @@ async def test_model_registry_resolve_from_prefs():
 @pytest.mark.asyncio
 async def test_model_registry_resolve_from_db_prefs():
     config = InferenceConfig(
-        endpoints=[InferenceEndpointConfig(name="local", base_url="http://localhost:8080/v1")],
+        providers=[InferenceEndpointConfig(name="local", base_url="http://localhost:8080/v1")],
         models=InferenceModelsConfig(),
     )
     prefs = FakePrefsRepo()
@@ -79,7 +79,7 @@ async def test_model_registry_resolve_from_db_prefs():
 @pytest.mark.asyncio
 async def test_model_registry_no_assignment_raises():
     config = InferenceConfig(
-        endpoints=[],
+        providers=[],
         models=InferenceModelsConfig(),
     )
     prefs = FakePrefsRepo()
@@ -92,7 +92,7 @@ async def test_model_registry_no_assignment_raises():
 @pytest.mark.asyncio
 async def test_model_registry_set_assignments():
     config = InferenceConfig(
-        endpoints=[],
+        providers=[],
         models=InferenceModelsConfig(),
     )
     prefs = FakePrefsRepo()
@@ -113,7 +113,7 @@ async def test_model_registry_set_assignments():
 @pytest.mark.asyncio
 async def test_model_registry_resolve_different_endpoints():
     config = InferenceConfig(
-        endpoints=[
+        providers=[
             InferenceEndpointConfig(name="local", base_url="http://localhost:8080/v1"),
             InferenceEndpointConfig(name="cloud", base_url="http://cloud:8080/v1"),
         ],

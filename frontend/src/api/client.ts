@@ -12,23 +12,75 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return resp.json();
 }
 
-export interface SessionInfo {
+export interface ConversationInfo {
   id: string;
   title: string;
   created_at: string;
 }
 
-export interface SessionDetail {
+export interface MessageInfo {
+  id: number;
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+export interface ExecutionStep {
+  node: string;
+  label: string;
+  status: "running" | "completed" | "error";
+  cost: number;
+  budget_remaining: number;
+  elapsed_ms?: number;
+  started_at?: string;
+  error?: string;
+}
+
+export interface ToolExecution {
+  tool: string;
+  result: string;
+  duration_ms: number;
+  success: boolean;
+}
+
+export interface ResearchReport {
+  answer: string;
+  citations: { source: string; url?: string; excerpt?: string }[];
+  support: { content: string; source: string }[];
+  critiques: string[];
+  unverified_claims: string[];
+  budget_consumed: number;
+  generation_path?: string;
+}
+
+export interface VerificationAttempt {
+  report: any;
+  attempt: number;
+}
+
+export interface WorkflowRunInfo {
+  id: string;
+  user_message_id: number;
+  execution_steps: ExecutionStep[];
+  tool_executions: ToolExecution[];
+  verification_attempts: VerificationAttempt[];
+  thinking_traces: Record<string, string>;
+  report: ResearchReport | null;
+  budget_limit: number;
+  budget_consumed: number;
+  error: string;
+  status: "running" | "completed" | "error";
+  started_at: string;
+  completed_at: string;
+  total_elapsed_ms?: number;
+}
+
+export interface ConversationDetail {
   id: string;
   title: string;
   created_at: string;
   messages: MessageInfo[];
-}
-
-export interface MessageInfo {
-  role: string;
-  content: string;
-  created_at: string;
+  runs: WorkflowRunInfo[];
 }
 
 export interface ModelSelection {
@@ -49,16 +101,19 @@ export interface ModelsResponse {
 export const api = {
   health: () => request<{ status: string }>("/health"),
 
-  createSession: () => request<SessionInfo>("/sessions", { method: "POST" }),
+  createConversation: () =>
+    request<ConversationInfo>("/conversations", { method: "POST" }),
 
-  listSessions: () => request<SessionInfo[]>("/sessions"),
+  listConversations: () =>
+    request<ConversationInfo[]>("/conversations"),
 
-  getSession: (id: string) => request<SessionDetail>(`/sessions/${id}`),
+  getConversation: (id: string) =>
+    request<ConversationDetail>(`/conversations/${id}`),
 
-  sendMessage: (sessionId: string, content: string) =>
-    request<MessageInfo>(`/sessions/${sessionId}/messages`, {
-      method: "POST",
-      body: JSON.stringify({ content }),
+  updateConversation: (id: string, title: string) =>
+    request<ConversationInfo>(`/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
     }),
 
   getModels: () => request<ModelsResponse>("/models"),

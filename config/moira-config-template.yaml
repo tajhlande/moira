@@ -10,10 +10,9 @@
 # --- Database ---
 # Override the database directory with MOIRA_DATA_DIR env var.
 # If set, the database file is $MOIRA_DATA_DIR/moira.db and sqlite_path below is ignored.
-
 database:
   sqlite_path: ./data/moira.db
-  # lancedb_path: ./data/vectors  # Phase 2
+  lancedb_path: ./data/vectors
 
 # --- Budget (consumed by Phase 2 workflow) ---
 
@@ -32,20 +31,18 @@ budget:
 # --- Inference ---
 
 inference:
-  endpoints:
+  providers:
     - name: local
       base_url: "http://localhost:8080/v1"
       # API keys can be provided here or via MOIRA_API_KEY_{NAME} env vars.
-      # For example, MOIRA_API_KEY_LOCAL for the endpoint named "local".
+      # For example, MOIRA_API_KEY_LOCAL for the provider named "local".
       # Env vars take precedence over this value.
       api_key: ""
   models:
-    intelligence:
-      endpoint: ""  # endpoint name (set via UI or here)
-      model: ""     # model ID (set via UI or here)
-    task:
-      endpoint: ""  # endpoint name (set via UI or here)
-      model: ""     # model ID (set via UI or here)
+    intelligence_endpoint: ""  # provider name
+    intelligence_model: ""     # model ID
+    task_endpoint: ""          # provider name
+    task_model: ""             # model ID
 
 # --- Embeddings (Phase 2) ---
 
