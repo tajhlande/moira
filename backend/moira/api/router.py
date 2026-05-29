@@ -194,13 +194,10 @@ async def generate_conversation_title(
     if not user_messages:
         raise HTTPException(status_code=400, detail="No user messages in conversation")
 
-    # Build a summary of the conversation for the title model.
-    # Use the first and most recent user messages to keep the prompt small.
-    first = user_messages[0].content[:500]
-    last = user_messages[-1].content[:500] if len(user_messages) > 1 else ""
-    context = f"First message: {first}"
-    if last:
-        context += f"\nLatest message: {last}"
+    # Build context from all user messages so the title reflects the full
+    # conversation, not just a truncated snippet that may miss the real topic.
+    parts = [f"Message {i + 1}: {m.content}" for i, m in enumerate(user_messages)]
+    context = "\n\n".join(parts)
 
     registry = _registry()
     try:
