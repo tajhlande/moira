@@ -12,4 +12,7 @@
 | **user-experience.md**          | What the user sees and does — the intended UX for the research cycle, continued conversation, and sidebar.                         |
 | **verification-outcomes.md**    | The 11 verification outcome cases the model can return, grouped into accept/retry/error with retry guidance.                       |
 | **agent-craft.md**              | Running notes on prompt tuning, model behavior observations, and the non-structural factors that make the agent trustworthy.       |
-| **standard-tools.md**           | Descriptive list of built-in tools that should always be available to the agent.                                                   |
+| **standard-tools.md**             | Descriptive list of built-in tools that should always be available to the agent.                                                   |
+| **two-pass-discovery.md**         | Plan for restructuring tool discovery to run before and after planning so plans are tool-aware.                                    |
+| **run-persistence-reconnect.md**  | Plan for decoupling graph runs from HTTP requests, incremental persistence, and SSE stream reconnection.                           |
+| **tiptap-input.md**               | Plan for replacing the plain-text input with TipTap rich-text editor.                                                              |
