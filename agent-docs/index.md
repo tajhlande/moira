@@ -16,3 +16,4 @@
 | **two-pass-discovery.md**         | Plan for restructuring tool discovery to run before and after planning so plans are tool-aware.                                    |
 | **run-persistence-reconnect.md**  | Plan for decoupling graph runs from HTTP requests, incremental persistence, and SSE stream reconnection.                           |
 | **tiptap-input.md**               | Plan for replacing the plain-text input with TipTap rich-text editor.                                                              |
+| **phase3-ui-prep.md**             | Phase 3 preparation: multi-view navigation framework, tool catalog UI, and standard tool definitions.                              |

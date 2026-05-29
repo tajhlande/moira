@@ -11,12 +11,38 @@ const router = createRouter({
       path: "/conversation/new",
       name: "new-conversation",
       component: () => import("../components/ChatView.vue"),
+      meta: { sidebar: "conversations" },
     },
     {
       path: "/conversation/:id",
       name: "conversation",
       component: () => import("../components/ChatView.vue"),
       props: true,
+      meta: { sidebar: "conversations" },
+    },
+    {
+      path: "/tools",
+      name: "tools",
+      component: () => import("../components/ToolCatalogView.vue"),
+      meta: { sidebar: "tools" },
+    },
+    {
+      path: "/tools/new",
+      name: "tool-new",
+      component: () => import("../components/ToolWizardView.vue"),
+      meta: { sidebar: "tools" },
+    },
+    {
+      path: "/tools/:name",
+      name: "tool-detail",
+      component: () => import("../components/ToolDetailView.vue"),
+      meta: { sidebar: "tools" },
+    },
+    {
+      path: "/settings",
+      name: "settings",
+      component: () => import("../components/SettingsView.vue"),
+      meta: { sidebar: "settings" },
     },
   ],
 });

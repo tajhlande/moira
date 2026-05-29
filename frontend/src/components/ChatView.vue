@@ -331,8 +331,11 @@ async function copyMessage(content: string, index: number) {
 
 .input-area {
   display: flex;
+  align-items: center;
   gap: 8px;
-  padding: 16px 40px;
+  min-height: var(--bottom-bar-height, 66px);
+  box-sizing: border-box;
+  padding: 0 40px;
   border-top: 1px solid var(--moira-border, #e0e0e0);
 }
 </style>
