@@ -2,7 +2,7 @@
 import { ref, watch, onMounted, inject, type Ref } from "vue";
 import { initMarked } from "../markdown";
 
-const props = defineProps<{ content: string }>();
+const props = defineProps<{ content: string; inline?: boolean }>();
 const isDark = inject<Ref<boolean>>("isDark", ref(false));
 
 const rendered = ref("");
@@ -14,7 +14,14 @@ async function render() {
   if (!marked) {
     marked = await initMarked();
   }
-  rendered.value = await marked.parse(props.content) as string;
+  const raw = await marked.parse(props.content) as string;
+  // Inline mode: strip wrapping <p> tags so the content flows inline
+  // within list items and other block elements.
+  if (props.inline) {
+    rendered.value = raw.replace(/^<p>/, "").replace(/<\/p>\n?$/, "");
+  } else {
+    rendered.value = raw;
+  }
   ready.value = true;
 }
 
@@ -47,15 +54,20 @@ function handleClick(e: MouseEvent) {
 </script>
 
 <template>
-  <div
+  <component
+    :is="inline ? 'span' : 'div'"
     v-if="ready"
     :class="['markdown-content', isDark ? 'markdown-dark' : 'markdown-light']"
     @click="handleClick"
     v-html="rendered"
   />
-  <div v-else :class="['markdown-content', 'markdown-loading', isDark ? 'markdown-dark' : 'markdown-light']">
+  <component
+    :is="inline ? 'span' : 'div'"
+    v-else
+    :class="['markdown-content', 'markdown-loading', isDark ? 'markdown-dark' : 'markdown-light']"
+  >
     {{ content }}
-  </div>
+  </component>
 </template>
 
 <style>

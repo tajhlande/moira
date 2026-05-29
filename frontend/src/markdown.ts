@@ -101,6 +101,12 @@ export async function initMarked(): Promise<Marked> {
   const md = new Marked({
     gfm: true,
     breaks: false,
+    renderer: {
+      link({ href, title, text }) {
+        const t = title ? ` title="${title}"` : "";
+        return `<a href="${href}"${t} target="_blank" rel="noopener noreferrer">${text}</a>`;
+      },
+    },
   });
 
   md.use(

@@ -319,12 +319,6 @@ async function copyMessage(content: string, index: number) {
   display: flex;
   justify-content: flex-end;
   margin-top: 4px;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.message:hover .message-actions {
-  opacity: 1;
 }
 
 .copy-btn {
