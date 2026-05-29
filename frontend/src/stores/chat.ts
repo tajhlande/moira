@@ -88,6 +88,15 @@ export const useChatStore = defineStore("chat", () => {
         runMap.set(run.user_message_id, run);
       }
       runs.value = runMap;
+
+      // Reconnect to any in-flight run. Don't seed live workflow state here —
+      // the SSE replay will populate it from scratch. The loading spinner
+      // provides feedback until the first event arrives.
+      const runningRun = detail.runs.find((r) => r.status === "running");
+      if (runningRun) {
+        loading.value = true;
+        connectStream(id, runningRun.user_message_id);
+      }
     } catch (e: any) {
       error.value = e.message;
     }
@@ -97,14 +106,6 @@ export const useChatStore = defineStore("chat", () => {
     loading.value = true;
     error.value = null;
     resetWorkflowState();
-
-    const tempId = -Date.now();
-    messages.value.push({
-      id: tempId,
-      role: "user",
-      content,
-      created_at: new Date().toISOString(),
-    });
 
     try {
       let createdNewConversation = false;
@@ -116,29 +117,31 @@ export const useChatStore = defineStore("chat", () => {
         createdNewConversation = true;
       }
 
-      // Fire title generation immediately on first message — don't wait
-      // for the workflow to complete. The task model generates a title
+      // POST to start the run (returns JSON with run_id + user_message_id).
+      // This also persists the user message, so fire title generation after.
+      const { user_message_id } = await api.startRun(
+        currentConversationId.value,
+        content,
+      );
+
+      // Fire title generation after the user message is persisted — don't
+      // wait for the workflow to complete. The task model generates a title
       // from the user's message content. Only runs for new conversations.
       if (createdNewConversation) {
         generateTitle(currentConversationId.value);
       }
 
-      const responseText = await streamMessage(
-        currentConversationId.value,
+      // Push the real user message (server-assigned ID)
+      messages.value.push({
+        id: user_message_id,
+        role: "user",
         content,
-        tempId
-      );
-      // Only push an assistant message bubble when there's no report panel
-      // to display the answer. When a report exists, the ReportPanel component
-      // renders the answer along with citations, critiques, etc.
-      if (!currentReport.value) {
-        messages.value.push({
-          id: -Date.now(),
-          role: "assistant",
-          content: responseText,
-          created_at: new Date().toISOString(),
-        });
-      }
+        created_at: new Date().toISOString(),
+      });
+      activeUserMessageId.value = user_message_id;
+
+      // Connect to the SSE stream for live events
+      await connectStream(currentConversationId.value, user_message_id);
     } catch (e: any) {
       error.value = e.message;
     } finally {
@@ -146,23 +149,26 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
-  async function streamMessage(
+  async function connectStream(
     conversationId: string,
-    content: string,
-    userMessageId: number
-  ): Promise<string> {
-    const API_BASE =
-      import.meta.env.VITE_API_URL || "http://localhost:8000/api";
-    const resp = await fetch(
-      `${API_BASE}/conversations/${conversationId}/messages`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
-      }
-    );
+    userMessageId: number,
+  ): Promise<void> {
+    const url = api.streamUrl(conversationId);
+    const resp = await fetch(url);
 
     if (!resp.ok) {
+      // 404 means the run already completed between POST and GET.
+      // Re-fetch conversation state to get the persisted run.
+      if (resp.status === 404) {
+        const detail = await api.getConversation(conversationId);
+        const run = detail.runs.find((r) => r.user_message_id === userMessageId);
+        if (run) {
+          const newMap = new Map(runs.value);
+          newMap.set(userMessageId, run);
+          runs.value = newMap;
+        }
+        return;
+      }
       const body = await resp.json().catch(() => ({}));
       throw new Error(body.detail || `HTTP ${resp.status}`);
     }
@@ -173,38 +179,42 @@ export const useChatStore = defineStore("chat", () => {
     const decoder = new TextDecoder();
     let buffer = "";
     let currentEventType = "";
-    let answerText = "";
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
 
-      for (const line of lines) {
-        if (line.startsWith("event:")) {
-          currentEventType = line.slice(6).trim();
-        } else if (line.startsWith("data:")) {
-          const dataStr = line.slice(5).trim();
-          if (!dataStr) continue;
-          try {
-            const payload = JSON.parse(dataStr);
-            handleEvent(currentEventType, payload, userMessageId);
+        for (const line of lines) {
+          if (line.startsWith("event:")) {
+            currentEventType = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            const dataStr = line.slice(5).trim();
+            if (!dataStr) continue;
+            try {
+              const payload = JSON.parse(dataStr);
+              handleEvent(currentEventType, payload, userMessageId);
+              currentEventType = "";
+            } catch {
+              // non-JSON data, skip
+            }
+          } else if (line.trim() === "") {
             currentEventType = "";
-          } catch {
-            // non-JSON data, skip
           }
-        } else if (line.trim() === "") {
-          currentEventType = "";
         }
       }
+    } catch (e: any) {
+      // "Error in input stream" is expected when the server closes the SSE
+      // connection after the run completes. The run_complete event was already
+      // processed, so this is just the stream teardown — safe to ignore.
+      if (!e.message?.includes("input stream")) {
+        throw e;
+      }
     }
-
-    return (
-      answerText || currentReport.value?.answer || "Unable to generate a research report."
-    );
   }
 
   function handleEvent(eventType: string, payload: any, userMessageId?: number) {

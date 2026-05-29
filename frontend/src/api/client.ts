@@ -126,6 +126,18 @@ export const api = {
       method: "DELETE",
     }),
 
+  startRun: (conversationId: string, content: string) =>
+    request<{ run_id: string; user_message_id: number }>(
+      `/conversations/${conversationId}/messages`,
+      {
+        method: "POST",
+        body: JSON.stringify({ content }),
+      },
+    ),
+
+  streamUrl: (conversationId: string) =>
+    `${API_BASE}/conversations/${conversationId}/stream`,
+
   getModels: () => request<ModelsResponse>("/models"),
 
   setModels: (assignments: ModelAssignments) =>

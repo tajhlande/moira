@@ -293,6 +293,11 @@ async def app_with_fake_inference(tmp_dir):
     research_graph = compile_graph(config)
     _services["research_graph"] = research_graph
 
+    # Run manager (background graph execution)
+    from moira.workflow.run_manager import RunManager
+
+    _services["run_manager"] = RunManager()
+
     _services["config"] = config
 
     # Build the FastAPI app
@@ -333,6 +338,28 @@ def _parse_sse_events(raw: bytes) -> list[dict[str, Any]]:
     return events
 
 
+async def _send_and_stream(
+    client: httpx.AsyncClient,
+    conversation_id: str,
+    content: str,
+) -> list[dict[str, Any]]:
+    """Start a run (POST) and consume its SSE stream (GET).
+    Returns parsed SSE events."""
+    resp = await client.post(
+        f"/api/conversations/{conversation_id}/messages",
+        json={"content": content},
+    )
+    assert resp.status_code == 200, f"POST /messages failed: {resp.text}"
+    data = resp.json()
+    assert "run_id" in data
+
+    resp = await client.get(f"/api/conversations/{conversation_id}/stream")
+    assert resp.status_code == 200, f"GET /stream failed: {resp.text}"
+    assert "text/event-stream" in resp.headers.get("content-type", "")
+
+    return _parse_sse_events(resp.content)
+
+
 # ---------------------------------------------------------------------------
 # Integration tests
 # ---------------------------------------------------------------------------
@@ -349,26 +376,16 @@ class TestSSEStreamingEndpoint:
         client, transport = app_with_fake_inference
         logger.info("INTegration test: full graph run with SSE streaming")
 
-        # Create a conversation
         resp = await client.post("/api/conversations")
         assert resp.status_code == 200
         conversation_id = resp.json()["id"]
         logger.info("Created conversation %s", conversation_id)
 
-        # Send a message via the SSE streaming endpoint
-        resp = await client.post(
-            f"/api/conversations/{conversation_id}/messages",
-            json={"content": "What is the speed of light?"},
-        )
-        assert resp.status_code == 200
-        assert "text/event-stream" in resp.headers.get("content-type", "")
-
-        events = _parse_sse_events(resp.content)
+        events = await _send_and_stream(client, conversation_id, "What is the speed of light?")
         logger.info("Received %d SSE events", len(events))
         event_types = [e["event"] for e in events]
         logger.info("Event types: %s", event_types)
 
-        # Verify the expected event sequence
         assert "node_start" in event_types, "Should see node_start events"
         assert "node_end" in event_types, "Should see node_end events"
         assert "run_complete" in event_types, "Should end with run_complete"
@@ -382,11 +399,7 @@ class TestSSEStreamingEndpoint:
         resp = await client.post("/api/conversations")
         conversation_id = resp.json()["id"]
 
-        resp = await client.post(
-            f"/api/conversations/{conversation_id}/messages",
-            json={"content": "What is the speed of light?"},
-        )
-        events = _parse_sse_events(resp.content)
+        events = await _send_and_stream(client, conversation_id, "What is the speed of light?")
 
         complete_events = [e for e in events if e["event"] == "run_complete"]
         assert len(complete_events) == 1
@@ -408,10 +421,7 @@ class TestSSEStreamingEndpoint:
         resp = await client.post("/api/conversations")
         conversation_id = resp.json()["id"]
 
-        await client.post(
-            f"/api/conversations/{conversation_id}/messages",
-            json={"content": "What is the speed of light?"},
-        )
+        await _send_and_stream(client, conversation_id, "What is the speed of light?")
 
         # At minimum: /v1/models (registry refresh) + planning + report_generation
         assert len(transport.requests) >= 2
@@ -429,11 +439,7 @@ class TestSSEStreamingEndpoint:
         resp = await client.post("/api/conversations")
         conversation_id = resp.json()["id"]
 
-        resp = await client.post(
-            f"/api/conversations/{conversation_id}/messages",
-            json={"content": "Budget test question"},
-        )
-        events = _parse_sse_events(resp.content)
+        events = await _send_and_stream(client, conversation_id, "Budget test question")
 
         budget_events = [e for e in events if e["event"] == "node_end"]
         budgets = [e["data"]["budget_remaining"] for e in budget_events]
@@ -455,10 +461,7 @@ class TestSSEStreamingEndpoint:
         resp = await client.post("/api/conversations")
         conversation_id = resp.json()["id"]
 
-        await client.post(
-            f"/api/conversations/{conversation_id}/messages",
-            json={"content": "Persistence test"},
-        )
+        await _send_and_stream(client, conversation_id, "Persistence test")
 
         # Fetch the conversation and check persisted data
         resp = await client.get(f"/api/conversations/{conversation_id}")
@@ -526,12 +529,8 @@ class TestMultiTurnConversation:
         resp = await client.post("/api/conversations")
         conversation_id = resp.json()["id"]
 
-        resp = await client.post(
-            f"/api/conversations/{conversation_id}/messages",
-            json={"content": "First question"},
-        )
-        events = _parse_sse_events(resp.content)
-        assert any(e["event"] == "run_complete" for e in events)
+        events_resp = await _send_and_stream(client, conversation_id, "First question")
+        assert any(e["event"] == "run_complete" for e in events_resp)
 
         # Reset transport for the second run
         transport._responses = [
@@ -542,11 +541,7 @@ class TestMultiTurnConversation:
         transport._index = 0
 
         # Second message in the same conversation
-        resp = await client.post(
-            f"/api/conversations/{conversation_id}/messages",
-            json={"content": "Follow up question"},
-        )
-        events2 = _parse_sse_events(resp.content)
+        events2 = await _send_and_stream(client, conversation_id, "Follow up question")
         assert any(e["event"] == "run_complete" for e in events2)
         logger.info("Second turn received %d events", len(events2))
 
@@ -594,11 +589,9 @@ class TestGraphVerificationRouting:
         resp = await client.post("/api/conversations")
         conversation_id = resp.json()["id"]
 
-        resp = await client.post(
-            f"/api/conversations/{conversation_id}/messages",
-            json={"content": "Question that needs verification retry"},
+        events = await _send_and_stream(
+            client, conversation_id, "Question that needs verification retry"
         )
-        events = _parse_sse_events(resp.content)
         event_types = [e["event"] for e in events]
 
         # Should see verification_report events (at least 2: fail then pass)
@@ -613,4 +606,66 @@ class TestGraphVerificationRouting:
         )
 
         # Should still end with a run_complete
+        assert "run_complete" in event_types
+
+
+class TestStreamReplay:
+    """Integration tests for event replay on late subscriber connection.
+
+    When the SSE client connects after the graph has already started
+    (e.g. due to network latency between POST returning and GET /stream
+    connecting), subscribe() must replay all accumulated state so the
+    client doesn't miss planning or other early steps."""
+
+    async def test_replay_includes_completed_steps_before_live_events(
+        self, app_with_fake_inference
+    ):
+        """Integration test: subscribe() replays completed execution steps
+        that occurred before the subscriber connected, then yields live events."""
+        client, transport = app_with_fake_inference
+        logger.info("Integration test: stream replay on late connect")
+
+        transport._responses = [
+            PLAN_RESPONSE,
+            TOOL_SELECTION_RESPONSE,
+            RESEARCH_RESPONSE,
+            COMPRESSION_RESPONSE,
+            DRAFT_RESPONSE,
+            VERIFICATION_PASS_RESPONSE,
+            REPORT_RESPONSE,
+        ]
+        transport._index = 0
+
+        resp = await client.post("/api/conversations")
+        conversation_id = resp.json()["id"]
+
+        # Start the run via POST
+        post_resp = await client.post(
+            f"/api/conversations/{conversation_id}/messages",
+            json={"content": "Replay test"},
+        )
+        assert post_resp.status_code == 200
+
+        # Small delay to let the graph advance past planning before we connect
+        import asyncio
+
+        await asyncio.sleep(0.3)
+
+        # Now connect the SSE stream — planning should already be done
+        stream_resp = await client.get(f"/api/conversations/{conversation_id}/stream")
+        assert stream_resp.status_code == 200
+
+        events = _parse_sse_events(stream_resp.content)
+        event_types = [e["event"] for e in events]
+        logger.info("Replay test received %d events: %s", len(events), event_types)
+
+        # Planning node_start should be present even though we connected late,
+        # because subscribe() replays accumulated state.
+        node_starts = [e for e in events if e["event"] == "node_start"]
+        nodes = [e["data"]["node"] for e in node_starts]
+        assert "planning" in nodes, (
+            f"Expected 'planning' in replayed node_start events, got: {nodes}"
+        )
+
+        # Must still end with run_complete
         assert "run_complete" in event_types

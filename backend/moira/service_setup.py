@@ -168,6 +168,11 @@ async def init_services(
         research_graph = compile_graph(config)
     _services["research_graph"] = research_graph
 
+    # --- Phase 2: Run manager (background graph execution) ---
+    from moira.workflow.run_manager import RunManager
+
+    _services["run_manager"] = RunManager()
+
     _services["config"] = config
 
 

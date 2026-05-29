@@ -17,6 +17,7 @@ beforeEach(async () => {
   });
   router.push("/conversation/new");
   await router.isReady();
+  mockFetch.mockClear();
 });
 
 function createSSEResponse(events: { event: string; data: string }[]) {
@@ -62,6 +63,12 @@ vi.mock("../../api/client", () => ({
       },
     })),
     setModels: vi.fn(async (assignments) => assignments),
+    startRun: vi.fn(async () => ({
+      run_id: "run-1",
+      user_message_id: 1,
+    })),
+    streamUrl: vi.fn(() => "http://localhost:8000/api/conversations/conv-1/stream"),
+    generateTitle: vi.fn(async () => {}),
   },
 }));
 
@@ -76,10 +83,15 @@ async function flushUi() {
   await nextTick();
 }
 
+function mockStartRunAndStream(events: { event: string; data: string }[]) {
+  // api.startRun is mocked separately (returns JSON), so only the SSE GET
+  // call from connectStream hits fetch. Set up a single SSE response.
+  mockFetch.mockResolvedValueOnce(createSSEResponse(events));
+}
+
 describe("ChatView", () => {
   it("renders chat messages using mocked SSE streaming", async () => {
-    mockFetch.mockResolvedValueOnce(
-      createSSEResponse([
+    mockStartRunAndStream([
         {
           event: "node_start",
           data: JSON.stringify({
@@ -111,7 +123,7 @@ describe("ChatView", () => {
             total_elapsed_ms: 5000,
           }),
         },
-      ])
+      ]
     );
 
     const pinia = createPinia();
@@ -129,8 +141,7 @@ describe("ChatView", () => {
   });
 
   it("finalizes run with steps and timing after stream completes", async () => {
-    mockFetch.mockResolvedValueOnce(
-      createSSEResponse([
+    mockStartRunAndStream([
         {
           event: "node_start",
           data: JSON.stringify({
@@ -160,7 +171,7 @@ describe("ChatView", () => {
             total_elapsed_ms: 5000,
           }),
         },
-      ])
+      ]
     );
 
     const pinia = createPinia();
@@ -193,8 +204,7 @@ describe("ChatView", () => {
   it("shows steps when run_complete arrives before final node_end (backend event order)", async () => {
     // The backend report_generation node emits run_complete BEFORE node_end.
     // This test reproduces that exact event ordering to verify steps don't disappear.
-    mockFetch.mockResolvedValueOnce(
-      createSSEResponse([
+    mockStartRunAndStream([
         {
           event: "node_start",
           data: JSON.stringify({
@@ -241,7 +251,7 @@ describe("ChatView", () => {
             elapsed_ms: 2000,
           }),
         },
-      ])
+      ]
     );
 
     const pinia = createPinia();
@@ -266,8 +276,7 @@ describe("ChatView", () => {
     // This test verifies the rendered DOM contains steps after the workflow completes.
     // The bug symptom: steps disappear when finalizeRun switches rendering from
     // live template to RunArtifacts component.
-    mockFetch.mockResolvedValueOnce(
-      createSSEResponse([
+    mockStartRunAndStream([
         {
           event: "node_start",
           data: JSON.stringify({
@@ -312,7 +321,7 @@ describe("ChatView", () => {
             elapsed_ms: 2000,
           }),
         },
-      ])
+      ]
     );
 
     const pinia = createPinia();
@@ -343,8 +352,7 @@ describe("ChatView", () => {
   it("steps persist in DOM after assistant message is added", async () => {
     // After streamMessage returns, sendMessage pushes an assistant message.
     // This changes the messages array and re-renders. Steps must survive this.
-    mockFetch.mockResolvedValueOnce(
-      createSSEResponse([
+    mockStartRunAndStream([
         {
           event: "node_start",
           data: JSON.stringify({
@@ -374,7 +382,7 @@ describe("ChatView", () => {
             total_elapsed_ms: 3000,
           }),
         },
-      ])
+      ]
     );
 
     const pinia = createPinia();

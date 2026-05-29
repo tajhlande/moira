@@ -173,9 +173,9 @@ async function copyMessage(content: string, index: number) {
         </div>
 
         <!-- After a user message: render associated run artifacts -->
-        <template v-if="msg.role === 'user'">
-          <!-- Persisted run (from DB via selectConversation) -->
-          <template v-if="store.getRunForMessage(msg.id)" as="template">
+          <template v-if="msg.role === 'user'">
+          <!-- Persisted run (completed — from DB via selectConversation) -->
+          <template v-if="store.getRunForMessage(msg.id) && store.getRunForMessage(msg.id)!.status !== 'running'" as="template">
             <RunArtifacts :run="store.getRunForMessage(msg.id)!" />
           </template>
 
