@@ -20,9 +20,10 @@ class RESTTool(BaseTool):
     async def execute(self, args: dict[str, Any]) -> ToolResult:
         start = time.monotonic()
         try:
+            config = self.definition.config
+            method = (config.get("method") or "GET").upper()
+            url = config.get("endpoint", "")
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                method = self.definition.method.upper()
-                url = self.definition.endpoint
                 if method == "GET":
                     resp = await client.request(method, url, params=args)
                 else:

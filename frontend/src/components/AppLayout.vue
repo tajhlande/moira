@@ -3,12 +3,14 @@ import { NScrollbar } from "naive-ui";
 import { useRoute } from "vue-router";
 import { computed, ref, onMounted, onUnmounted } from "vue";
 import { useChatStore } from "../stores/chat";
+import { useToolsStore } from "../stores/tools";
 import ConversationSidebar from "./ConversationSidebar.vue";
 import ToolSidebar from "./ToolSidebar.vue";
 import NavTray from "./NavTray.vue";
 
 const route = useRoute();
 const store = useChatStore();
+const toolsStore = useToolsStore();
 
 const siderWidth = ref(260);
 const SIDER_MIN = 180;
@@ -61,6 +63,7 @@ onUnmounted(() => {
 
 onMounted(() => {
   store.fetchConversations();
+  toolsStore.fetchTools();
 });
 </script>
 

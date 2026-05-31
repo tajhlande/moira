@@ -34,6 +34,7 @@ export interface ExecutionStep {
   elapsed_ms?: number;
   started_at?: string;
   error?: string;
+  detail?: Record<string, unknown>;
 }
 
 export interface ToolExecution {
@@ -64,7 +65,6 @@ export interface WorkflowRunInfo {
   execution_steps: ExecutionStep[];
   tool_executions: ToolExecution[];
   verification_attempts: VerificationAttempt[];
-  thinking_traces: Record<string, string>;
   report: ResearchReport | null;
   budget_limit: number;
   budget_consumed: number;
@@ -145,4 +145,31 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(assignments),
     }),
+
+  getTools: () => request<{ tools: ToolInfo[]; groups: ToolGroupInfo[] }>("/tools"),
+
+  patchTool: (name: string, fields: Record<string, unknown>) =>
+    request<ToolInfo>(`/tools/${name}`, {
+      method: "PATCH",
+      body: JSON.stringify(fields),
+    }),
 };
+
+export interface ToolGroupInfo {
+  name: string;
+  display_name: string;
+}
+
+export interface ToolInfo {
+  name: string;
+  description: string;
+  argument_schema: Record<string, unknown>;
+  config: Record<string, unknown>;
+  tags: string[];
+  reliability: string;
+  is_default: boolean;
+  enabled: boolean;
+  built_in: boolean;
+  implementation: string;
+  group_name: string;
+}

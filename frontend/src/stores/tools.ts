@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
+import { api, type ToolInfo, type ToolGroupInfo } from "../api/client";
 
 export interface ToolParameter {
   name: string;
@@ -9,130 +10,63 @@ export interface ToolParameter {
   default?: string | number | boolean;
 }
 
+export interface ToolGroup {
+  name: string;
+  displayName: string;
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
-  group: string;
-  parameters: ToolParameter[];
+  groupName: string;
+  groupDisplayName: string;
+  isDefault: boolean;
+  enabled: boolean;
   builtIn: boolean;
+  implementation: string;
+  argumentSchema: Record<string, unknown>;
+  config: Record<string, unknown>;
+  parameters: ToolParameter[];
 }
 
-const STANDARD_TOOLS: ToolDefinition[] = [
-  {
-    name: "user_question",
-    description:
-      "Ask the user a follow-up question to clarify the research question or guide the answer. Presents multiple-choice options plus free-text response.",
-    group: "Standard",
-    builtIn: true,
-    parameters: [
-      {
-        name: "question",
-        type: "string",
-        required: true,
-        description: "The question to ask the user",
-      },
-      {
-        name: "options",
-        type: "string[]",
-        required: true,
-        description: "A/B/C/D multiple choice options for the user to select from",
-      },
-    ],
-  },
-  {
-    name: "web_search",
-    description:
-      "Search the web for information. Returns a sorted list of URLs and relevance scores.",
-    group: "Standard",
-    builtIn: true,
-    parameters: [
-      {
-        name: "query",
-        type: "string",
-        required: true,
-        description: "The search query",
-      },
-      {
-        name: "domains",
-        type: "string[]",
-        required: false,
-        description: "Optional list of web domains to restrict the search to",
-      },
-      {
-        name: "max_results",
-        type: "number",
-        required: false,
-        description: "Maximum number of search results to return",
-        default: 5,
-      },
-    ],
-  },
-  {
-    name: "url_content",
-    description:
-      "Retrieve the content of a web page given its URL. Can return full HTML or text-only content.",
-    group: "Standard",
-    builtIn: true,
-    parameters: [
-      {
-        name: "url",
-        type: "string",
-        required: true,
-        description: "The URL to retrieve content from",
-      },
-      {
-        name: "text_only",
-        type: "boolean",
-        required: false,
-        description: "Return only the text content, stripping HTML",
-        default: true,
-      },
-      {
-        name: "xpath",
-        type: "string",
-        required: false,
-        description: "XPath expression to return only a subset of the page content",
-      },
-      {
-        name: "summarize",
-        type: "boolean",
-        required: false,
-        description: "Summarize the content via a sub-agent",
-        default: false,
-      },
-    ],
-  },
-  {
-    name: "calculator",
-    description:
-      "Evaluate a mathematical expression. Supports arithmetic operators, standard math functions, and trigonometric functions.",
-    group: "Standard",
-    builtIn: true,
-    parameters: [
-      {
-        name: "expression",
-        type: "string",
-        required: true,
-        description:
-          "Mathematical expression in infix notation (e.g. sqrt(2) + 3^4)",
-      },
-    ],
-  },
-];
+function extractParameters(schema: Record<string, unknown>): ToolParameter[] {
+  const props = schema?.properties as Record<string, Record<string, unknown>> | undefined;
+  if (!props) return [];
+  const required = (schema?.required as string[]) || [];
+  return Object.entries(props).map(([name, prop]) => ({
+    name,
+    type: (prop.type as string) || "string",
+    required: required.includes(name),
+    description: (prop.description as string) || "",
+    default: prop.default as string | number | boolean | undefined,
+  }));
+}
+
+function apiToolToStore(
+  info: ToolInfo,
+  groupLookup: Map<string, ToolGroupInfo>,
+): ToolDefinition {
+  const group = groupLookup.get(info.group_name);
+  return {
+    name: info.name,
+    description: info.description,
+    groupName: info.group_name || "ungrouped",
+    groupDisplayName: group?.display_name || info.group_name || "Ungrouped",
+    isDefault: info.is_default,
+    enabled: info.enabled,
+    builtIn: info.built_in,
+    implementation: info.implementation,
+    argumentSchema: info.argument_schema,
+    config: info.config,
+    parameters: extractParameters(info.argument_schema),
+  };
+}
 
 export const useToolsStore = defineStore("tools", () => {
-  const tools = ref<ToolDefinition[]>([...STANDARD_TOOLS]);
+  const tools = ref<ToolDefinition[]>([]);
+  const groups = ref<Map<string, ToolDefinition[]>>(new Map());
   const selectedToolName = ref<string | null>(null);
-
-  const groups = computed(() => {
-    const map = new Map<string, ToolDefinition[]>();
-    for (const tool of tools.value) {
-      const list = map.get(tool.group) || [];
-      list.push(tool);
-      map.set(tool.group, list);
-    }
-    return map;
-  });
+  const loaded = ref(false);
 
   const selectedTool = computed(() => {
     if (!selectedToolName.value) return null;
@@ -142,6 +76,29 @@ export const useToolsStore = defineStore("tools", () => {
   const toolCount = computed(() => tools.value.length);
   const groupCount = computed(() => groups.value.size);
 
+  async function fetchTools() {
+    if (loaded.value) return;
+    try {
+      const resp = await api.getTools();
+      const groupLookup = new Map<string, ToolGroupInfo>();
+      for (const g of resp.groups) {
+        groupLookup.set(g.name, g);
+      }
+      tools.value = resp.tools.map((t) => apiToolToStore(t, groupLookup));
+
+      const map = new Map<string, ToolDefinition[]>();
+      for (const tool of tools.value) {
+        const list = map.get(tool.groupName) || [];
+        list.push(tool);
+        map.set(tool.groupName, list);
+      }
+      groups.value = map;
+      loaded.value = true;
+    } catch {
+      // Backend not available — store stays empty
+    }
+  }
+
   function selectTool(name: string) {
     selectedToolName.value = name;
   }
@@ -150,14 +107,45 @@ export const useToolsStore = defineStore("tools", () => {
     selectedToolName.value = null;
   }
 
+  async function patchTool(name: string, fields: Record<string, unknown>) {
+    const updated = await api.patchTool(name, fields);
+    const tool = tools.value.find((t) => t.name === name);
+    if (tool) {
+      const groupLookup = new Map<string, ToolGroupInfo>();
+      // Re-derive the group display name from the current groups
+      for (const [g, list] of groups.value) {
+        if (list.length > 0) groupLookup.set(g, { name: g, display_name: list[0].groupDisplayName });
+      }
+      const patched = apiToolToStore(updated, groupLookup);
+      Object.assign(tool, patched);
+    }
+  }
+
+  async function toggleEnabled(name: string, enabled: boolean) {
+    await patchTool(name, { enabled });
+  }
+
+  async function toggleDefault(name: string, isDefault: boolean) {
+    await patchTool(name, { is_default: isDefault });
+  }
+
+  const defaultToolNames = computed(() =>
+    tools.value.filter((t) => t.isDefault).map((t) => t.name),
+  );
+
   return {
     tools,
-    selectedToolName,
     groups,
+    selectedToolName,
     selectedTool,
     toolCount,
     groupCount,
+    defaultToolNames,
+    fetchTools,
     selectTool,
     clearSelection,
+    toggleEnabled,
+    toggleDefault,
+    patchTool,
   };
 });

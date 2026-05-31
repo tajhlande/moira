@@ -62,7 +62,6 @@ class ActiveRun:
         self.execution_steps: list[dict] = []
         self.tool_executions: list[dict] = []
         self.verification_attempts: list[dict] = []
-        self.thinking_traces: dict[str, str] = {}
         self.report: dict | None = None
         self.error: str = ""
         self.status: str = "running"
@@ -77,6 +76,8 @@ class ActiveRun:
         self._graph_task: asyncio.Task | None = None
         self._run_started_at: float = 0.0
         self._step_started_at: float | None = None
+        self._persist_lock = asyncio.Lock()
+        self._persist_pending: bool = False
 
     def _replay_events(self) -> list[dict]:
         """Build a list of SSE events representing all state accumulated so
@@ -106,7 +107,10 @@ class ActiveRun:
                 "elapsed_ms": step.get("elapsed_ms", 0),
             }
             events.append({"event": "node_start", "data": json.dumps(payload)})
-            events.append({"event": "node_end", "data": json.dumps(payload)})
+            end_payload = {**payload}
+            if step.get("detail"):
+                end_payload["detail"] = step["detail"]
+            events.append({"event": "node_end", "data": json.dumps(end_payload)})
 
         # Currently running step (started but not yet ended)
         if self._current_step:
@@ -322,6 +326,10 @@ class ActiveRun:
                 self._current_step["cost"] = prev - self.budget_remaining
                 self._current_step["status"] = "completed"
                 self._current_step["elapsed_ms"] = elapsed_ms
+                if payload.get("detail"):
+                    if "detail" not in self._current_step:
+                        self._current_step["detail"] = {}
+                    self._current_step["detail"].update(payload["detail"])
                 self.execution_steps.append(self._current_step)
                 self._current_step = None
             payload["elapsed_ms"] = elapsed_ms
@@ -329,14 +337,23 @@ class ActiveRun:
             persist = True
 
         elif event_type == "tool_result":
-            self.tool_executions.append(
-                {
-                    "tool": payload.get("tool", ""),
-                    "result": payload.get("output", ""),
-                    "duration_ms": payload.get("duration_ms", 0),
-                    "success": payload.get("success", False),
-                }
-            )
+            tool_entry = {
+                "tool": payload.get("tool", ""),
+                "result": payload.get("output", ""),
+                "duration_ms": payload.get("duration_ms", 0),
+                "success": payload.get("success", False),
+            }
+            self.tool_executions.append(tool_entry)
+
+            # Also attach to the current step's detail so the frontend can
+            # render tool results inline under the step that produced them.
+            if self._current_step:
+                if "detail" not in self._current_step:
+                    self._current_step["detail"] = {}
+                if "tool_results" not in self._current_step["detail"]:
+                    self._current_step["detail"]["tool_results"] = []
+                self._current_step["detail"]["tool_results"].append(tool_entry)
+
             # Rename key for SSE consumers: backend uses "output" internally
             # from the tool executor, but the conceptual model calls it "result"
             payload["result"] = payload.pop("output", "")
@@ -376,10 +393,6 @@ class ActiveRun:
             payload["total_elapsed_ms"] = self.total_elapsed_ms
             persist = True
 
-        # Merge thinking traces from graph state when available
-        if event_type == "node_end" and payload.get("thinking_traces"):
-            self.thinking_traces.update(payload["thinking_traces"])
-
         if persist:
             asyncio.create_task(self._persist())
 
@@ -397,32 +410,44 @@ class ActiveRun:
         self.budget_consumed = self.budget_limit - self.budget_remaining
 
     async def _persist(self) -> None:
-        """Upsert the current accumulated state as a WorkflowRun."""
-        run = WorkflowRun(
-            id=self.run_id,
-            conversation_id=self.conversation_id,
-            user_message_id=self.user_message_id,
-            thread_id=self.thread_id,
-            execution_steps=self.execution_steps,
-            tool_executions=self.tool_executions,
-            verification_attempts=self.verification_attempts,
-            thinking_traces=self.thinking_traces,
-            report=self.report,
-            budget_limit=float(self.budget_limit),
-            budget_consumed=self.budget_consumed,
-            error=self.error,
-            status=self.status,
-            started_at=self.started_at,
-            completed_at=self.completed_at or None,
-            total_elapsed_ms=self.total_elapsed_ms or None,
-        )
-        await self._conversation_repo.save_workflow_run(run)
-        logger.debug(
-            "Persisted run %s (status=%s, %d steps)",
-            self.run_id,
-            self.status,
-            len(self.execution_steps),
-        )
+        """Upsert the current accumulated state as a WorkflowRun.
+        Serialized via an asyncio.Lock so concurrent create_task calls
+        don't collide on SQLite. Uses retry with backoff for resilience."""
+        import sqlite3
+
+        async with self._persist_lock:
+            run = WorkflowRun(
+                id=self.run_id,
+                conversation_id=self.conversation_id,
+                user_message_id=self.user_message_id,
+                thread_id=self.thread_id,
+                execution_steps=self.execution_steps,
+                tool_executions=self.tool_executions,
+                verification_attempts=self.verification_attempts,
+                report=self.report,
+                budget_limit=float(self.budget_limit),
+                budget_consumed=self.budget_consumed,
+                error=self.error,
+                status=self.status,
+                started_at=self.started_at,
+                completed_at=self.completed_at or None,
+                total_elapsed_ms=self.total_elapsed_ms or None,
+            )
+            for attempt in range(3):
+                try:
+                    await self._conversation_repo.save_workflow_run(run)
+                    logger.debug(
+                        "Persisted run %s (status=%s, %d steps)",
+                        self.run_id,
+                        self.status,
+                        len(self.execution_steps),
+                    )
+                    return
+                except sqlite3.OperationalError as e:
+                    if "locked" in str(e) and attempt < 2:
+                        await asyncio.sleep(0.1 * (attempt + 1))
+                        continue
+                    raise
 
     def _broadcast(self, event: Any) -> None:
         """Put an event into all subscriber queues. Drops the oldest event

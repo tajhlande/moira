@@ -57,7 +57,6 @@ class EmbeddingConfig(BaseModel):
 class ToolConfig(BaseModel):
     name: str
     description: str
-    type: str
     endpoint: str = ""
     method: str = "GET"
     argument_schema: dict = {}

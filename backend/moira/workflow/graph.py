@@ -4,6 +4,7 @@ from langgraph.graph import END, START, StateGraph
 
 from moira.config import MoiraConfig
 from moira.models.state import ResearchState
+from moira.workflow.budget import full_cycle_cost
 from moira.workflow.nodes.research_nodes import (
     compression,
     draft_synthesis,
@@ -18,55 +19,65 @@ from moira.workflow.nodes.research_nodes import (
 logger = logging.getLogger(__name__)
 
 
-def route_after_verification(state: ResearchState) -> str:
-    """Conditional routing after the Verification node based on the
-    verification report's explicit outcome field:
-    - "accept" -> report_generation
-    - "error" -> report_generation (with error flag set in state)
-    - "retry" + budget sufficient -> planning
-    - "retry" + budget insufficient -> report_generation
-    """
-    verification_history = state.get("verification_history", [])
-    if not verification_history:
-        return "report_generation"
+def make_verification_router(config: MoiraConfig):
+    """Return a routing function that checks verification outcome against
+    the config-derived full cycle cost. Captures config via closure so
+    LangGraph's conditional edge handler receives the right signature
+    (just state)."""
 
-    latest = verification_history[-1]
-    outcome = latest.get("outcome", "retry")
+    cycle_cost = full_cycle_cost(config)
 
-    if outcome == "accept":
+    def route_after_verification(state: ResearchState) -> str:
+        """Conditional routing after the Verification node based on the
+        verification report's explicit outcome field:
+        - "accept" -> report_generation
+        - "error" -> report_generation (with error flag set in state)
+        - "retry" + budget sufficient -> planning
+        - "retry" + budget insufficient -> report_generation
+        """
+        verification_history = state.get("verification_history", [])
+        if not verification_history:
+            return "report_generation"
+
+        latest = verification_history[-1]
+        outcome = latest.get("outcome", "retry")
+
+        if outcome == "accept":
+            logger.info(
+                "Verification accepted (case %d), routing to report_generation",
+                latest.get("case"),
+            )
+            return "report_generation"
+
+        if outcome == "error":
+            logger.info(
+                "Verification error (case %d), routing to report_generation",
+                latest.get("case"),
+            )
+            return "report_generation"
+
+        # outcome == "retry"
+        budget_remaining = state.get("budget_remaining", 0.0)
+        if budget_remaining >= cycle_cost:
+            logger.info(
+                "Verification retry (case %d), budget sufficient"
+                " (%.1f >= %d), routing to planning",
+                latest.get("case"),
+                budget_remaining,
+                cycle_cost,
+            )
+            return "planning"
+
         logger.info(
-            "Verification accepted (case %d), routing to report_generation",
-            latest.get("case"),
-        )
-        return "report_generation"
-
-    if outcome == "error":
-        logger.info(
-            "Verification error (case %d), routing to report_generation",
-            latest.get("case"),
-        )
-        return "report_generation"
-
-    # outcome == "retry"
-    budget_remaining = state.get("budget_remaining", 0.0)
-    full_cycle_cost = 18
-    if budget_remaining >= full_cycle_cost:
-        logger.info(
-            "Verification retry (case %d), budget sufficient (%.1f >= %d), routing to planning",
+            "Verification retry (case %d), budget insufficient (%.1f < %d),"
+            " routing to report_generation",
             latest.get("case"),
             budget_remaining,
-            full_cycle_cost,
+            cycle_cost,
         )
-        return "planning"
+        return "report_generation"
 
-    logger.info(
-        "Verification retry (case %d), budget insufficient (%.1f < %d),"
-        " routing to report_generation",
-        latest.get("case"),
-        budget_remaining,
-        full_cycle_cost,
-    )
-    return "report_generation"
+    return route_after_verification
 
 
 def route_after_error(state: ResearchState) -> str:
@@ -104,7 +115,7 @@ def build_graph(config: MoiraConfig) -> StateGraph:
     # Conditional routing after Verification
     graph.add_conditional_edges(
         "verification",
-        route_after_verification,
+        make_verification_router(config),
         {
             "planning": "planning",
             "report_generation": "report_generation",

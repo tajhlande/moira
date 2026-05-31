@@ -7,9 +7,44 @@ from langgraph.config import get_stream_writer
 from moira.config import MoiraConfig
 from moira.models.state import ResearchState, VerificationReport
 from moira.prompts import get_prompt
-from moira.workflow.budget import can_execute, deduct_cost
+from moira.workflow.budget import can_execute, deduct_cost, full_cycle_cost
 
 logger = logging.getLogger(__name__)
+
+
+def _format_tool_descriptions(tools: list) -> str:
+    """Format tool definitions with their argument schemas for LLM consumption.
+
+    Produces a structured description including parameter names, types,
+    required/optional status, defaults, and descriptions so the model knows
+    exactly what arguments to pass."""
+    from moira.tools.base import ToolDefinition
+
+    parts: list[str] = []
+    for tool in tools:
+        if not isinstance(tool, ToolDefinition):
+            parts.append(f"- {tool.name}: {getattr(tool, 'description', '')}")
+            continue
+        entry = f"- {tool.name}: {tool.description}"
+        schema = tool.argument_schema
+        if schema and "properties" in schema:
+            required = set(schema.get("required", []))
+            props = schema["properties"]
+            param_lines: list[str] = []
+            for pname, pdef in props.items():
+                ptype = pdef.get("type", "any")
+                req = "required" if pname in required else "optional"
+                default = pdef.get("default")
+                pdesc = pdef.get("description", "")
+                segments = [f"    {pname} ({ptype}, {req}"]
+                if default is not None:
+                    segments.append(f", default: {default}")
+                segments.append(f"): {pdesc}" if pdesc else ")")
+                param_lines.append("".join(segments))
+            if param_lines:
+                entry += "\n  Parameters:\n" + "\n".join(param_lines)
+        parts.append(entry)
+    return "\n".join(parts)
 
 
 def _log_prompts(node: str, messages: list[dict[str, str]]) -> None:
@@ -25,20 +60,52 @@ def _log_response(node: str, response: str) -> None:
     logger.debug("[%s] model response:\n%s", node, response[:4000])
 
 
-def _extract(node: str, result) -> tuple[str, dict[str, str]]:
+def _extract(node: str, result) -> tuple[str, str | None]:
     """Extract content and thinking from a ChatResponse. Logs both at DEBUG.
-    Returns (content, thinking_update) where thinking_update is a dict suitable
-    for merging into state's thinking_traces."""
+    Returns (content, thinking_text) where thinking_text is None when the
+    model did not produce a thinking trace."""
     from moira.inference.client import ChatResponse
 
     if isinstance(result, ChatResponse):
         if result.thinking:
             logger.debug("[%s] model thinking:\n%s", node, result.thinking[:4000])
         _log_response(node, result.content)
-        return result.content, {"thinking_traces": {node: result.thinking}}
-    # Fallback for tests that return plain strings
+        return result.content, result.thinking
     _log_response(node, str(result))
-    return str(result), {}
+    return str(result), None
+
+
+def _emit_node_end(
+    writer,
+    node: str,
+    budget_remaining: float,
+    detail: dict | None = None,
+) -> None:
+    """Emit a node_end event with optional detail dict."""
+    payload: dict = {"node": node, "timestamp": _now(), "budget_remaining": budget_remaining}
+    if detail:
+        payload["detail"] = detail
+    writer({"event": "node_end", "payload": payload})
+
+
+def _build_detail(
+    response: str,
+    thinking: str | None = None,
+    *,
+    messages: list[dict[str, str]] | None = None,
+    structured_output: dict | None = None,
+) -> dict:
+    """Build a step detail dict with prompt, response, thinking, and optional
+    structured output. Keys with falsy values are omitted to keep payloads
+    small."""
+    detail: dict = {"response": response}
+    if messages:
+        detail["prompt"] = {"messages": messages}
+    if thinking:
+        detail["thinking"] = thinking
+    if structured_output:
+        detail["structured_output"] = structured_output
+    return detail
 
 
 async def planning(state: ResearchState, config: RunnableConfig) -> dict:
@@ -68,22 +135,23 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
     raw = await resolved.client.chat_completion(
         model=resolved.model_id, messages=messages, temperature=0.7
     )
-    plan, thinking_update = _extract(node, raw)
+    plan, thinking = _extract(node, raw)
 
-    writer(
-        {
-            "event": "node_end",
-            "payload": {"node": node, "timestamp": _now(), "budget_remaining": new_budget},
-        }
+    _emit_node_end(
+        writer,
+        node,
+        new_budget,
+        detail=_build_detail(plan, thinking, messages=messages),
     )
 
     logger.info("PLANNING complete, plan length=%d", len(plan))
-    return {"plan": plan, "budget_remaining": new_budget, **thinking_update}
+    return {"plan": plan, "budget_remaining": new_budget}
 
 
 async def tool_discovery(state: ResearchState, config: RunnableConfig) -> dict:
     """Tool Discovery node: embeds the plan and searches LanceDB for
-    relevant tools. No model call. Cost weight: 1."""
+    relevant tools. Default tools are always included. No model call.
+    Cost weight: 1."""
     moira_config = _get_config(config)
     budget = state.get("budget_remaining", 0.0)
     node = "tool_discovery"
@@ -97,20 +165,43 @@ async def tool_discovery(state: ResearchState, config: RunnableConfig) -> dict:
 
     new_budget = deduct_cost(moira_config, node, budget)
 
+    from moira.service_setup import service_provider
+
+    catalog = service_provider("tool_catalog")
+    default_tools = catalog.get_default_tools()
+
     discovery = _get_discovery(config)
     plan = state.get("plan", "")
     discovered = await discovery.discover(plan, top_k=5)
 
-    writer(
-        {
-            "event": "node_end",
-            "payload": {"node": node, "timestamp": _now(), "budget_remaining": new_budget},
-        }
+    # Merge: start with default tools, add any discovered tools not already
+    # in the list. Default tools always participate regardless of relevance.
+    default_names = {t.name for t in default_tools}
+    active_tools = list(default_tools)
+    for tool in discovered:
+        if tool.name not in default_names:
+            active_tools.append(tool)
+
+    _emit_node_end(
+        writer,
+        node,
+        new_budget,
+        detail={
+            "structured_output": {
+                "default_tools": [t.name for t in default_tools],
+                "discovered_tools": [t.name for t in discovered if t.name not in default_names],
+            },
+        },
     )
 
-    logger.info("Tool discovery found %d tools", len(discovered))
+    logger.info(
+        "Tool discovery: %d defaults + %d discovered = %d active",
+        len(default_tools),
+        len(discovered),
+        len(active_tools),
+    )
     logger.debug("TOOL DISCOVERY Complete")
-    return {"active_tools": discovered, "budget_remaining": new_budget}
+    return {"active_tools": active_tools, "budget_remaining": new_budget}
 
 
 async def tool_selection(state: ResearchState, config: RunnableConfig) -> dict:
@@ -131,17 +222,12 @@ async def tool_selection(state: ResearchState, config: RunnableConfig) -> dict:
 
     active_tools = state.get("active_tools", [])
     if not active_tools:
-        writer(
-            {
-                "event": "node_end",
-                "payload": {"node": node, "timestamp": _now(), "budget_remaining": new_budget},
-            }
-        )
+        _emit_node_end(writer, node, new_budget)
         return {"budget_remaining": new_budget}
 
     question = state.get("question", "")
     plan = state.get("plan", "")
-    tool_descriptions = "\n".join(f"- {t.name}: {t.description}" for t in active_tools)
+    tool_descriptions = _format_tool_descriptions(active_tools)
 
     messages = [
         {
@@ -162,23 +248,27 @@ async def tool_selection(state: ResearchState, config: RunnableConfig) -> dict:
     raw = await resolved.client.chat_completion(
         model=resolved.model_id, messages=messages, temperature=0.3
     )
-    response, thinking_update = _extract(node, raw)
+    response, thinking = _extract(node, raw)
 
     selected_names = _parse_json_list(response)
     selected_tools = [t for t in active_tools if t.name in selected_names]
     if not selected_tools:
         selected_tools = active_tools
 
-    writer(
-        {
-            "event": "node_end",
-            "payload": {"node": node, "timestamp": _now(), "budget_remaining": new_budget},
-        }
+    _emit_node_end(
+        writer,
+        node,
+        new_budget,
+        detail=_build_detail(
+            response,
+            thinking,
+            messages=messages,
+            structured_output={"selected_tools": [t.name for t in selected_tools]},
+        ),
     )
-
     logger.info("Tool selection chose %d tools", len(selected_tools))
     logger.debug("TOOL SELECTION Complete")
-    return {"active_tools": selected_tools, "budget_remaining": new_budget, **thinking_update}
+    return {"active_tools": selected_tools, "budget_remaining": new_budget}
 
 
 async def research_execution(state: ResearchState, config: RunnableConfig) -> dict:
@@ -202,18 +292,13 @@ async def research_execution(state: ResearchState, config: RunnableConfig) -> di
     plan = state.get("plan", "")
 
     if not active_tools:
-        writer(
-            {
-                "event": "node_end",
-                "payload": {"node": node, "timestamp": _now(), "budget_remaining": new_budget},
-            }
-        )
+        _emit_node_end(writer, node, new_budget)
         return {"findings": [], "budget_remaining": new_budget}
 
     executor = _get_executor(config)
     registry = _get_registry(config)
 
-    tool_descriptions = "\n".join(f"- {t.name}: {t.description}" for t in active_tools)
+    tool_descriptions = _format_tool_descriptions(active_tools)
 
     messages = [
         {
@@ -233,10 +318,19 @@ async def research_execution(state: ResearchState, config: RunnableConfig) -> di
     raw = await resolved.client.chat_completion(
         model=resolved.model_id, messages=messages, temperature=0.5
     )
-    response, thinking_update = _extract(node, raw)
+    response, thinking = _extract(node, raw)
 
     tool_calls = _parse_tool_calls(response)
-    results = await executor.execute_batch(tool_calls)
+    allowed_names = {t.name for t in active_tools}
+    valid_calls, rejected = [], []
+    for name, args in tool_calls:
+        (valid_calls if name in allowed_names else rejected).append((name, args))
+    if rejected:
+        logger.warning(
+            "LLM requested tools not in active set: %s",
+            [n for n, _ in rejected],
+        )
+    results = await executor.execute_batch(valid_calls, allowed_tools=allowed_names)
 
     from moira.models.state import Finding
 
@@ -246,6 +340,7 @@ async def research_execution(state: ResearchState, config: RunnableConfig) -> di
             {
                 "event": "tool_result",
                 "payload": {
+                    "node": node,
                     "tool": result.tool_name,
                     "output": result.output[:500],
                     "duration_ms": result.duration_ms,
@@ -261,16 +356,23 @@ async def research_execution(state: ResearchState, config: RunnableConfig) -> di
             )
         )
 
-    writer(
-        {
-            "event": "node_end",
-            "payload": {"node": node, "timestamp": _now(), "budget_remaining": new_budget},
-        }
+    _emit_node_end(
+        writer,
+        node,
+        new_budget,
+        detail=_build_detail(
+            response,
+            thinking,
+            messages=messages,
+            structured_output={
+                "tool_calls": [{"tool": name, "args": args} for name, args in valid_calls],
+            },
+        ),
     )
 
     logger.info("Research execution produced %d findings", len(findings))
     logger.debug("RESEARCH EXECUTION Complete")
-    return {"findings": findings, "budget_remaining": new_budget, **thinking_update}
+    return {"findings": findings, "budget_remaining": new_budget}
 
 
 async def compression(state: ResearchState, config: RunnableConfig) -> dict:
@@ -291,12 +393,7 @@ async def compression(state: ResearchState, config: RunnableConfig) -> dict:
 
     findings = state.get("findings", [])
     if not findings:
-        writer(
-            {
-                "event": "node_end",
-                "payload": {"node": node, "timestamp": _now(), "budget_remaining": new_budget},
-            }
-        )
+        _emit_node_end(writer, node, new_budget)
         return {"compressed_findings": [], "budget_remaining": new_budget}
 
     findings_text = "\n\n".join(f"[{f['source']}] {f['content']}" for f in findings)
@@ -315,17 +412,17 @@ async def compression(state: ResearchState, config: RunnableConfig) -> dict:
     raw = await resolved.client.chat_completion(
         model=resolved.model_id, messages=messages, temperature=0.3
     )
-    compressed_text, thinking_update = _extract(node, raw)
+    compressed_text, thinking = _extract(node, raw)
 
     from moira.models.state import Finding
 
     compressed_findings = [Finding(content=compressed_text, source="compression", type="note")]
 
-    writer(
-        {
-            "event": "node_end",
-            "payload": {"node": node, "timestamp": _now(), "budget_remaining": new_budget},
-        }
+    _emit_node_end(
+        writer,
+        node,
+        new_budget,
+        detail=_build_detail(compressed_text, thinking, messages=messages),
     )
 
     logger.info("Compression complete, output length=%d", len(compressed_text))
@@ -333,7 +430,6 @@ async def compression(state: ResearchState, config: RunnableConfig) -> dict:
     return {
         "compressed_findings": compressed_findings,
         "budget_remaining": new_budget,
-        **thinking_update,
     }
 
 
@@ -377,18 +473,18 @@ async def draft_synthesis(state: ResearchState, config: RunnableConfig) -> dict:
     raw = await resolved.client.chat_completion(
         model=resolved.model_id, messages=messages, temperature=0.7
     )
-    draft, thinking_update = _extract(node, raw)
+    draft, thinking = _extract(node, raw)
 
-    writer(
-        {
-            "event": "node_end",
-            "payload": {"node": node, "timestamp": _now(), "budget_remaining": new_budget},
-        }
+    _emit_node_end(
+        writer,
+        node,
+        new_budget,
+        detail=_build_detail(draft, thinking, messages=messages),
     )
 
     logger.info("Draft synthesis complete, length=%d", len(draft))
     logger.debug("DRAFT SYNTHESIS Complete")
-    return {"draft": draft, "budget_remaining": new_budget, **thinking_update}
+    return {"draft": draft, "budget_remaining": new_budget}
 
 
 async def verification(state: ResearchState, config: RunnableConfig) -> dict:
@@ -428,7 +524,7 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
     raw = await resolved.client.chat_completion(
         model=resolved.model_id, messages=messages, temperature=0.5
     )
-    response, thinking_update = _extract(node, raw)
+    response, thinking = _extract(node, raw)
 
     report_dict = _parse_json_object(response)
 
@@ -492,11 +588,34 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
             },
         }
     )
-    writer(
-        {
-            "event": "node_end",
-            "payload": {"node": node, "timestamp": _now(), "budget_remaining": new_budget},
-        }
+
+    # Build a copy of the report for the detail's structured_output.
+    # We add a retry_declined note when the outcome is "retry" but
+    # there isn't enough budget for another full cycle. This copy keeps
+    # the state's verification_history clean — only the UI sees the note.
+    structured = dict(report)
+    if outcome == "retry":
+        from moira.service_setup import service_provider
+
+        moira_cfg = service_provider("config")
+        cycle_cost = full_cycle_cost(moira_cfg)
+        if new_budget < cycle_cost:
+            structured["retry_declined"] = True
+            structured["retry_declined_reason"] = (
+                f"Insufficient budget for another cycle "
+                f"({new_budget:.1f} remaining, {cycle_cost} needed)"
+            )
+
+    _emit_node_end(
+        writer,
+        node,
+        new_budget,
+        detail=_build_detail(
+            response,
+            thinking,
+            messages=messages,
+            structured_output=structured,
+        ),
     )
 
     logger.info(
@@ -513,7 +632,6 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
         "unverified_claims": report["unsupported_claims"],
         "budget_remaining": new_budget,
         "error": error_msg,
-        **thinking_update,
     }
 
 
@@ -572,15 +690,16 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     ]
 
     registry = _get_registry(config)
-    thinking_update = {}
+    thinking: str | None = None
+    response_text = ""
     try:
         resolved = await registry.resolve("intelligence")
         _log_prompts(node, messages)
         raw = await resolved.client.chat_completion(
             model=resolved.model_id, messages=messages, temperature=0.5
         )
-        response, thinking_update = _extract(node, raw)
-        report_data = _parse_json_object(response)
+        response_text, thinking = _extract(node, raw)
+        report_data = _parse_json_object(response_text)
     except Exception as e:
         logger.error("Report generation model call failed: %s", e)
         report_data = {}
@@ -610,11 +729,16 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     if is_error_path:
         report["critiques"] = report.get("critiques", []) + [f"Workflow interrupted: {error}"]
 
-    writer(
-        {
-            "event": "node_end",
-            "payload": {"node": node, "timestamp": _now(), "budget_remaining": new_budget},
-        }
+    _emit_node_end(
+        writer,
+        node,
+        new_budget,
+        detail=_build_detail(
+            response_text,
+            thinking,
+            messages=messages,
+            structured_output=report,
+        ),
     )
     writer(
         {
@@ -625,7 +749,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
 
     logger.info("Report generation complete, answer length=%d", len(report["answer"]))
     logger.debug("REPORT GENERATION Complete")
-    return {"report": report, "budget_remaining": new_budget, **thinking_update}
+    return {"report": report, "budget_remaining": new_budget}
 
 
 def _get_config(config: RunnableConfig) -> MoiraConfig:

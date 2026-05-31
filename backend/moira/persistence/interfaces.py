@@ -39,7 +39,6 @@ class WorkflowRun:
     execution_steps: list = field(default_factory=list)
     tool_executions: list = field(default_factory=list)
     verification_attempts: list = field(default_factory=list)
-    thinking_traces: dict = field(default_factory=dict)
     report: dict | None = None
     budget_limit: float = 0.0
     budget_consumed: float = 0.0
@@ -87,3 +86,26 @@ class ModelPreferencesRepository(ABC):
 
     @abstractmethod
     async def set_preferences(self, preferences: ModelPreferences) -> None: ...
+
+
+class ToolRepository(ABC):
+    @abstractmethod
+    async def get_all_tools(self) -> list: ...
+
+    @abstractmethod
+    async def get_tool(self, name: str): ...
+
+    @abstractmethod
+    async def save_tool(self, tool) -> None: ...
+
+    @abstractmethod
+    async def delete_tool(self, name: str) -> bool: ...
+
+    @abstractmethod
+    async def set_enabled(self, name: str, enabled: bool) -> bool: ...
+
+    @abstractmethod
+    async def get_all_groups(self) -> list: ...
+
+    @abstractmethod
+    async def save_group(self, group) -> None: ...

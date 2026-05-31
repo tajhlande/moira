@@ -84,7 +84,6 @@ async def send_message(
         "verification_history": [],
         "unverified_claims": [],
         "error": "",
-        "thinking_traces": {},
     }
 
     thread_id = str(uuid.uuid4())

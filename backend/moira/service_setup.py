@@ -115,11 +115,31 @@ async def init_services(
     logger.info("Embedding provider initialized: %s", config.embedding.provider)
 
     # --- Phase 2: Tool catalog ---
+    from moira.persistence.sqlite.repos import SqliteToolRepository
     from moira.tools.catalog import ToolCatalog
+    from moira.tools.standard import DEFAULT_GROUP, STANDARD_TOOLS
+
+    tool_repo = SqliteToolRepository(db_path)
+    _services["tool_repository"] = tool_repo
+
+    # Upsert the default tool group and standard tools (idempotent).
+    # Built-in tools are overwritten on startup so spec changes propagate,
+    # but user-modified fields (enabled) are preserved for existing tools.
+    await tool_repo.save_group(DEFAULT_GROUP)
+    for tool_def in STANDARD_TOOLS:
+        existing = await tool_repo.get_tool(tool_def.name)
+        if existing is None:
+            await tool_repo.save_tool(tool_def)
+        elif existing.built_in:
+            # Preserve user's enabled preference, update everything else
+            tool_def.enabled = existing.enabled
+            await tool_repo.save_tool(tool_def)
 
     catalog = ToolCatalog()
     if config.tools:
         catalog.load_from_config(config.tools)
+    db_tools = await tool_repo.get_all_tools()
+    catalog.load_from_db(db_tools)
     _services["tool_catalog"] = catalog
 
     # --- Phase 2: LanceDB tool embedding repository ---

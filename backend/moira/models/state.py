@@ -50,5 +50,3 @@ class ResearchState(TypedDict):
     unverified_claims: list[str]
     # Error tracking for node failure path
     error: str
-    # Accumulated model thinking/reasoning traces keyed by node name
-    thinking_traces: dict[str, str]

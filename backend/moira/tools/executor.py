@@ -30,20 +30,48 @@ class ToolExecutor:
         self._tool_instances[tool.name] = tool
 
     def register_tools(self, definitions: list[ToolDefinition]) -> None:
-        """Register REST tools from definitions. MCP tools are added in
-        Phase 3."""
-        from moira.tools.rest_tool import RESTTool
-
+        """Instantiate and register tools from their definitions. Uses the
+        implementation field (fully qualified class name) to find the class,
+        then passes the definition to its constructor. Tools with an empty
+        implementation are skipped — they appear in the catalog but cannot
+        be executed."""
         for defn in definitions:
-            if defn.tool_type == "rest":
-                self._tool_instances[defn.name] = RESTTool(defn, timeout=self._timeout)
-                logger.debug("Registered REST tool '%s'", defn.name)
+            if not defn.implementation:
+                continue
+            tool_cls = self._resolve_implementation(defn.implementation)
+            if tool_cls is not None:
+                self._tool_instances[defn.name] = tool_cls(defn)
+                logger.debug("Registered tool '%s' (%s)", defn.name, defn.implementation)
+
+    @staticmethod
+    def _resolve_implementation(fqcn: str) -> type | None:
+        """Resolve a fully qualified class name to a class object.
+        Returns None if the module or class cannot be found."""
+        try:
+            module_path, class_name = fqcn.rsplit(".", 1)
+            import importlib
+
+            module = importlib.import_module(module_path)
+            return getattr(module, class_name)
+        except (ValueError, ImportError, AttributeError) as e:
+            logger.warning("Cannot resolve tool implementation '%s': %s", fqcn, e)
+            return None
 
     async def execute(
         self,
         tool_name: str,
         args: dict[str, Any],
+        allowed_tools: set[str] | None = None,
     ) -> ToolResult:
+        if allowed_tools is not None and tool_name not in allowed_tools:
+            logger.warning("Tool '%s' blocked — not in allowed set", tool_name)
+            return ToolResult(
+                tool_name=tool_name,
+                output="",
+                success=False,
+                error=f"Tool '{tool_name}' is not available for this run",
+            )
+
         tool = self._tool_instances.get(tool_name)
         if tool is None:
             logger.error("Tool '%s' not found in executor", tool_name)
@@ -97,7 +125,10 @@ class ToolExecutor:
     async def execute_batch(
         self,
         calls: list[tuple[str, dict[str, Any]]],
+        allowed_tools: set[str] | None = None,
     ) -> list[ToolResult]:
-        """Execute multiple tool calls concurrently."""
-        tasks = [self.execute(name, args) for name, args in calls]
+        """Execute multiple tool calls concurrently.
+        If allowed_tools is provided, calls for tools outside the set are
+        rejected immediately without execution."""
+        tasks = [self.execute(name, args, allowed_tools=allowed_tools) for name, args in calls]
         return list(await asyncio.gather(*tasks))

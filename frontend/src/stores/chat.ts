@@ -38,7 +38,6 @@ export const useChatStore = defineStore("chat", () => {
   const currentStep = ref<ExecutionStep | null>(null);
   const toolExecutions = ref<ToolExecution[]>([]);
   const verificationAttemptData = ref<VerificationAttempt[]>([]);
-  const thinkingTracesData = ref<Record<string, string>>({});
   const currentReport = ref<ResearchReport | null>(null);
   const budgetRemaining = ref<number | null>(null);
   const budgetConsumed = ref<number>(0);
@@ -67,7 +66,6 @@ export const useChatStore = defineStore("chat", () => {
     currentStep.value = null;
     toolExecutions.value = [];
     verificationAttemptData.value = [];
-    thinkingTracesData.value = {};
     currentReport.value = null;
     budgetRemaining.value = null;
     budgetConsumed.value = 0;
@@ -246,11 +244,11 @@ export const useChatStore = defineStore("chat", () => {
             prevBudget - (payload.budget_remaining ?? prevBudget);
           currentStep.value.status = "completed";
           currentStep.value.elapsed_ms = payload.elapsed_ms ?? 0;
+          if (payload.detail) {
+            currentStep.value.detail = payload.detail;
+          }
           executionSteps.value.push(currentStep.value);
           currentStep.value = null;
-        }
-        if (payload.thinking_traces) {
-          thinkingTracesData.value = { ...thinkingTracesData.value, ...payload.thinking_traces };
         }
         break;
       case "budget_update":
@@ -258,13 +256,27 @@ export const useChatStore = defineStore("chat", () => {
         budgetConsumed.value = payload.budget_consumed;
         break;
       case "tool_result":
-        toolExecutions.value.push({
-          tool: payload.tool,
-          // Backend sends "result" (conceptual name), fallback to "output" for compat
-          result: payload.result ?? payload.output,
-          duration_ms: payload.duration_ms,
-          success: payload.success,
-        });
+        {
+          const toolEntry = {
+            tool: payload.tool,
+            result: payload.result ?? payload.output,
+            duration_ms: payload.duration_ms,
+            success: payload.success,
+          };
+          toolExecutions.value.push(toolEntry);
+
+          // Attach to the current running step's detail so tool results
+          // appear inline under the step that produced them.
+          if (currentStep.value) {
+            if (!currentStep.value.detail) {
+              currentStep.value.detail = {};
+            }
+            if (!currentStep.value.detail.tool_results) {
+              currentStep.value.detail.tool_results = [];
+            }
+            (currentStep.value.detail.tool_results as Array<typeof toolEntry>).push(toolEntry);
+          }
+        }
         break;
       case "verification_report":
         verificationAttempts.value = payload.attempt;
@@ -311,7 +323,6 @@ export const useChatStore = defineStore("chat", () => {
       execution_steps: allSteps,
       tool_executions: [...toolExecutions.value],
       verification_attempts: [...verificationAttemptData.value],
-      thinking_traces: { ...thinkingTracesData.value },
       report: currentReport.value,
       budget_limit: budgetRemaining.value
         ? budgetConsumed.value + budgetRemaining.value
@@ -389,7 +400,6 @@ export const useChatStore = defineStore("chat", () => {
     toolExecutions,
     verificationAttempts,
     verificationAttemptData,
-    thinkingTracesData,
     activeUserMessageId,
     totalElapsedMs,
     fetchConversations,

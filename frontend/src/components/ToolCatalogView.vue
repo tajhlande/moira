@@ -1,11 +1,20 @@
 <script setup lang="ts">
-import { NText, NIcon, NDivider } from "naive-ui";
+import { NText, NIcon, NDivider, NSwitch } from "naive-ui";
 import { Tools } from "@vicons/tabler";
 import { useToolsStore } from "../stores/tools";
 import { useRouter } from "vue-router";
+import { onMounted } from "vue";
 
 const store = useToolsStore();
 const router = useRouter();
+
+onMounted(() => {
+  store.fetchTools();
+});
+
+async function onToggleEnabled(name: string, enabled: boolean) {
+  await store.toggleEnabled(name, enabled);
+}
 </script>
 
 <template>
@@ -39,7 +48,7 @@ const router = useRouter();
 
     <div class="catalog-groups">
       <div v-for="[group, tools] of store.groups" :key="group" class="catalog-group">
-        <NText strong class="catalog-group-title">{{ group }}</NText>
+        <NText strong class="catalog-group-title">{{ tools[0]?.groupDisplayName || group }}</NText>
         <div class="catalog-tool-list">
           <div
             v-for="tool in tools"
@@ -53,7 +62,15 @@ const router = useRouter();
               <NText depth="3" class="catalog-tool-params">
                 {{ tool.parameters.length }} parameter{{ tool.parameters.length !== 1 ? 's' : '' }}
               </NText>
+              <NText v-if="tool.isDefault" depth="3" class="catalog-tool-badge">Default</NText>
               <NText v-if="tool.builtIn" depth="3" class="catalog-tool-badge">Built-in</NText>
+              <NSwitch
+                :value="tool.enabled"
+                @update:value="(v: boolean) => onToggleEnabled(tool.name, v)"
+                size="small"
+                class="catalog-tool-switch"
+                @click.stop
+              />
             </div>
           </div>
         </div>
@@ -171,5 +188,11 @@ const router = useRouter();
   border-radius: 3px;
   background-color: var(--n-primary-color-suppl, #e8f5e9);
   color: var(--n-primary-color);
+}
+
+.catalog-tool-switch {
+  margin-left: auto;
+  --n-height-small: 14px;
+  --n-rail-height-small: 14px;
 }
 </style>

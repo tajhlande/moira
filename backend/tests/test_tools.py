@@ -65,12 +65,10 @@ class TestToolCatalog:
         defn = ToolDefinition(
             name="test",
             description="A test tool",
-            tool_type="rest",
             tags=["test"],
         )
         d = defn.to_dict()
         assert d["name"] == "test"
-        assert d["type"] == "rest"
         assert d["tags"] == ["test"]
 
 
@@ -86,11 +84,82 @@ class TestToolExecutor:
         defn = ToolDefinition(
             name="test",
             description="test",
-            tool_type="rest",
-            endpoint="http://localhost:1/nonexistent",
+            implementation="moira.tools.builtin.calculator.CalculatorTool",
+            config={},
         )
         executor.register_tools([defn])
         assert "test" in executor._tool_instances
+
+
+class TestFormatToolDescriptions:
+    def test_basic_description(self):
+        from moira.workflow.nodes.research_nodes import _format_tool_descriptions
+
+        tools = [
+            ToolDefinition(name="calc", description="A calculator"),
+        ]
+        result = _format_tool_descriptions(tools)
+        assert "- calc: A calculator" in result
+
+    def test_with_argument_schema(self):
+        from moira.workflow.nodes.research_nodes import _format_tool_descriptions
+
+        tools = [
+            ToolDefinition(
+                name="web_search",
+                description="Search the web",
+                argument_schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The search query",
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Max results",
+                            "default": 5,
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
+        ]
+        result = _format_tool_descriptions(tools)
+        assert "- web_search: Search the web" in result
+        assert "query (string, required): The search query" in result
+        assert "max_results (integer, optional, default: 5): Max results" in result
+        assert "Parameters:" in result
+
+    def test_no_schema(self):
+        from moira.workflow.nodes.research_nodes import _format_tool_descriptions
+
+        tools = [ToolDefinition(name="x", description="desc")]
+        result = _format_tool_descriptions(tools)
+        assert "Parameters" not in result
+
+    def test_empty_tools(self):
+        from moira.workflow.nodes.research_nodes import _format_tool_descriptions
+
+        result = _format_tool_descriptions([])
+        assert result == ""
+
+    def test_uses_builtin_tool_specs(self):
+        """Verify the helper works with actual built-in tool definitions."""
+        from moira.tools.builtin.calculator import CalculatorTool
+        from moira.tools.builtin.url_content import UrlContentTool
+        from moira.workflow.nodes.research_nodes import _format_tool_descriptions
+
+        tools = [
+            CalculatorTool.make_definition(),
+            UrlContentTool.make_definition(),
+        ]
+        result = _format_tool_descriptions(tools)
+        assert "- calculator:" in result
+        assert "expression (string, required)" in result
+        assert "- url_content:" in result
+        assert "url (string, required)" in result
+        assert "text_only (boolean, optional" in result
 
 
 class TestToolResult:

@@ -23,19 +23,22 @@ class ToolDiscovery:
 
     async def ingest_tools(self, tools: list[ToolDefinition]) -> None:
         """Embed tool descriptions and store in LanceDB. Called at startup
-        after the catalog is loaded."""
-        if not tools:
-            logger.info("No tools to ingest")
+        after the catalog is loaded. Only enabled tools are ingested —
+        disabled tools are excluded from the index entirely."""
+        enabled_tools = [t for t in tools if t.enabled]
+        if not enabled_tools:
+            logger.info("No enabled tools to ingest")
             return
-        logger.info("Ingesting %d tools into vector store", len(tools))
-        descriptions = [t.description for t in tools]
+        logger.info("Ingesting %d enabled tools into vector store", len(enabled_tools))
+        descriptions = [t.description for t in enabled_tools]
         embeddings = await self._embedding_provider.embed_batch(descriptions)
         await self._embedding_repo.upsert(
-            names=[t.name for t in tools],
+            names=[t.name for t in enabled_tools],
             embeddings=embeddings,
             descriptions=descriptions,
+            enabled_flags=[t.enabled for t in enabled_tools],
         )
-        logger.info("Ingested %d tools", len(tools))
+        logger.info("Ingested %d tools", len(enabled_tools))
 
     async def discover(self, query: str, top_k: int = 5) -> list[ToolDefinition]:
         """Embed the query and search for the top-K most relevant tools."""

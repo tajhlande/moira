@@ -4,6 +4,19 @@ from moira.config import MoiraConfig
 
 logger = logging.getLogger(__name__)
 
+# Nodes that participate in a full research cycle (planning through
+# verification). Report generation is excluded because it is budget-exempt
+# and always runs as the terminal node.
+_FULL_CYCLE_NODES = (
+    "planning",
+    "tool_discovery",
+    "tool_selection",
+    "research_execution",
+    "compression",
+    "draft_synthesis",
+    "verification",
+)
+
 
 def get_node_cost(config: MoiraConfig, node_name: str) -> int:
     """Return the cost weight for a given node name."""
@@ -44,3 +57,10 @@ def deduct_cost(config: MoiraConfig, node_name: str, budget_remaining: float) ->
         new_budget,
     )
     return new_budget
+
+
+def full_cycle_cost(config: MoiraConfig) -> int:
+    """Return the total budget cost of one complete research cycle
+    (planning through verification). Used by the verification router to
+    decide whether a retry loop is affordable."""
+    return sum(get_node_cost(config, n) for n in _FULL_CYCLE_NODES)

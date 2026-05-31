@@ -86,12 +86,6 @@ function hasMessages(conversationId: string): boolean {
       </NButton>
       <div class="conv-list">
         <div
-          v-if="store.isNewChat"
-          class="conv-item active"
-        >
-          <span class="conv-title-fallback">New Chat</span>
-        </div>
-        <div
           v-for="conversation in store.conversations"
           :key="conversation.id"
           :class="['conv-item', { active: conversation.id === store.currentConversationId }]"

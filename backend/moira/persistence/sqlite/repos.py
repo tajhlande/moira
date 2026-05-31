@@ -9,8 +9,10 @@ from moira.persistence.interfaces import (
     Message,
     ModelPreferences,
     ModelPreferencesRepository,
+    ToolRepository,
     WorkflowRun,
 )
+from moira.tools.base import ToolDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -134,14 +136,13 @@ class SqliteConversationRepository(ConversationRepository):
                 "INSERT INTO workflow_runs "
                 "(id, conversation_id, user_message_id, thread_id, "
                 "execution_steps, tool_executions, verification_attempts, "
-                "thinking_traces, report, budget_limit, budget_consumed, "
+                "report, budget_limit, budget_consumed, "
                 "error, status, started_at, completed_at, total_elapsed_ms) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "execution_steps = excluded.execution_steps, "
                 "tool_executions = excluded.tool_executions, "
                 "verification_attempts = excluded.verification_attempts, "
-                "thinking_traces = excluded.thinking_traces, "
                 "report = excluded.report, "
                 "budget_consumed = excluded.budget_consumed, "
                 "error = excluded.error, "
@@ -156,7 +157,6 @@ class SqliteConversationRepository(ConversationRepository):
                     json.dumps(run.execution_steps),
                     json.dumps(run.tool_executions),
                     json.dumps(run.verification_attempts),
-                    json.dumps(run.thinking_traces),
                     json.dumps(run.report) if run.report else None,
                     run.budget_limit,
                     run.budget_consumed,
@@ -177,7 +177,7 @@ class SqliteConversationRepository(ConversationRepository):
             rows = conn.execute(
                 "SELECT id, conversation_id, user_message_id, thread_id, "
                 "execution_steps, tool_executions, verification_attempts, "
-                "thinking_traces, report, budget_limit, budget_consumed, "
+                "report, budget_limit, budget_consumed, "
                 "error, status, started_at, completed_at, total_elapsed_ms "
                 "FROM workflow_runs WHERE conversation_id = ? ORDER BY started_at ASC",
                 (conversation_id,),
@@ -188,7 +188,6 @@ class SqliteConversationRepository(ConversationRepository):
                 d["execution_steps"] = json.loads(d["execution_steps"])
                 d["tool_executions"] = json.loads(d["tool_executions"])
                 d["verification_attempts"] = json.loads(d["verification_attempts"])
-                d["thinking_traces"] = json.loads(d["thinking_traces"])
                 d["report"] = json.loads(d["report"]) if d["report"] else None
                 d["total_elapsed_ms"] = d["total_elapsed_ms"] or 0
                 result.append(WorkflowRun(**d))
@@ -264,6 +263,117 @@ class SqliteModelPreferencesRepository(ModelPreferencesRepository):
                     preferences.task_endpoint,
                     preferences.task_model,
                 ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+class SqliteToolRepository(ToolRepository):
+    def __init__(self, db_path: str):
+        self._db_path = db_path
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        return conn
+
+    @staticmethod
+    def _row_to_defn(row: sqlite3.Row) -> ToolDefinition:
+        return ToolDefinition(
+            name=row["name"],
+            description=row["description"],
+            argument_schema=json.loads(row["argument_schema"]),
+            config=json.loads(row["config"]),
+            tags=json.loads(row["tags"]),
+            reliability=row["reliability"],
+            is_default=bool(row["is_default"]),
+            enabled=bool(row["enabled"]),
+            built_in=bool(row["built_in"]),
+            implementation=row["implementation"],
+            group_name=row["group_name"],
+        )
+
+    async def get_all_tools(self) -> list[ToolDefinition]:
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT * FROM tools ORDER BY group_name, name").fetchall()
+            return [self._row_to_defn(r) for r in rows]
+        finally:
+            conn.close()
+
+    async def get_tool(self, name: str) -> ToolDefinition | None:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT * FROM tools WHERE name = ?", (name,)).fetchone()
+            return self._row_to_defn(row) if row else None
+        finally:
+            conn.close()
+
+    async def save_tool(self, tool: ToolDefinition) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                """INSERT OR REPLACE INTO tools
+                   (name, description, argument_schema, config, tags,
+                    reliability, is_default, enabled, built_in,
+                    implementation, group_name)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    tool.name,
+                    tool.description,
+                    json.dumps(tool.argument_schema),
+                    json.dumps(tool.config),
+                    json.dumps(tool.tags),
+                    tool.reliability,
+                    int(tool.is_default),
+                    int(tool.enabled),
+                    int(tool.built_in),
+                    tool.implementation,
+                    tool.group_name,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    async def delete_tool(self, name: str) -> bool:
+        conn = self._connect()
+        try:
+            cursor = conn.execute("DELETE FROM tools WHERE name = ? AND is_default = 0", (name,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    async def set_enabled(self, name: str, enabled: bool) -> bool:
+        conn = self._connect()
+        try:
+            cursor = conn.execute(
+                "UPDATE tools SET enabled = ? WHERE name = ?",
+                (int(enabled), name),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    async def get_all_groups(self) -> list[dict]:
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT * FROM tool_groups ORDER BY name").fetchall()
+            return [{"name": r["name"], "display_name": r["display_name"]} for r in rows]
+        finally:
+            conn.close()
+
+    async def save_group(self, group: dict) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO tool_groups (name, display_name) VALUES (?, ?)",
+                (group["name"], group["display_name"]),
             )
             conn.commit()
         finally:

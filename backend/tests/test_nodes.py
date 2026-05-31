@@ -166,11 +166,14 @@ class TestToolDiscovery:
     ):
         _inject_services(config, mock_model)
         tools = [
-            ToolDefinition(name="web_search", description="Search the web", tool_type="rest"),
+            ToolDefinition(name="web_search", description="Search the web"),
         ]
         mock_discovery = AsyncMock()
         mock_discovery.discover = AsyncMock(return_value=tools)
         _services["tool_discovery"] = mock_discovery
+        mock_catalog = MagicMock()
+        mock_catalog.get_default_tools.return_value = []
+        _services["tool_catalog"] = mock_catalog
 
         base_state["plan"] = "Search for speed of light"
 
@@ -187,12 +190,38 @@ class TestToolDiscovery:
         mock_discovery = AsyncMock()
         mock_discovery.discover = AsyncMock(return_value=[])
         _services["tool_discovery"] = mock_discovery
+        mock_catalog = MagicMock()
+        mock_catalog.get_default_tools.return_value = []
+        _services["tool_catalog"] = mock_catalog
 
         from moira.workflow.nodes.research_nodes import tool_discovery
 
         await tool_discovery(base_state, _make_run_config(config))
 
         mock_model["client"].chat_completion.assert_not_called()
+
+    async def test_default_tools_always_included(
+        self, config, mock_writer, mock_model, base_state
+    ):
+        _inject_services(config, mock_model)
+        mock_discovery = AsyncMock()
+        mock_discovery.discover = AsyncMock(return_value=[])
+        _services["tool_discovery"] = mock_discovery
+        default_tool = ToolDefinition(
+            name="calculator", description="Math", is_default=True, enabled=True
+        )
+        mock_catalog = MagicMock()
+        mock_catalog.get_default_tools.return_value = [default_tool]
+        _services["tool_catalog"] = mock_catalog
+
+        base_state["plan"] = "Calculate something"
+
+        from moira.workflow.nodes.research_nodes import tool_discovery
+
+        result = await tool_discovery(base_state, _make_run_config(config))
+
+        assert len(result["active_tools"]) == 1
+        assert result["active_tools"][0].name == "calculator"
 
 
 class TestToolSelection:
@@ -202,8 +231,8 @@ class TestToolSelection:
         mock_model["client"].chat_completion.return_value = '["web_search"]'
         _inject_services(config, mock_model)
         base_state["active_tools"] = [
-            ToolDefinition(name="web_search", description="Search the web", tool_type="rest"),
-            ToolDefinition(name="paper_search", description="Search papers", tool_type="rest"),
+            ToolDefinition(name="web_search", description="Search the web"),
+            ToolDefinition(name="paper_search", description="Search papers"),
         ]
 
         from moira.workflow.nodes.research_nodes import tool_selection
@@ -220,7 +249,7 @@ class TestToolSelection:
         mock_model["client"].chat_completion.return_value = "I cannot parse this"
         _inject_services(config, mock_model)
         base_state["active_tools"] = [
-            ToolDefinition(name="web_search", description="Search", tool_type="rest"),
+            ToolDefinition(name="web_search", description="Search"),
         ]
 
         from moira.workflow.nodes.research_nodes import tool_selection
@@ -264,7 +293,7 @@ class TestResearchExecution:
         _services["tool_executor"] = mock_executor
 
         base_state["active_tools"] = [
-            ToolDefinition(name="web_search", description="Search", tool_type="rest"),
+            ToolDefinition(name="web_search", description="Search"),
         ]
         base_state["plan"] = "Search for speed of light"
 
@@ -290,7 +319,7 @@ class TestResearchExecution:
         )
         _services["tool_executor"] = mock_executor
         base_state["active_tools"] = [
-            ToolDefinition(name="web_search", description="Search", tool_type="rest"),
+            ToolDefinition(name="web_search", description="Search"),
         ]
         base_state["plan"] = "test plan"
 

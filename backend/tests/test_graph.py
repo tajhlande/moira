@@ -2,7 +2,7 @@ import pytest
 
 from moira.config import MoiraConfig
 from moira.models.state import ResearchState, VerificationReport
-from moira.workflow.graph import build_graph, compile_graph, route_after_verification
+from moira.workflow.graph import build_graph, compile_graph, make_verification_router
 
 
 @pytest.fixture
@@ -44,7 +44,8 @@ class TestGraphStructure:
 
 
 class TestVerificationRouting:
-    def test_accept_routes_to_report(self):
+    def test_accept_routes_to_report(self, config):
+        route_after_verification = make_verification_router(config)
         state: ResearchState = {
             "question": "test",
             "plan": "",
@@ -65,7 +66,8 @@ class TestVerificationRouting:
         result = route_after_verification(state)
         assert result == "report_generation"
 
-    def test_retry_with_budget_routes_to_planning(self):
+    def test_retry_with_budget_routes_to_planning(self, config):
+        route_after_verification = make_verification_router(config)
         state: ResearchState = {
             "question": "test",
             "plan": "",
@@ -90,7 +92,8 @@ class TestVerificationRouting:
         result = route_after_verification(state)
         assert result == "planning"
 
-    def test_retry_without_budget_routes_to_report(self):
+    def test_retry_without_budget_routes_to_report(self, config):
+        route_after_verification = make_verification_router(config)
         state: ResearchState = {
             "question": "test",
             "plan": "",
@@ -115,7 +118,8 @@ class TestVerificationRouting:
         result = route_after_verification(state)
         assert result == "report_generation"
 
-    def test_error_outcome_routes_to_report(self):
+    def test_error_outcome_routes_to_report(self, config):
+        route_after_verification = make_verification_router(config)
         state: ResearchState = {
             "question": "test",
             "plan": "",
@@ -136,7 +140,8 @@ class TestVerificationRouting:
         result = route_after_verification(state)
         assert result == "report_generation"
 
-    def test_empty_history_routes_to_report(self):
+    def test_empty_history_routes_to_report(self, config):
+        route_after_verification = make_verification_router(config)
         state: ResearchState = {
             "question": "test",
             "plan": "",

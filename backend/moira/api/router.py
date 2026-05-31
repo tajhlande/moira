@@ -95,7 +95,6 @@ async def get_conversation(
                 "execution_steps": r.execution_steps,
                 "tool_executions": r.tool_executions,
                 "verification_attempts": r.verification_attempts,
-                "thinking_traces": r.thinking_traces,
                 "report": r.report,
                 "budget_limit": r.budget_limit,
                 "budget_consumed": r.budget_consumed,
@@ -227,3 +226,89 @@ async def generate_conversation_title(
         "title": updated.title,
         "created_at": updated.created_at,
     }
+
+
+def _tool_repo():
+    from moira.persistence.interfaces import ToolRepository
+
+    return cast(ToolRepository, service_provider("tool_repository"))
+
+
+@router.get("/tools")
+async def list_tools():
+    """Return all registered tools and tool groups."""
+    repo = _tool_repo()
+    tools = await repo.get_all_tools()
+    groups = await repo.get_all_groups()
+    return {
+        "tools": [t.to_dict() for t in tools],
+        "groups": groups,
+    }
+
+
+@router.get("/tools/{name}")
+async def get_tool(name: str):
+    """Return a single tool by name."""
+    repo = _tool_repo()
+    tool = await repo.get_tool(name)
+    if tool is None:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    return tool.to_dict()
+
+
+@router.patch("/tools/{name}")
+async def update_tool(name: str, body: dict[str, Any]):
+    """Update mutable fields on a tool. Built-in tools only allow `enabled`
+    and `is_default` to be changed. Non-built-in tools allow all fields."""
+    repo = _tool_repo()
+    tool = await repo.get_tool(name)
+    if tool is None:
+        raise HTTPException(status_code=404, detail="Tool not found")
+
+    allowed = (
+        {"enabled", "is_default"}
+        if tool.built_in
+        else {
+            "description",
+            "argument_schema",
+            "config",
+            "tags",
+            "reliability",
+            "is_default",
+            "enabled",
+            "group_name",
+        }
+    )
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No updatable fields provided")
+
+    for k, v in updates.items():
+        setattr(tool, k, v)
+    await repo.save_tool(tool)
+
+    if "enabled" in updates:
+        await _sync_tool_to_index(tool)
+
+    return tool.to_dict()
+
+
+async def _sync_tool_to_index(tool) -> None:
+    """Update the LanceDB vector index when a tool's enabled state changes.
+    Enabled tools are (re-)embedded and upserted. Disabled tools are removed
+    from the index entirely."""
+    from moira.service_setup import service_provider
+
+    embedding_repo = service_provider("tool_embedding_repo")
+    embedding_provider = service_provider("embedding_provider")
+
+    if tool.enabled:
+        embedding = await embedding_provider.embed(tool.description)
+        await embedding_repo.upsert(
+            names=[tool.name],
+            embeddings=[embedding],
+            descriptions=[tool.description],
+            enabled_flags=[True],
+        )
+    else:
+        await embedding_repo.delete(tool.name)

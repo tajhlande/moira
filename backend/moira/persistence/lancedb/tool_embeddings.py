@@ -30,22 +30,24 @@ class ToolEmbeddingRepository:
         names: list[str],
         embeddings: list[list[float]],
         descriptions: list[str],
+        enabled_flags: list[bool] | None = None,
     ) -> None:
         """Insert or update tool embeddings. Uses overwrite semantics per
-        tool name (delete-then-insert)."""
+        tool name (delete-then-insert). Stores the enabled flag so search
+        can filter disabled tools at the index level."""
         assert self._db is not None
         if not names:
             return
 
         data = []
-        for name, emb, desc in zip(names, embeddings, descriptions):
-            data.append(
-                {
-                    "name": name,
-                    "vector": emb,
-                    "description": desc,
-                }
-            )
+        for i, (name, emb, desc) in enumerate(zip(names, embeddings, descriptions)):
+            entry = {
+                "name": name,
+                "vector": emb,
+                "description": desc,
+                "enabled": enabled_flags[i] if enabled_flags else True,
+            }
+            data.append(entry)
 
         try:
             table = self._db.open_table(self._table_name)
@@ -85,15 +87,29 @@ class ToolEmbeddingRepository:
             return []
 
         query_array = np.array(query_embedding, dtype=np.float32)
-        results = table.search(query_array).limit(top_k).to_pandas()
+        results = (
+            table.search(query_array)
+            .where("enabled = true", prefilter=True)
+            .limit(top_k)
+            .to_list()
+        )
 
         definitions = []
-        for _, row in results.iterrows():
+        for row in results:
             definitions.append(
                 ToolDefinition(
                     name=row["name"],
                     description=row["description"],
-                    tool_type="rest",
                 )
             )
         return definitions
+
+    async def delete(self, name: str) -> None:
+        """Remove a tool from the index by name."""
+        assert self._db is not None
+        try:
+            table = self._db.open_table(self._table_name)
+            table.delete(f'name = "{name}"')
+            logger.debug("Deleted tool '%s' from vector index", name)
+        except (FileNotFoundError, ValueError, Exception):
+            pass

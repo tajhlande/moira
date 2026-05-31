@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { NScrollbar, NIcon, NButton, NText } from "naive-ui";
+import { NScrollbar, NIcon, NButton, NText, NSwitch } from "naive-ui";
 import { Plus, ChevronRight, ChevronDown, Tool } from "@vicons/tabler";
 import { useToolsStore } from "../stores/tools";
 import { useRouter } from "vue-router";
-import { ref } from "vue";
+import { ref, onMounted } from "vue";
 
 const store = useToolsStore();
 const router = useRouter();
 
-// Track which groups are expanded. All start expanded.
+onMounted(() => {
+  store.fetchTools();
+});
+
 const collapsed = ref<Set<string>>(new Set());
 
 function toggleGroup(group: string) {
@@ -24,6 +27,10 @@ function toggleGroup(group: string) {
 function selectTool(name: string) {
   store.selectTool(name);
   router.push({ name: "tool-detail", params: { name } });
+}
+
+async function onToggleEnabled(name: string, enabled: boolean) {
+  await store.toggleEnabled(name, enabled);
 }
 </script>
 
@@ -51,7 +58,7 @@ function selectTool(name: string) {
             <ChevronDown v-if="!collapsed.has(group)" />
             <ChevronRight v-else />
           </NIcon>
-          <NText strong>{{ group }}</NText>
+          <NText strong>{{ tools[0]?.groupDisplayName || group }}</NText>
           <NText depth="3" class="group-count">({{ tools.length }})</NText>
         </div>
         <div v-if="!collapsed.has(group)" class="group-tools">
@@ -59,12 +66,18 @@ function selectTool(name: string) {
             v-for="tool in tools"
             :key="tool.name"
             :class="['tool-item', { active: store.selectedToolName === tool.name }]"
-            @click="selectTool(tool.name)"
           >
             <NIcon :size="16" class="tool-icon">
               <Tool />
             </NIcon>
-            <span class="tool-name">{{ tool.name }}</span>
+            <span class="tool-name" @click="selectTool(tool.name)">{{ tool.name }}</span>
+            <NSwitch
+              :value="tool.enabled"
+              @update:value="(v: boolean) => onToggleEnabled(tool.name, v)"
+              size="small"
+              class="tool-switch"
+              @click.stop
+            />
           </div>
         </div>
       </div>
@@ -132,5 +145,13 @@ function selectTool(name: string) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  cursor: pointer;
+}
+
+.tool-switch {
+  flex-shrink: 0;
+  --n-height-small: 14px;
+  --n-rail-height-small: 14px;
 }
 </style>
