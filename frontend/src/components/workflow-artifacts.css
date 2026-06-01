@@ -158,18 +158,18 @@
 }
 
 .verification-outcome.accept {
-  background-color: #e8f5e9;
-  color: #18a058;
+  background-color: var(--n-success-color-suppl, #e8f5e9);
+  color: var(--n-success-color, #18a058);
 }
 
 .verification-outcome.retry {
-  background-color: #fff3e0;
-  color: #e6a23c;
+  background-color: var(--n-warning-color-suppl, #fff3e0);
+  color: var(--n-warning-color, #e6a23c);
 }
 
 .verification-outcome.error {
-  background-color: #fbe9e7;
-  color: #d03050;
+  background-color: var(--n-error-color-suppl, #fbe9e7);
+  color: var(--n-error-color, #d03050);
 }
 
 .verification-case {
@@ -189,9 +189,9 @@
   padding: 6px 10px;
   margin: 6px 0;
   border-radius: 4px;
-  background-color: #fff3e0;
-  color: #e6a23c;
-  border-left: 3px solid #e6a23c;
+  background-color: var(--n-warning-color-suppl, #fff3e0);
+  color: var(--n-warning-color, #e6a23c);
+  border-left: 3px solid var(--n-warning-color, #e6a23c);
 }
 
 .verification-claims {
@@ -269,7 +269,7 @@
 .step-cost {
   font-family: monospace;
   font-size: 0.85em;
-  color: #d03050;
+  color: var(--n-info-color, #d03050);
 }
 
 .step-budget {
@@ -309,11 +309,11 @@
 }
 
 .tool-name.success {
-  color: #18a058;
+  color: var(--n-success-color, #18a058);
 }
 
 .tool-name.error {
-  color: #d03050;
+  color: var(--n-error-color, #d03050);
 }
 
 .tool-duration {
@@ -369,7 +369,7 @@
 }
 
 .unverified {
-  color: #d03050;
+  color: var(--n-warning-color, #d03050);
 }
 
 .budget-consumed {
@@ -418,7 +418,7 @@
 
 .run-error {
   padding: 8px 16px;
-  color: #d03050;
+  color: var(--n-error-color, #d03050);
   font-size: 0.9em;
   max-width: 80%;
 }
