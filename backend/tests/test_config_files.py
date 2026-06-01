@@ -87,6 +87,7 @@ class TestPromptsFile:
             "tool_selection.user": {"question", "plan", "tool_descriptions"},
             "research_execution.user": {"question", "plan", "tool_descriptions"},
             "draft_synthesis.user": {"question", "plan", "evidence"},
+            "draft_synthesis.system_retry": {"case", "assessment", "guidance"},
             "verification.user": {"question", "draft"},
             "verification.fact_check.user": {"question", "draft", "tool_descriptions"},
             "verification.evidence": {"evidence"},

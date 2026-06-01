@@ -58,6 +58,7 @@ def base_state(config) -> ResearchState:
         "verification_history": [],
         "unverified_claims": [],
         "error": "",
+        "draft_retry_count": 0,
     }
 
 
@@ -137,7 +138,7 @@ class TestPlanning:
         _inject_services(config, mock_model)
         base_state["verification_history"] = [
             VerificationReport(
-                outcome="retry",
+                outcome="retry_plan",
                 case=5,
                 assessment="Unsupported claims essential to answer",
                 supported_claims=[],
@@ -496,7 +497,7 @@ class TestVerification:
         mock_model["client"].chat_completion.return_value = ChatResponse(
             content=json.dumps(
                 {
-                    "outcome": "retry",
+                    "outcome": "retry_plan",
                     "case": 5,
                     "assessment": "Draft has unsupported claims that are essential",
                     "supported_claims": [],
@@ -524,7 +525,7 @@ class TestVerification:
         mock_model["client"].chat_completion.return_value = ChatResponse(
             content=json.dumps(
                 {
-                    "outcome": "retry",
+                    "outcome": "retry_plan",
                     "case": 5,
                     "assessment": "Unsupported claims",
                     "supported_claims": [],
@@ -539,7 +540,7 @@ class TestVerification:
         _inject_services(config, mock_model)
         base_state["verification_history"] = [
             VerificationReport(
-                outcome="retry",
+                outcome="retry_plan",
                 case=5,
                 assessment="Old failure",
                 supported_claims=[],
@@ -670,7 +671,7 @@ class TestVerification:
             ChatResponse(
                 content=json.dumps(
                     {
-                        "outcome": "retry",
+                        "outcome": "retry_plan",
                         "case": 6,
                         "assessment": "Draft claims wrong value for speed of light",
                         "supported_claims": [],
@@ -693,7 +694,7 @@ class TestVerification:
 
         result = await verification(base_state, _make_run_config(config))
 
-        assert result["verification_history"][0]["outcome"] == "retry"
+        assert result["verification_history"][0]["outcome"] == "retry_plan"
         assert result["verification_history"][0]["case"] == 6
         assert "exact speed is wrong" in result["unverified_claims"]
 
@@ -958,6 +959,64 @@ class TestJsonParsing:
         assert len(result) == 1
         assert result[0] == ("web_search", {"query": "test"})
 
+    def test_parse_tool_calls_handles_markdown_fenced_multi_array(self):
+        from moira.workflow.nodes.research_nodes import _parse_tool_calls
+
+        text = (
+            "```json\n"
+            '[{"tool": "web_search", "args": {"query": "topic A"}}]\n'
+            '[{"tool": "web_search", "args": {"query": "topic B"}}]\n'
+            "```"
+        )
+        result = _parse_tool_calls(text)
+        assert len(result) == 2
+        assert result[0] == ("web_search", {"query": "topic A"})
+        assert result[1] == ("web_search", {"query": "topic B"})
+
+    def test_parse_tool_calls_handles_markdown_fenced_single_array(self):
+        from moira.workflow.nodes.research_nodes import _parse_tool_calls
+
+        text = (
+            "```json\n"
+            '[{"tool": "web_search", "args": {"query": "a"}}, '
+            '{"tool": "calculator", "args": {"expression": "2+2"}}]\n'
+            "```"
+        )
+        result = _parse_tool_calls(text)
+        assert len(result) == 2
+        assert result[0] == ("web_search", {"query": "a"})
+        assert result[1] == ("calculator", {"expression": "2+2"})
+
+
+class TestLooksLikeFailedToolCalls:
+    def test_detects_markdown_fence(self):
+        from moira.workflow.nodes.research_nodes import _looks_like_failed_tool_calls
+
+        text = '```json\n[{"tool": "web_search", "args": {"query": "test"}}]\n```'
+        assert _looks_like_failed_tool_calls(text) is True
+
+    def test_detects_malformed_array(self):
+        from moira.workflow.nodes.research_nodes import _looks_like_failed_tool_calls
+
+        text = '[{"tool": "web_search", "args" {"query": "missing colon"}}]'
+        assert _looks_like_failed_tool_calls(text) is True
+
+    def test_ignores_prose(self):
+        from moira.workflow.nodes.research_nodes import _looks_like_failed_tool_calls
+
+        assert _looks_like_failed_tool_calls("Research complete.") is False
+
+    def test_ignores_valid_tool_calls(self):
+        from moira.workflow.nodes.research_nodes import _looks_like_failed_tool_calls
+
+        text = json.dumps([{"tool": "web_search", "args": {"query": "test"}}])
+        assert _looks_like_failed_tool_calls(text) is False
+
+    def test_ignores_empty_array(self):
+        from moira.workflow.nodes.research_nodes import _looks_like_failed_tool_calls
+
+        assert _looks_like_failed_tool_calls("[]") is False
+
 
 class TestBuildPlanningMessages:
     def test_basic_question(self):
@@ -978,7 +1037,7 @@ class TestBuildPlanningMessages:
 
         history = [
             VerificationReport(
-                outcome="retry",
+                outcome="retry_plan",
                 case=5,
                 assessment="Essential claims are unsupported",
                 supported_claims=[],

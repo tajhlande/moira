@@ -18,7 +18,7 @@ Guidance: remove unsupported claims
 
 4. The draft has unsupported claims, and doesn't adequately answer the question without them
 
-Outcome: return to planning 
+Outcome: return to planning (retry_plan)
 
 Guidance: find a different approach to answering the question
 
@@ -30,25 +30,25 @@ Guidance: Note inability to answer question
 
 6. The draft is factually wrong — not just unsupported claims, but actively incorrect claims that contradict known evidence. This is worse than "unsupported" and should be treated differently.
 
-Outcome: return to planning
+Outcome: return to planning (retry_plan)
 
 Guidance: Note that claims are contradicted by known evidence, and cite the evidence.
 
 7. The draft answers a different question than what was asked — it's internally coherent but went off-topic. The verification step currently has no way to check relevance to the original question.
 
-Outcome: return to planning
+Outcome: retry draft (retry_draft) — findings are sufficient, re-synthesize only
 
-Guidance: Note that the draft content is off topic 
+Guidance: Note that the draft content is off topic
 
 8. The draft is internally contradictory — it makes claims that conflict with each other. Currently the verification prompt asks about contradictions "with the evidence," but not contradictions within the draft itself.
 
-Outcome: return to planning
+Outcome: retry draft (retry_draft) — findings are sufficient, re-synthesize only
 
-Guidance: Note that the draft is self-contradictory. 
+Guidance: Note that the draft is self-contradictory.
 
 9. The draft is too shallow or incomplete — it technically answers the question but at such a high level that it's not useful. Not the same as #5 (no claims at all) — this has claims but they're trivially obvious or barely scratch the surface.
 
-Outcome: return to planning
+Outcome: return to planning (retry_plan)
 
 Guidance: Note that the draft is too trivial to accept
 
@@ -79,15 +79,22 @@ Guidance: none
 Guidance: note which claims are supported and which are not.  If no claims, note that we could not answer the question.
 
 
-## Repeat planning step if:
+## Repeat planning step if (retry_plan):
 
 4. The draft has unsupported claims, and doesn't adequately answer the question without them
 6. The draft is factually wrong — not just unsupported claims, but actively incorrect claims that contradict known evidence. This is worse than "unsupported" and should be treated differently.
-7. The draft answers a different question than what was asked — it's internally coherent but went off-topic. The verification step currently has no way to check relevance to the original question.
-8. The draft is internally contradictory — it makes claims that conflict with each other. Currently the verification prompt asks about contradictions "with the evidence," but not contradictions within the draft itself.
 9. The draft is too shallow or incomplete — it technically answers the question but at such a high level that it's not useful. Not the same as #5 (no claims at all) — this has claims but they're trivially obvious or barely scratch the surface.
 
 Guidance: note the deficiencies in the previous report and ask the planner to find a different approach.
+
+## Retry draft synthesis if (retry_draft):
+
+7. The draft answers a different question than what was asked — it's internally coherent but went off-topic.
+8. The draft is internally contradictory — it makes claims that conflict with each other.
+
+These are synthesis-specific problems. The findings contain sufficient evidence but the draft misused it. Re-synthesizing with verification feedback is cheaper (7 budget points) than a full cycle (17).
+
+Guidance: note the specific synthesis failure (off-topic or self-contradictory) so the synthesizer can correct it.
 
 ## Halt the process with an error if:
 

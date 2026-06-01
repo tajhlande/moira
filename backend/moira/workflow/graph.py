@@ -4,7 +4,7 @@ from langgraph.graph import END, START, StateGraph
 
 from moira.config import MoiraConfig
 from moira.models.state import ResearchState
-from moira.workflow.budget import full_cycle_cost
+from moira.workflow.budget import draft_retry_cost, full_cycle_cost
 from moira.workflow.nodes.research_nodes import (
     draft_synthesis,
     planning,
@@ -31,15 +31,16 @@ def make_verification_router(config: MoiraConfig):
         verification report's explicit outcome field:
         - "accept" -> report_generation
         - "error" -> report_generation (with error flag set in state)
-        - "retry" + budget sufficient -> planning
-        - "retry" + budget insufficient -> report_generation
+        - "retry_draft" + budget sufficient + retries remaining -> draft_synthesis
+        - "retry_plan" + budget sufficient -> planning
+        - fallback: report_generation
         """
         verification_history = state.get("verification_history", [])
         if not verification_history:
             return "report_generation"
 
         latest = verification_history[-1]
-        outcome = latest.get("outcome", "retry")
+        outcome = latest.get("outcome", "retry_plan")
 
         if outcome == "accept":
             logger.info(
@@ -55,11 +56,31 @@ def make_verification_router(config: MoiraConfig):
             )
             return "report_generation"
 
-        # outcome == "retry"
+        if outcome == "retry_draft":
+            budget_remaining = state.get("budget_remaining", 0.0)
+            draft_retries = state.get("draft_retry_count", 0)
+            dr_cost = draft_retry_cost(config)
+            if draft_retries < 1 and budget_remaining >= dr_cost:
+                logger.info(
+                    "Verification retry_draft (case %d), budget sufficient"
+                    " (%.1f >= %d), routing to draft_synthesis",
+                    latest.get("case"),
+                    budget_remaining,
+                    dr_cost,
+                )
+                return "draft_synthesis"
+            # Fall through to retry_plan or report
+            logger.info(
+                "Verification retry_draft declined (retries=%d, budget=%.1f), falling through",
+                draft_retries,
+                budget_remaining,
+            )
+
+        # outcome == "retry_plan" or retry_draft fallback
         budget_remaining = state.get("budget_remaining", 0.0)
         if budget_remaining >= cycle_cost:
             logger.info(
-                "Verification retry (case %d), budget sufficient"
+                "Verification retry_plan (case %d), budget sufficient"
                 " (%.1f >= %d), routing to planning",
                 latest.get("case"),
                 budget_remaining,
@@ -68,7 +89,7 @@ def make_verification_router(config: MoiraConfig):
             return "planning"
 
         logger.info(
-            "Verification retry (case %d), budget insufficient (%.1f < %d),"
+            "Verification retry_plan (case %d), budget insufficient (%.1f < %d),"
             " routing to report_generation",
             latest.get("case"),
             budget_remaining,
@@ -117,6 +138,7 @@ def build_graph(config: MoiraConfig) -> StateGraph:
         make_verification_router(config),
         {
             "planning": "planning",
+            "draft_synthesis": "draft_synthesis",
             "report_generation": "report_generation",
         },
     )

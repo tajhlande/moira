@@ -116,14 +116,14 @@ function toolCallCount(step: ExecutionStep): number {
   return 0;
 }
 
-// A verification step that sent control flow back to planning (outcome=retry)
+// A verification step that sent control flow back (outcome=retry_plan or retry_draft)
 // gets a distinct branch icon instead of the standard checkmark.
 function isRetryBranch(step: ExecutionStep): boolean {
   if (step.node !== "verification" || step.status !== "completed") return false;
   const so = step.detail?.structured_output as
     | Record<string, unknown>
     | undefined;
-  return so?.outcome === "retry";
+  return so?.outcome === "retry_plan" || so?.outcome === "retry_draft";
 }
 
 // Compute live elapsed for the currently running step
@@ -301,7 +301,28 @@ async function copyMessage(content: string, index: number) {
               </div>
               <div v-if="store.currentStep" class="step-row running">
                 <IconLoader :size="16" class="spinning" />
-                <span class="step-label">{{ store.currentStep.label }}</span>
+                <span class="step-label">{{
+                  store.currentStep.label
+                }}</span>
+                <span
+                  v-if="toolCallCount(store.currentStep) > 0"
+                  class="step-tool-indicators"
+                >
+                  <template v-if="toolCallCount(store.currentStep) <= 10">
+                    <IconTool
+                      v-for="ti in toolCallCount(store.currentStep)"
+                      :key="ti"
+                      :size="13"
+                      class="tool-indicator-icon"
+                    />
+                  </template>
+                  <template v-else>
+                    <IconTool :size="13" class="tool-indicator-icon" />
+                    <span class="tool-indicator-count"
+                      >&times;{{ toolCallCount(store.currentStep) }}</span
+                    >
+                  </template>
+                </span>
                 <span class="step-elapsed">{{
                   formatElapsed(liveElapsedMs(store.currentStep))
                 }}</span>

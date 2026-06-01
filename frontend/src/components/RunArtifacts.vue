@@ -48,7 +48,7 @@ function isRetryBranch(step: ExecutionStep): boolean {
   const so = step.detail?.structured_output as
     | Record<string, unknown>
     | undefined;
-  return so?.outcome === "retry";
+  return so?.outcome === "retry_plan" || so?.outcome === "retry_draft";
 }
 
 function formatElapsed(ms: number | undefined): string {

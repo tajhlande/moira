@@ -4,7 +4,7 @@ from moira.tools.base import ToolDefinition
 
 
 class VerificationReport(TypedDict):
-    outcome: str  # "accept", "retry", or "error"
+    outcome: str  # "accept", "retry_plan", "retry_draft", or "error"
     case: int  # 1-11 matching the verification prompt cases
     assessment: str
     supported_claims: list[str]
@@ -50,3 +50,6 @@ class ResearchState(TypedDict):
     unverified_claims: list[str]
     # Error tracking for node failure path
     error: str
+    # Tracks draft-only retries (max 1). Incremented when verification
+    # routes to draft_synthesis instead of planning.
+    draft_retry_count: int

@@ -33,6 +33,7 @@ REQUIRED_SECTIONS = [
     "compression.system",
     "draft_synthesis.system",
     "draft_synthesis.user",
+    "draft_synthesis.system_retry",
     "verification.system",
     "verification.user",
     "verification.fact_check.system",

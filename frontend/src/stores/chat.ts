@@ -251,7 +251,10 @@ export const useChatStore = defineStore("chat", () => {
           currentStep.value.status = "completed";
           currentStep.value.elapsed_ms = payload.elapsed_ms ?? 0;
           if (payload.detail) {
-            currentStep.value.detail = payload.detail;
+            if (!currentStep.value.detail) {
+              currentStep.value.detail = {};
+            }
+            Object.assign(currentStep.value.detail, payload.detail);
           }
           executionSteps.value.push(currentStep.value);
           currentStep.value = null;

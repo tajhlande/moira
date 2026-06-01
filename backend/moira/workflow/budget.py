@@ -17,6 +17,12 @@ _FULL_CYCLE_NODES = (
     "verification",
 )
 
+# Nodes participating in a draft-only retry (re-synthesis + re-verification).
+_DRAFT_RETRY_NODES = (
+    "draft_synthesis",
+    "verification",
+)
+
 
 def get_node_cost(config: MoiraConfig, node_name: str) -> int:
     """Return the cost weight for a given node name."""
@@ -64,3 +70,10 @@ def full_cycle_cost(config: MoiraConfig) -> int:
     (planning through verification). Used by the verification router to
     decide whether a retry loop is affordable."""
     return sum(get_node_cost(config, n) for n in _FULL_CYCLE_NODES)
+
+
+def draft_retry_cost(config: MoiraConfig) -> int:
+    """Return the budget cost of a draft-only retry (draft_synthesis +
+    verification). Used when verification identifies a synthesis-specific
+    problem (cases 7-8) that doesn't require re-running research."""
+    return sum(get_node_cost(config, n) for n in _DRAFT_RETRY_NODES)

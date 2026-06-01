@@ -162,7 +162,12 @@
   color: var(--n-success-color, #18a058);
 }
 
-.verification-outcome.retry {
+.verification-outcome.retry_plan {
+  background-color: var(--n-warning-color-suppl, #fff3e0);
+  color: var(--n-warning-color, #e6a23c);
+}
+
+.verification-outcome.retry_draft {
   background-color: var(--n-warning-color-suppl, #fff3e0);
   color: var(--n-warning-color, #e6a23c);
 }

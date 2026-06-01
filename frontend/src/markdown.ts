@@ -20,7 +20,9 @@ import themeLightPlus from "@shikijs/themes/light-plus";
 let highlighterInstance: Awaited<
   ReturnType<typeof createHighlighterCore>
 > | null = null;
+let highlighterPromise: Promise<typeof highlighterInstance> | null = null;
 let markedInstance: Marked | null = null;
+let markedPromise: Promise<Marked> | null = null;
 
 const LANGUAGES = [
   langBash,
@@ -59,14 +61,16 @@ function plainCodeBlock(code: string, lang: string): string {
 
 async function initHighlighter() {
   if (highlighterInstance) return highlighterInstance;
+  if (highlighterPromise) return highlighterPromise;
 
-  // Uses the full shiki import which bundles the JS regex engine internally.
-  // Falls back to the JS engine (no WASM needed) for broader compatibility.
-  highlighterInstance = await createHighlighter({
-    themes: [themeDarkPlus, themeLightPlus],
-    langs: [...LANGUAGES],
-  });
-  return highlighterInstance;
+  highlighterPromise = (async () => {
+    highlighterInstance = await createHighlighter({
+      themes: [themeDarkPlus, themeLightPlus],
+      langs: [...LANGUAGES],
+    });
+    return highlighterInstance;
+  })();
+  return highlighterPromise;
 }
 
 // Builds the highlighted code block HTML with header (language label + copy button)
@@ -97,47 +101,48 @@ function wrapHighlightedCode(
 
 export async function initMarked(): Promise<Marked> {
   if (markedInstance) return markedInstance;
+  if (markedPromise) return markedPromise;
 
-  const highlighter = await initHighlighter();
+  markedPromise = (async () => {
+    const highlighter = await initHighlighter();
 
-  const md = new Marked({
-    gfm: true,
-    breaks: false,
-    renderer: {
-      link({ href, title, text }) {
-        const t = title ? ` title="${title}"` : "";
-        return `<a href="${href}"${t} target="_blank" rel="noopener noreferrer">${text}</a>`;
+    const md = new Marked({
+      gfm: true,
+      breaks: false,
+      renderer: {
+        link({ href, title, text }) {
+          const t = title ? ` title="${title}"` : "";
+          return `<a href="${href}"${t} target="_blank" rel="noopener noreferrer">${text}</a>`;
+        },
       },
-    },
-  });
+    });
 
-  md.use(
-    markedShiki({
-      async highlight(code, lang) {
-        const resolvedLang = LANG_IDS.includes(lang) ? lang : "";
-        if (!resolvedLang) {
-          return plainCodeBlock(code, lang);
-        }
+    md.use(
+      markedShiki({
+        async highlight(code, lang) {
+          const resolvedLang = LANG_IDS.includes(lang) ? lang : "";
+          if (!resolvedLang) {
+            return plainCodeBlock(code, lang);
+          }
 
-        // Dual-theme: light-plus and dark-plus. Shiki generates HTML with
-        // CSS custom properties that switch based on .shiki-dark / .shiki-light
-        // class presence on ancestor elements.
-        const html = highlighter.codeToHtml(code, {
-          lang: resolvedLang,
-          themes: {
-            light: "light-plus",
-            dark: "dark-plus",
-          },
-        });
+          const html = highlighter.codeToHtml(code, {
+            lang: resolvedLang,
+            themes: {
+              light: "light-plus",
+              dark: "dark-plus",
+            },
+          });
 
-        return wrapHighlightedCode(html, code, resolvedLang);
-      },
-      container: "%s",
-    }),
-  );
+          return wrapHighlightedCode(html, code, resolvedLang);
+        },
+        container: "%s",
+      }),
+    );
 
-  markedInstance = md;
-  return md;
+    markedInstance = md;
+    return md;
+  })();
+  return markedPromise;
 }
 
 // Synchronous parse for cases where initMarked() hasn't been awaited yet.

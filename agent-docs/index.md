@@ -18,3 +18,4 @@
 | **tiptap-input.md**               | Plan for replacing the plain-text input with TipTap rich-text editor.                                                              |
 | **phase3-ui-prep.md**             | Phase 3 preparation: multi-view navigation framework, tool catalog UI, and standard tool definitions.                              |
 | **tool-secrets-and-spec.md**      | Plan for encrypted secrets storage on tools and spec-from-implementation (config/secret schemas from tool classes, not DB).        |
+| **draft-retry-routing.md**        | Plan for routing verification failures directly to draft synthesis (bypassing research) for synthesis-specific problems (cases 7-8). |

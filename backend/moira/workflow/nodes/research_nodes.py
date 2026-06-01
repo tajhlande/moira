@@ -12,6 +12,14 @@ from moira.workflow.budget import can_execute, deduct_cost, full_cycle_cost
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_TOOL_ROUNDS = 3
+DEFAULT_MAX_PARSE_RETRIES = 2
+
+_PARSE_CORRECTION_PROMPT = (
+    "Your previous response did not contain a valid JSON array of tool calls. "
+    "Respond ONLY with a raw JSON array, no markdown fences. "
+    'Example: [{"tool": "tool_name", "args": {"key": "value"}}] '
+    "Respond with [] if you are done gathering evidence."
+)
 
 
 def _format_tool_descriptions(tools: list) -> str:
@@ -163,11 +171,17 @@ async def _run_tool_loop(
     writer,
     max_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
     temperature: float = 0.5,
+    max_parse_retries: int = DEFAULT_MAX_PARSE_RETRIES,
 ) -> tuple[str, str | None, list[dict]]:
     """Run a multi-round tool-use loop. The model produces tool calls, they
     are executed, and results are fed back as assistant/user messages. The
     loop continues until the model stops producing tool calls or max_rounds
     is reached.
+
+    If the model response cannot be parsed as tool calls (and is not a
+    termination signal []), the model is given a correction prompt and
+    retried up to max_parse_retries times before treating the round as
+    a no-call (loop stops).
 
     Returns (final_response, thinking, all_tool_results) where
     all_tool_results is a flat list of dicts with 'tool', 'args', 'output',
@@ -183,6 +197,40 @@ async def _run_tool_loop(
             model=resolved.model_id, messages=messages, temperature=temperature
         )
         response, thinking = _extract(node, raw)
+
+        # If the response can't be parsed as tool calls and isn't a
+        # termination signal, check if it looks like a failed attempt
+        # to produce tool calls (contains JSON-like structures or
+        # markdown code fences). If so, retry with a correction prompt.
+        parsed = _parse_tool_calls(response)
+        if (
+            not parsed
+            and response.strip() not in ("[]", "[]\n")
+            and _looks_like_failed_tool_calls(response)
+        ):
+            parse_attempt = 0
+            while parse_attempt < max_parse_retries:
+                parse_attempt += 1
+                logger.warning(
+                    "[%s] Round %d: model response not parseable as tool calls, retry %d/%d",
+                    node,
+                    round_num + 1,
+                    parse_attempt,
+                    max_parse_retries,
+                )
+                messages = list(messages)
+                messages.append({"role": "assistant", "content": response})
+                messages.append({"role": "user", "content": _PARSE_CORRECTION_PROMPT})
+                _log_prompts(node, messages)
+                raw = await resolved.client.chat_completion(
+                    model=resolved.model_id,
+                    messages=messages,
+                    temperature=max(temperature - 0.2, 0.1),
+                )
+                response, thinking = _extract(node, raw)
+                parsed = _parse_tool_calls(response)
+                if parsed or response.strip() in ("[]", "[]\n"):
+                    break
 
         round_results = await _execute_tool_round(node, response, active_tools, executor, writer)
 
@@ -518,12 +566,14 @@ async def compression(state: ResearchState, config: RunnableConfig) -> dict:
 
 async def draft_synthesis(state: ResearchState, config: RunnableConfig) -> dict:
     """Draft Synthesis node: intelligence model produces a draft answer.
-    Cost weight: 3."""
+    Cost weight: 3. On draft retry, includes verification feedback so the
+    synthesizer can address specific issues."""
     moira_config = _get_config(config)
     budget = state.get("budget_remaining", 0.0)
     node = "draft_synthesis"
+    draft_retry_count = state.get("draft_retry_count", 0)
 
-    logger.debug("DRAFT SYNTHESIS Start")
+    logger.debug("DRAFT SYNTHESIS Start (retry=%d)", draft_retry_count)
     if not can_execute(moira_config, node, budget):
         return {"error": f"Insufficient budget for {node}"}
 
@@ -537,17 +587,26 @@ async def draft_synthesis(state: ResearchState, config: RunnableConfig) -> dict:
     findings = state.get("findings", [])
     evidence = "\n\n".join(f"[{f['source']}] {f['content']}" for f in findings)
 
+    system_prompt = get_prompt("draft_synthesis.system")
+    user_content = get_prompt("draft_synthesis.user").format(
+        question=question, plan=plan, evidence=evidence
+    )
+
+    # On draft retry, append verification feedback so the synthesizer
+    # knows what went wrong with the previous draft.
+    if draft_retry_count > 0:
+        verification_history = state.get("verification_history", [])
+        if verification_history:
+            last_report = verification_history[-1]
+            system_prompt = get_prompt("draft_synthesis.system_retry").format(
+                case=last_report.get("case", 0),
+                assessment=last_report.get("assessment", ""),
+                guidance=last_report.get("guidance", ""),
+            )
+
     messages = [
-        {
-            "role": "system",
-            "content": get_prompt("draft_synthesis.system"),
-        },
-        {
-            "role": "user",
-            "content": get_prompt("draft_synthesis.user").format(
-                question=question, plan=plan, evidence=evidence
-            ),
-        },
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
     ]
 
     registry = _get_registry(config)
@@ -558,6 +617,16 @@ async def draft_synthesis(state: ResearchState, config: RunnableConfig) -> dict:
     )
     draft, thinking = _extract(node, raw)
 
+    # Increment draft_retry_count so the router can guard against loops.
+    # On first pass this is 0 -> 1; on retry pass this is 1 -> 2 (but
+    # the router will not allow a second retry).
+    state_update: dict = {"draft": draft, "budget_remaining": new_budget}
+    if draft_retry_count == 0:
+        # Normal first pass — leave as default (0)
+        pass
+    else:
+        state_update["draft_retry_count"] = draft_retry_count + 1
+
     _emit_node_end(
         writer,
         node,
@@ -567,7 +636,7 @@ async def draft_synthesis(state: ResearchState, config: RunnableConfig) -> dict:
 
     logger.info("Draft synthesis complete, length=%d", len(draft))
     logger.debug("DRAFT SYNTHESIS Complete")
-    return {"draft": draft, "budget_remaining": new_budget}
+    return state_update
 
 
 async def verification(state: ResearchState, config: RunnableConfig) -> dict:
@@ -697,10 +766,10 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
             "guidance": "Technical failure during verification",
         }
 
-    outcome = report_dict.get("outcome", "retry")
-    if outcome not in ("accept", "retry", "error"):
-        logger.warning("Invalid verification outcome '%s', defaulting to retry", outcome)
-        outcome = "retry"
+    outcome = report_dict.get("outcome", "retry_plan")
+    if outcome not in ("accept", "retry_plan", "retry_draft", "error"):
+        logger.warning("Invalid verification outcome '%s', defaulting to retry_plan", outcome)
+        outcome = "retry_plan"
 
     # If the draft is empty/garbage, force error outcome (case 10)
     if not draft.strip():
@@ -740,20 +809,34 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
     )
 
     # Build a copy of the report for the detail's structured_output.
-    # We add a retry_declined note when the outcome is "retry" but
+    # We add a retry_declined note when the outcome is "retry_plan" but
     # there isn't enough budget for another full cycle. This copy keeps
     # the state's verification_history clean — only the UI sees the note.
     structured = dict(report)
-    if outcome == "retry":
+    if outcome == "retry_plan":
         from moira.service_setup import service_provider
 
-        moira_cfg = service_provider("config")
+        moira_cfg = cast(MoiraConfig, service_provider("config"))
         cycle_cost = full_cycle_cost(moira_cfg)
         if new_budget < cycle_cost:
             structured["retry_declined"] = True
             structured["retry_declined_reason"] = (
                 f"Insufficient budget for another cycle "
                 f"({new_budget:.1f} remaining, {cycle_cost} needed)"
+            )
+    elif outcome == "retry_draft":
+        from moira.service_setup import service_provider
+        from moira.workflow.budget import draft_retry_cost
+
+        moira_cfg = cast(MoiraConfig, service_provider("config"))
+        dr_cost = draft_retry_cost(moira_cfg)
+        draft_retries = state.get("draft_retry_count", 0)
+        if new_budget < dr_cost or draft_retries >= 1:
+            structured["retry_declined"] = True
+            structured["retry_declined_reason"] = (
+                f"Cannot retry draft "
+                f"({new_budget:.1f} remaining, {dr_cost} needed, "
+                f"{draft_retries} draft retries used)"
             )
 
     # Merge detail: include prompts from both phases plus tool results.
@@ -1005,16 +1088,19 @@ def _parse_json_object(text: str) -> dict:
 
 
 def _parse_tool_calls(text: str) -> list[tuple[str, dict]]:
-    """Parse tool calls from model response. Handles two formats:
+    """Parse tool calls from model response. Handles formats:
     1. JSON array: [{"tool": "name", "args": {...}}, ...]
-    2. Line-delimited JSON objects (one per line, no array wrapper):
-       {"tool": "name", "args": {...}}
-       {"tool": "name", "args": {...}}
-    Local models sometimes omit the array brackets."""
+    2. Line-delimited JSON objects: {"tool": "name", "args": {...}}
+    3. Markdown-fenced arrays (one single-element array per line):
+       ```json
+       [{"tool": "name", "args": {...}}]
+       [{"tool": "name", "args": {...}}]
+       ```
+    Local models often produce formats 2 and 3."""
     import json
     import re
 
-    # Try JSON array format first
+    # Try JSON array format first (single valid array)
     match = re.search(r"\[.*\]", text, re.DOTALL)
     if match:
         try:
@@ -1033,20 +1119,40 @@ def _parse_tool_calls(text: str) -> list[tuple[str, dict]]:
         except (json.JSONDecodeError, TypeError):
             pass
 
-    # Fallback: line-delimited JSON objects
+    # Fallback: strip markdown fences, then try each line as either
+    # a JSON object or a single-element JSON array. This handles the
+    # common case where the model wraps each tool call in its own
+    # array on separate lines inside a code block.
+    stripped = re.sub(r"```\w*\n?", "", text).strip()
     result = []
-    for line in text.strip().splitlines():
+    for line in stripped.splitlines():
         line = line.strip()
-        if not line.startswith("{"):
+        if not line or line in ("```",):
             continue
-        try:
-            obj = json.loads(line)
-            name = obj.get("tool", "")
-            args = obj.get("args", {})
-            if name:
-                result.append((name, args))
-        except (json.JSONDecodeError, TypeError):
-            continue
+        # Try as a JSON array first (single-element like [{"tool":...}])
+        if line.startswith("["):
+            try:
+                calls = json.loads(line)
+                if isinstance(calls, list):
+                    for call in calls:
+                        if isinstance(call, dict):
+                            name = call.get("tool", "")
+                            args = call.get("args", {})
+                            if name:
+                                result.append((name, args))
+                    continue
+            except (json.JSONDecodeError, TypeError):
+                pass
+        # Try as a bare JSON object
+        if line.startswith("{"):
+            try:
+                obj = json.loads(line)
+                name = obj.get("tool", "")
+                args = obj.get("args", {})
+                if name:
+                    result.append((name, args))
+            except (json.JSONDecodeError, TypeError):
+                continue
     return result
 
 
@@ -1059,6 +1165,27 @@ def _looks_like_tool_calls(text: str) -> bool:
         return False
     calls = _parse_tool_calls(stripped)
     return len(calls) > 0
+
+
+def _looks_like_failed_tool_calls(text: str) -> bool:
+    """Heuristic: does this response look like the model was *trying* to
+    produce tool calls but failed? Triggers a parse-retry. We check for
+    JSON-like structures, markdown code fences, or the word "tool" near
+    structured content. Prose responses should NOT trigger this."""
+    stripped = text.strip()
+    # If it already parses correctly, it's not a failure
+    if _looks_like_tool_calls(stripped):
+        return False
+    # Empty array is a valid termination signal, not a failure
+    if stripped == "[]" or stripped == "[]\n":
+        return False
+    # Markdown code fence wrapping JSON-like content
+    if "```" in stripped and ("tool" in stripped.lower() or "{" in stripped):
+        return True
+    # Starts with a bracket but didn't parse (malformed array)
+    if stripped.startswith("["):
+        return True
+    return False
 
 
 def _now() -> str:

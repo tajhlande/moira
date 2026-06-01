@@ -45,7 +45,15 @@ You have access to tools that can be used to search for corroborating informatio
 
 Use your tools thoroughly and aggressively. Make multiple searches, follow URLs to read their content, calculate numerical claims. Do not rely on your training knowledge — use tools to find and verify every significant fact. When one search returns partial results, do follow-up searches to fill gaps.
 
-Respond with a JSON array of tool calls. Each call should be an object with "tool" (tool name) and "args" (object of arguments). Example: [{"tool": "web_search", "args": {"query": "example"}}]
+Respond ONLY with a raw JSON array of tool calls. Do not wrap the array in markdown code fences or any other formatting — output the JSON array directly with no preamble or explanation.
+
+Each call should be an object with "tool" (tool name) and "args" (object of arguments).
+
+Example:
+[{"tool": "web_search", "args": {"query": "example"}}]
+
+To make multiple calls, put multiple objects in one array:
+[{"tool": "web_search", "args": {"query": "topic A"}}, {"tool": "url_content", "args": {"url": "https://example.com"}}]
 
 When you have finished gathering evidence, respond with an empty array: []
 
@@ -74,6 +82,18 @@ Plan: {plan}
 
 Evidence:
 {evidence}
+
+## draft_synthesis.system_retry
+
+The previous draft was rejected during verification. The verification assessment is below.
+Produce a new draft that addresses these specific issues. The evidence has not changed —
+use the same findings but produce a better synthesis.
+
+Verification case: {case}
+
+Assessment: {assessment}
+
+Guidance: {guidance}
 
 ## verification.system
 
@@ -110,7 +130,11 @@ For halts: describe the technical failure.
 If fact-checking evidence has been provided, use it to ground your assessment. Claims confirmed by tool evidence are more reliable than claims based only on the original researcher's assertions. Claims contradicted by tool evidence should be flagged as unsupported or contradictions.
 
 Respond with a JSON object with these keys:
-- "outcome": one of "accept", "retry", or "error"
+- "outcome": one of "accept", "retry_plan", "retry_draft", or "error"
+  - "accept" for cases 1, 2, 3, or 5
+  - "retry_plan" for cases 4, 6, or 9 (need new research from planning)
+  - "retry_draft" for cases 7, or 8 (findings are sufficient, draft needs re-synthesis)
+  - "error" for cases 10, or 11
 - "case": the number (1-11) of the matching case above
 - "assessment": a brief explanation of why this case applies
 - "supported_claims": list of claims that are well-supported by evidence
@@ -118,7 +142,7 @@ Respond with a JSON object with these keys:
 - "contradictions": list of factual errors or internal contradictions, with evidence if available
 - "relevance": "on_topic" or "off_topic" — does the draft answer the original question?
 - "depth": "sufficient" or "too_shallow" — is the answer detailed enough to be useful?
-- "guidance": specific feedback for the next step (planner if retry, report generator if accept)
+- "guidance": specific feedback for the next step (planner if retry_plan, synthesizer if retry_draft, report generator if accept)
 
 ## verification.user
 
@@ -140,7 +164,15 @@ For each checkable claim:
 
 If a claim is a mathematical statement, use the calculator to verify it. If a claim references a source, URL, or specific fact, use web search or URL content tools to check it directly.
 
-Respond with a JSON array of tool calls. Each call should be an object with "tool" (tool name) and "args" (object of arguments). Example: [{"tool": "web_search", "args": {"query": "example"}}]
+Respond ONLY with a raw JSON array of tool calls. Do not wrap the array in markdown code fences or any other formatting — output the JSON array directly with no preamble or explanation.
+
+Each call should be an object with "tool" (tool name) and "args" (object of arguments).
+
+Example:
+[{"tool": "web_search", "args": {"query": "example"}}]
+
+To make multiple calls, put multiple objects in one array:
+[{"tool": "web_search", "args": {"query": "topic A"}}, {"tool": "url_content", "args": {"url": "https://example.com"}}]
 
 When you have finished verifying all checkable claims, respond with an empty array: []
 
@@ -178,6 +210,8 @@ Respond with a JSON object with keys:
 You do not need to critique or list unverified claims for content that does not appear in the final answer text. 
 The citations should be drawn from results that were returned by tool calls from prior steps and provided as input to
 report geneneration.  You should not create or manufacture any URLs or citation you were not provided.
+Don't directly mention the existence of a draft, as your output is what the user is presented. 
+You should address draft verification feedback directly by writing the correct content in your output.
 
 ## report_generation.path_error
 

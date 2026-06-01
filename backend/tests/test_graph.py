@@ -62,11 +62,12 @@ class TestVerificationRouting:
             ],
             "unverified_claims": [],
             "error": "",
+            "draft_retry_count": 0,
         }
         result = route_after_verification(state)
         assert result == "report_generation"
 
-    def test_retry_with_budget_routes_to_planning(self, config):
+    def test_retry_plan_with_budget_routes_to_planning(self, config):
         route_after_verification = make_verification_router(config)
         state: ResearchState = {
             "question": "test",
@@ -81,18 +82,19 @@ class TestVerificationRouting:
             "budget_limit": 50.0,
             "verification_history": [
                 _make_report(
-                    outcome="retry",
+                    outcome="retry_plan",
                     case=5,
                     unsupported_claims=["claim 1 is wrong"],
                 ),
             ],
             "unverified_claims": ["claim 1 is wrong"],
             "error": "",
+            "draft_retry_count": 0,
         }
         result = route_after_verification(state)
         assert result == "planning"
 
-    def test_retry_without_budget_routes_to_report(self, config):
+    def test_retry_plan_without_budget_routes_to_report(self, config):
         route_after_verification = make_verification_router(config)
         state: ResearchState = {
             "question": "test",
@@ -107,13 +109,14 @@ class TestVerificationRouting:
             "budget_limit": 50.0,
             "verification_history": [
                 _make_report(
-                    outcome="retry",
+                    outcome="retry_plan",
                     case=5,
                     unsupported_claims=["claim 1 is wrong"],
                 ),
             ],
             "unverified_claims": ["claim 1 is wrong"],
             "error": "",
+            "draft_retry_count": 0,
         }
         result = route_after_verification(state)
         assert result == "report_generation"
@@ -136,6 +139,7 @@ class TestVerificationRouting:
             ],
             "unverified_claims": [],
             "error": "Technical failure",
+            "draft_retry_count": 0,
         }
         result = route_after_verification(state)
         assert result == "report_generation"
@@ -156,6 +160,88 @@ class TestVerificationRouting:
             "verification_history": [],
             "unverified_claims": [],
             "error": "",
+            "draft_retry_count": 0,
+        }
+        result = route_after_verification(state)
+        assert result == "report_generation"
+
+    def test_retry_draft_with_budget_routes_to_draft_synthesis(self, config):
+        route_after_verification = make_verification_router(config)
+        state: ResearchState = {
+            "question": "test",
+            "plan": "",
+            "active_tools": [],
+            "findings": [],
+            "compressed_findings": [],
+            "draft": "Off-topic draft",
+            "verification": "",
+            "report": None,
+            "budget_remaining": 50.0,
+            "budget_limit": 50.0,
+            "verification_history": [
+                _make_report(
+                    outcome="retry_draft",
+                    case=7,
+                    assessment="Draft is off-topic",
+                ),
+            ],
+            "unverified_claims": [],
+            "error": "",
+            "draft_retry_count": 0,
+        }
+        result = route_after_verification(state)
+        assert result == "draft_synthesis"
+
+    def test_retry_draft_with_max_retries_falls_through_to_planning(self, config):
+        route_after_verification = make_verification_router(config)
+        state: ResearchState = {
+            "question": "test",
+            "plan": "",
+            "active_tools": [],
+            "findings": [],
+            "compressed_findings": [],
+            "draft": "Off-topic draft",
+            "verification": "",
+            "report": None,
+            "budget_remaining": 50.0,
+            "budget_limit": 50.0,
+            "verification_history": [
+                _make_report(
+                    outcome="retry_draft",
+                    case=7,
+                    assessment="Draft is off-topic",
+                ),
+            ],
+            "unverified_claims": [],
+            "error": "",
+            "draft_retry_count": 1,
+        }
+        result = route_after_verification(state)
+        assert result == "planning"
+
+    def test_retry_draft_without_budget_routes_to_report(self, config):
+        route_after_verification = make_verification_router(config)
+        state: ResearchState = {
+            "question": "test",
+            "plan": "",
+            "active_tools": [],
+            "findings": [],
+            "compressed_findings": [],
+            "draft": "Off-topic draft",
+            "verification": "",
+            "report": None,
+            "budget_remaining": 2.0,
+            "budget_limit": 50.0,
+            "verification_history": [
+                _make_report(
+                    outcome="retry_draft",
+                    case=7,
+                    assessment="Draft is off-topic",
+                ),
+            ],
+            "unverified_claims": [],
+            "error": "",
+            "draft_retry_count": 0,
         }
         result = route_after_verification(state)
         assert result == "report_generation"
