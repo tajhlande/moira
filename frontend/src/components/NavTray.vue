@@ -17,9 +17,19 @@ interface NavItem {
 }
 
 const items: NavItem[] = [
-  { mode: "conversations", icon: MessageCircle, label: "Conversations", route: { name: "new-conversation" } },
+  {
+    mode: "conversations",
+    icon: MessageCircle,
+    label: "Conversations",
+    route: { name: "new-conversation" },
+  },
   { mode: "tools", icon: Tools, label: "Tools", route: { name: "tools" } },
-  { mode: "settings", icon: Settings, label: "Settings", route: { name: "settings" } },
+  {
+    mode: "settings",
+    icon: Settings,
+    label: "Settings",
+    route: { name: "settings" },
+  },
 ];
 
 const activeMode = computed<NavMode>(() => {

@@ -80,7 +80,15 @@ class InferenceClient:
             "max_tokens": max_tokens,
         }
         resp = await self._client.post("/chat/completions", json=payload)
-        resp.raise_for_status()
+        if not resp.is_success:
+            body = resp.text[:2000]
+            logger.error(
+                "Chat completion failed: model=%s, status=%d, response body: %s",
+                model,
+                resp.status_code,
+                body,
+            )
+            resp.raise_for_status()
         data = resp.json()
         choice = data["choices"][0]
         message = choice["message"]

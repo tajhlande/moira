@@ -275,9 +275,10 @@ class TestResearchExecution:
         self, config, mock_writer, mock_model, base_state
     ):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = json.dumps(
-            [{"tool": "web_search", "args": {"query": "speed of light"}}]
-        )
+        mock_model["client"].chat_completion.side_effect = [
+            json.dumps([{"tool": "web_search", "args": {"query": "speed of light"}}]),
+            ChatResponse(content="Research complete."),
+        ]
 
         mock_executor = AsyncMock()
         mock_executor.execute_batch = AsyncMock(
@@ -308,9 +309,10 @@ class TestResearchExecution:
 
     async def test_emits_tool_result_events(self, config, mock_writer, mock_model, base_state):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = json.dumps(
-            [{"tool": "web_search", "args": {"query": "test"}}]
-        )
+        mock_model["client"].chat_completion.side_effect = [
+            json.dumps([{"tool": "web_search", "args": {"query": "test"}}]),
+            ChatResponse(content="Done."),
+        ]
         mock_executor = AsyncMock()
         mock_executor.execute_batch = AsyncMock(
             return_value=[
@@ -341,6 +343,53 @@ class TestResearchExecution:
 
         result = await research_execution(base_state, _make_run_config(config))
         assert result["findings"] == []
+
+    async def test_multi_round_tool_loop(self, config, mock_writer, mock_model, base_state):
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.side_effect = [
+            json.dumps([{"tool": "web_search", "args": {"query": "speed of light"}}]),
+            json.dumps([{"tool": "url_content", "args": {"url": "https://example.com/physics"}}]),
+            ChatResponse(content="Research complete. The speed of light is 299,792,458 m/s."),
+        ]
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(
+            side_effect=[
+                [
+                    ToolResult(
+                        tool_name="web_search",
+                        output="Results about speed of light",
+                        success=True,
+                        duration_ms=100,
+                    )
+                ],
+                [
+                    ToolResult(
+                        tool_name="url_content",
+                        output="The speed of light in vacuum is exactly 299,792,458 m/s",
+                        success=True,
+                        duration_ms=200,
+                    )
+                ],
+            ]
+        )
+        _services["tool_executor"] = mock_executor
+
+        base_state["active_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+            ToolDefinition(name="url_content", description="Fetch URL"),
+        ]
+        base_state["plan"] = "Search for speed of light"
+
+        from moira.workflow.nodes.research_nodes import research_execution
+
+        result = await research_execution(base_state, _make_run_config(config))
+
+        assert len(result["findings"]) == 2
+        assert result["findings"][0]["source"] == "web_search"
+        assert result["findings"][1]["source"] == "url_content"
+        tool_events = [e for e in mock_writer if e["event"] == "tool_result"]
+        assert len(tool_events) == 2
 
 
 class TestCompression:
@@ -395,11 +444,11 @@ class TestDraftSynthesis:
         )
         _inject_services(config, mock_model)
         base_state["plan"] = "Search for speed of light"
-        base_state["compressed_findings"] = [
+        base_state["findings"] = [
             Finding(
                 content="Speed of light: 299,792,458 m/s",
-                source="compression",
-                type="note",
+                source="web_search",
+                type="evidence",
             )
         ]
 
@@ -543,6 +592,138 @@ class TestVerification:
         assert result["verification_history"][0]["outcome"] == "error"
         assert result["verification_history"][0]["case"] == 11
         assert result["error"] != ""
+
+    async def test_tool_assisted_fact_checking(self, config, mock_writer, mock_model, base_state):
+        _inject_services(config, mock_model)
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search",
+                    output="Confirmed: speed of light is 299,792,458 m/s",
+                    success=True,
+                    duration_ms=100,
+                )
+            ]
+        )
+        _services["tool_executor"] = mock_executor
+
+        # Phase 1 (fact-check): returns tool call, then no more calls.
+        # Phase 2 (verdict): returns structured JSON.
+        mock_model["client"].chat_completion.side_effect = [
+            json.dumps([{"tool": "web_search", "args": {"query": "speed of light exact value"}}]),
+            ChatResponse(content="Fact-checking complete."),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "outcome": "accept",
+                        "case": 1,
+                        "assessment": "All claims verified by independent search",
+                        "supported_claims": ["speed of light is ~3e8 m/s"],
+                        "unsupported_claims": [],
+                        "contradictions": [],
+                        "relevance": "on_topic",
+                        "depth": "sufficient",
+                        "guidance": "Accept",
+                    }
+                )
+            ),
+        ]
+
+        base_state["active_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+        base_state["draft"] = "The speed of light is approximately 3e8 m/s"
+
+        from moira.workflow.nodes.research_nodes import verification
+
+        result = await verification(base_state, _make_run_config(config))
+
+        assert result["verification_history"][0]["outcome"] == "accept"
+        assert result["verification_history"][0]["supported_claims"] == [
+            "speed of light is ~3e8 m/s"
+        ]
+        tool_events = [e for e in mock_writer if e["event"] == "tool_result"]
+        assert len(tool_events) == 1
+        assert tool_events[0]["payload"]["tool"] == "web_search"
+
+    async def test_tool_fact_checking_contradiction_leads_to_retry(
+        self, config, mock_writer, mock_model, base_state
+    ):
+        _inject_services(config, mock_model)
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search",
+                    output="Speed of light is 299,792,458 m/s, NOT 3e9",
+                    success=True,
+                    duration_ms=100,
+                )
+            ]
+        )
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.side_effect = [
+            json.dumps([{"tool": "web_search", "args": {"query": "speed of light"}}]),
+            ChatResponse(content="Found contradiction."),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "outcome": "retry",
+                        "case": 6,
+                        "assessment": "Draft claims wrong value for speed of light",
+                        "supported_claims": [],
+                        "unsupported_claims": ["exact speed is wrong"],
+                        "contradictions": ["Draft says 3e9 but actual is 3e8"],
+                        "relevance": "on_topic",
+                        "depth": "sufficient",
+                        "guidance": "Fix the speed of light value",
+                    }
+                )
+            ),
+        ]
+
+        base_state["active_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+        base_state["draft"] = "The speed of light is approximately 3e9 m/s"
+
+        from moira.workflow.nodes.research_nodes import verification
+
+        result = await verification(base_state, _make_run_config(config))
+
+        assert result["verification_history"][0]["outcome"] == "retry"
+        assert result["verification_history"][0]["case"] == 6
+        assert "exact speed is wrong" in result["unverified_claims"]
+
+    async def test_no_tools_skips_fact_checking(self, config, mock_writer, mock_model, base_state):
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps(
+                {
+                    "outcome": "accept",
+                    "case": 1,
+                    "assessment": "Draft looks correct",
+                    "supported_claims": ["speed of light"],
+                    "unsupported_claims": [],
+                    "contradictions": [],
+                    "relevance": "on_topic",
+                    "depth": "sufficient",
+                    "guidance": "Accept",
+                }
+            )
+        )
+        base_state["active_tools"] = []
+        base_state["draft"] = "The speed of light is ~3e8 m/s"
+
+        from moira.workflow.nodes.research_nodes import verification
+
+        result = await verification(base_state, _make_run_config(config))
+
+        assert result["verification_history"][0]["outcome"] == "accept"
+        tool_events = [e for e in mock_writer if e["event"] == "tool_result"]
+        assert len(tool_events) == 0
 
 
 class TestReportGeneration:
@@ -751,6 +932,31 @@ class TestJsonParsing:
 
         text = json.dumps([{"args": {"query": "test"}}])
         assert _parse_tool_calls(text) == []
+
+    def test_parse_tool_calls_handles_line_delimited_json(self):
+        from moira.workflow.nodes.research_nodes import _parse_tool_calls
+
+        text = (
+            '{"tool": "web_search", "args": {"query": "speed of light"}}\n'
+            '{"tool": "web_search", "args": {"query": "c in physics"}}\n'
+            '{"tool": "calculator", "args": {"expression": "3e8 * 2"}}'
+        )
+        result = _parse_tool_calls(text)
+        assert len(result) == 3
+        assert result[0] == ("web_search", {"query": "speed of light"})
+        assert result[2] == ("calculator", {"expression": "3e8 * 2"})
+
+    def test_parse_tool_calls_line_delimited_ignores_prose(self):
+        from moira.workflow.nodes.research_nodes import _parse_tool_calls
+
+        text = (
+            "I will search for information.\n"
+            '{"tool": "web_search", "args": {"query": "test"}}\n'
+            "That should help."
+        )
+        result = _parse_tool_calls(text)
+        assert len(result) == 1
+        assert result[0] == ("web_search", {"query": "test"})
 
 
 class TestBuildPlanningMessages:

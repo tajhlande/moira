@@ -17,7 +17,9 @@ import themeDarkPlus from "@shikijs/themes/dark-plus";
 import themeLightPlus from "@shikijs/themes/light-plus";
 
 // Lazy-initialized singleton — the highlighter loads grammars asynchronously.
-let highlighterInstance: Awaited<ReturnType<typeof createHighlighterCore>> | null = null;
+let highlighterInstance: Awaited<
+  ReturnType<typeof createHighlighterCore>
+> | null = null;
 let markedInstance: Marked | null = null;
 
 const LANGUAGES = [
@@ -52,7 +54,7 @@ function plainCodeBlock(code: string, lang: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-  return `<div class="code-block" data-lang="${lang || 'text'}"><div class="code-block-header"><span class="code-block-lang">${lang || "text"}</span><button class="code-copy-btn" title="Copy">Copy</button></div><pre><code>${escaped}</code></pre></div>`;
+  return `<div class="code-block" data-lang="${lang || "text"}"><div class="code-block-header"><span class="code-block-lang">${lang || "text"}</span><button class="code-copy-btn" title="Copy">Copy</button></div><pre><code>${escaped}</code></pre></div>`;
 }
 
 async function initHighlighter() {

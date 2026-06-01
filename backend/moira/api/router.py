@@ -256,6 +256,27 @@ async def get_tool(name: str):
     return tool.to_dict()
 
 
+@router.get("/tools/{name}/spec")
+async def get_tool_spec(name: str):
+    """Return the tool's config schema from its implementation class.
+    Used by the frontend to render a configuration form."""
+    repo = _tool_repo()
+    tool = await repo.get_tool(name)
+    if tool is None:
+        raise HTTPException(status_code=404, detail="Tool not found")
+
+    if not tool.implementation:
+        return {"config_schema": {}}
+
+    from moira.tools.executor import ToolExecutor
+
+    cls = ToolExecutor._resolve_implementation(tool.implementation)
+    if cls is None:
+        return {"config_schema": {}}
+
+    return cls.get_spec()
+
+
 @router.patch("/tools/{name}")
 async def update_tool(name: str, body: dict[str, Any]):
     """Update mutable fields on a tool. Built-in tools only allow `enabled`
@@ -266,7 +287,7 @@ async def update_tool(name: str, body: dict[str, Any]):
         raise HTTPException(status_code=404, detail="Tool not found")
 
     allowed = (
-        {"enabled", "is_default"}
+        {"enabled", "is_default", "config"}
         if tool.built_in
         else {
             "description",

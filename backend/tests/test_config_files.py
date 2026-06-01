@@ -88,6 +88,8 @@ class TestPromptsFile:
             "research_execution.user": {"question", "plan", "tool_descriptions"},
             "draft_synthesis.user": {"question", "plan", "evidence"},
             "verification.user": {"question", "draft"},
+            "verification.fact_check.user": {"question", "draft", "tool_descriptions"},
+            "verification.evidence": {"evidence"},
             "report_generation.system": {"path_instruction"},
             "report_generation.path_error": {"error"},
             "report_generation.path_budget_exhausted": {"unverified_claims"},

@@ -30,7 +30,9 @@ export interface ToolDefinition {
 }
 
 function extractParameters(schema: Record<string, unknown>): ToolParameter[] {
-  const props = schema?.properties as Record<string, Record<string, unknown>> | undefined;
+  const props = schema?.properties as
+    | Record<string, Record<string, unknown>>
+    | undefined;
   if (!props) return [];
   const required = (schema?.required as string[]) || [];
   return Object.entries(props).map(([name, prop]) => ({
@@ -114,7 +116,11 @@ export const useToolsStore = defineStore("tools", () => {
       const groupLookup = new Map<string, ToolGroupInfo>();
       // Re-derive the group display name from the current groups
       for (const [g, list] of groups.value) {
-        if (list.length > 0) groupLookup.set(g, { name: g, display_name: list[0].groupDisplayName });
+        if (list.length > 0)
+          groupLookup.set(g, {
+            name: g,
+            display_name: list[0].groupDisplayName,
+          });
       }
       const patched = apiToolToStore(updated, groupLookup);
       Object.assign(tool, patched);

@@ -16,6 +16,7 @@ import {
   Copy,
   ChevronRight,
   ChevronDown,
+  Tool,
 } from "@vicons/tabler";
 import { NIcon } from "naive-ui";
 import { useRoute, useRouter } from "vue-router";
@@ -56,7 +57,9 @@ const nowMs = ref(Date.now());
 let clockInterval: ReturnType<typeof setInterval> | null = null;
 
 onMounted(() => {
-  clockInterval = setInterval(() => { nowMs.value = Date.now(); }, 1000);
+  clockInterval = setInterval(() => {
+    nowMs.value = Date.now();
+  }, 1000);
 });
 onUnmounted(() => {
   if (clockInterval) clearInterval(clockInterval);
@@ -79,7 +82,7 @@ watch(
       }
     }
   },
-  { immediate: true }
+  { immediate: true },
 );
 
 // When sendMessage creates a new conversation, update the URL.
@@ -91,7 +94,7 @@ watch(
     if (id && route.name === "new-conversation") {
       router.replace({ name: "conversation", params: { id } });
     }
-  }
+  },
 );
 
 function formatElapsed(ms: number | undefined): string {
@@ -100,6 +103,17 @@ function formatElapsed(ms: number | undefined): string {
   const min = Math.floor(totalSec / 60);
   const sec = totalSec % 60;
   return `${min}:${sec.toString().padStart(2, "0")}`;
+}
+
+function toolCallCount(step: ExecutionStep): number {
+  const tr = step.detail?.tool_results;
+  if (Array.isArray(tr) && tr.length > 0) return tr.length;
+  const tc = step.detail?.structured_output as
+    | Record<string, unknown>
+    | undefined;
+  const calls = tc?.tool_calls;
+  if (Array.isArray(calls)) return calls.length;
+  return 0;
 }
 
 // Compute live elapsed for the currently running step
@@ -112,7 +126,7 @@ function liveElapsedMs(step: ExecutionStep): number | undefined {
 const currentTitle = computed(() => {
   if (store.isNewChat) return "New Chat";
   const c = store.conversations.find(
-    (c) => c.id === store.currentConversationId
+    (c) => c.id === store.currentConversationId,
   );
   return c?.title || "Chat";
 });
@@ -155,7 +169,9 @@ const copiedMsgIndex = ref<number | null>(null);
 async function copyMessage(content: string, index: number) {
   await navigator.clipboard.writeText(content);
   copiedMsgIndex.value = index;
-  setTimeout(() => { copiedMsgIndex.value = null; }, 1500);
+  setTimeout(() => {
+    copiedMsgIndex.value = null;
+  }, 1500);
 }
 </script>
 
@@ -166,10 +182,7 @@ async function copyMessage(content: string, index: number) {
     </div>
 
     <NScrollbar class="messages-area">
-      <template
-        v-for="(msg, i) in store.messages"
-        :key="i"
-      >
+      <template v-for="(msg, i) in store.messages" :key="i">
         <!-- Message bubble -->
         <div :class="['message', msg.role]">
           <div class="message-role">
@@ -195,34 +208,74 @@ async function copyMessage(content: string, index: number) {
         </div>
 
         <!-- After a user message: render associated run artifacts -->
-          <template v-if="msg.role === 'user'">
+        <template v-if="msg.role === 'user'">
           <!-- Persisted run (completed — from DB via selectConversation) -->
-          <template v-if="store.getRunForMessage(msg.id) && store.getRunForMessage(msg.id)!.status !== 'running'" as="template">
+          <template
+            v-if="
+              store.getRunForMessage(msg.id) &&
+              store.getRunForMessage(msg.id)!.status !== 'running'
+            "
+            as="template"
+          >
             <RunArtifacts :run="store.getRunForMessage(msg.id)!" />
           </template>
 
           <!-- Live streaming run (steps/report from current or completed stream) -->
-          <template
-            v-else-if="i === lastUserMessageIndex && hasLiveData()"
-          >
+          <template v-else-if="i === lastUserMessageIndex && hasLiveData()">
             <!-- Steps -->
-            <div v-if="store.executionSteps.length > 0 || store.currentStep" class="steps-container">
-              <div
-                v-for="(step, si) in store.executionSteps"
-                :key="'ls-' + si"
-              >
+            <div
+              v-if="store.executionSteps.length > 0 || store.currentStep"
+              class="steps-container"
+            >
+              <div v-for="(step, si) in store.executionSteps" :key="'ls-' + si">
                 <div :class="['step-row', step.status]">
-                  <NIcon v-if="step.status === 'completed'" :size="16" color="#18a058">
+                  <NIcon
+                    v-if="step.status === 'completed'"
+                    :size="16"
+                    color="#18a058"
+                  >
                     <CircleCheck />
                   </NIcon>
                   <NIcon v-else :size="16" color="#d03050">
                     <CircleX />
                   </NIcon>
                   <span class="step-label">{{ step.label }}</span>
-                  <span v-if="step.status === 'completed'" class="step-cost">-{{ step.cost }}</span>
-                  <span v-if="step.elapsed_ms != null" class="step-elapsed">{{ formatElapsed(step.elapsed_ms) }}</span>
-                  <span v-if="step.status === 'completed'" class="step-budget">{{ step.budget_remaining }} remaining</span>
-                  <span v-if="step.status === 'error' && step.error" class="step-error-msg">{{ step.error }}</span>
+                  <span
+                    v-if="toolCallCount(step) > 0"
+                    class="step-tool-indicators"
+                  >
+                    <template v-if="toolCallCount(step) <= 10">
+                      <NIcon
+                        v-for="ti in toolCallCount(step)"
+                        :key="ti"
+                        :size="13"
+                        class="tool-indicator-icon"
+                        ><Tool
+                      /></NIcon>
+                    </template>
+                    <template v-else>
+                      <NIcon :size="13" class="tool-indicator-icon"
+                        ><Tool
+                      /></NIcon>
+                      <span class="tool-indicator-count"
+                        >&times;{{ toolCallCount(step) }}</span
+                      >
+                    </template>
+                  </span>
+                  <span v-if="step.status === 'completed'" class="step-cost"
+                    >-{{ step.cost }}</span
+                  >
+                  <span v-if="step.elapsed_ms != null" class="step-elapsed">{{
+                    formatElapsed(step.elapsed_ms)
+                  }}</span>
+                  <span v-if="step.status === 'completed'" class="step-budget"
+                    >{{ step.budget_remaining }} remaining</span
+                  >
+                  <span
+                    v-if="step.status === 'error' && step.error"
+                    class="step-error-msg"
+                    >{{ step.error }}</span
+                  >
                   <button
                     v-if="stepHasDetail(step)"
                     class="step-toggle"
@@ -235,7 +288,10 @@ async function copyMessage(content: string, index: number) {
                   </button>
                   <span v-else class="step-toggle-placeholder" />
                 </div>
-                <div v-if="expandedSteps.has(si) && stepHasDetail(step)" class="step-detail">
+                <div
+                  v-if="expandedSteps.has(si) && stepHasDetail(step)"
+                  class="step-detail"
+                >
                   <StepDetailContent :detail="step.detail!" />
                 </div>
               </div>
@@ -244,20 +300,38 @@ async function copyMessage(content: string, index: number) {
                   <Loader />
                 </NIcon>
                 <span class="step-label">{{ store.currentStep.label }}</span>
-                <span class="step-elapsed">{{ formatElapsed(liveElapsedMs(store.currentStep)) }}</span>
-                <span class="step-budget">{{ store.currentStep.budget_remaining }} remaining</span>
+                <span class="step-elapsed">{{
+                  formatElapsed(liveElapsedMs(store.currentStep))
+                }}</span>
+                <span class="step-budget"
+                  >{{ store.currentStep.budget_remaining }} remaining</span
+                >
                 <span class="step-toggle-placeholder" />
               </div>
             </div>
 
             <!-- Tool executions (shown when old runs lack per-step tool results) -->
             <NCollapse
-              v-if="store.toolExecutions.length > 0 && !store.executionSteps.some(s => s.detail?.tool_results?.length)"
+              v-if="
+                store.toolExecutions.length > 0 &&
+                !store.executionSteps.some(
+                  (s) => s.detail?.tool_results?.length,
+                )
+              "
               class="tool-calls-panel"
             >
-              <NCollapse-item :title="`Tool Executions (${store.toolExecutions.length})`" name="tools">
-                <div v-for="(tc, tci) in store.toolExecutions" :key="tci" class="tool-call">
-                  <span :class="['tool-name', tc.success ? 'success' : 'error']">
+              <NCollapse-item
+                :title="`Tool Executions (${store.toolExecutions.length})`"
+                name="tools"
+              >
+                <div
+                  v-for="(tc, tci) in store.toolExecutions"
+                  :key="tci"
+                  class="tool-call"
+                >
+                  <span
+                    :class="['tool-name', tc.success ? 'success' : 'error']"
+                  >
                     {{ tc.tool }}
                   </span>
                   <span class="tool-duration">{{ tc.duration_ms }}ms</span>
@@ -267,7 +341,10 @@ async function copyMessage(content: string, index: number) {
             </NCollapse>
 
             <!-- Report -->
-            <ReportPanel v-if="store.currentReport" :report="store.currentReport" />
+            <ReportPanel
+              v-if="store.currentReport"
+              :report="store.currentReport"
+            />
 
             <!-- Total cycle time -->
             <div v-if="store.totalElapsedMs != null" class="total-elapsed">

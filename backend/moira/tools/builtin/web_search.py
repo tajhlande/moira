@@ -1,0 +1,199 @@
+"""Web search tool using a self-hosted SearXNG instance.
+
+Queries the SearXNG JSON API and returns formatted search results with
+titles, URLs, and content snippets. The SearXNG query URL is stored in
+the tool's config dict (``searxng_base_url`` key) and configured via
+the YAML config file or the tools API.
+
+SearXNG supports standard search engine query syntax including ``site:``
+filters — the LLM can construct those directly in the query string."""
+
+import logging
+import time
+from typing import Any
+
+import httpx
+
+from moira.tools.base import BaseTool, ToolResult
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_TIMEOUT = 30.0
+_DEFAULT_MAX_RESULTS = 5
+
+
+class WebSearchTool(BaseTool):
+    """Search the web using a SearXNG instance. Returns results with titles,
+    URLs, and content snippets formatted for LLM consumption."""
+
+    tool_name = "web_search"
+    tool_description = (
+        "Search the web using SearXNG. Returns results with titles, URLs, "
+        "and content snippets. Supports standard search engine query syntax "
+        "including site: filters (e.g. 'site:github.com moira project'). "
+        "Optional parameters: categories (e.g. 'general,news'), language "
+        "(e.g. 'en'), time_range ('day', 'month', 'year')."
+    )
+    tool_group = "standard"
+    tool_argument_schema = {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "The search query. Supports site: filters and other search engine syntax."
+                ),
+            },
+            "categories": {
+                "type": "string",
+                "description": (
+                    "Comma-separated search categories (e.g. 'general', 'news', 'science')"
+                ),
+            },
+            "language": {
+                "type": "string",
+                "description": "Language code for search results (e.g. 'en', 'de', 'fr')",
+            },
+            "time_range": {
+                "type": "string",
+                "description": "Time range for results: 'day', 'month', or 'year'",
+            },
+            "max_results": {
+                "type": "integer",
+                "description": "Maximum number of search results to return",
+                "default": 5,
+            },
+        },
+        "required": ["query"],
+    }
+    tool_config_schema = {
+        "type": "object",
+        "properties": {
+            "searxng_base_url": {
+                "type": "string",
+                "title": "SearXNG Base URL",
+                "description": "URL of the SearXNG instance (e.g. http://localhost:8888)",
+            },
+        },
+        "required": ["searxng_base_url"],
+    }
+
+    def __init__(
+        self,
+        definition,
+        timeout: float = _DEFAULT_TIMEOUT,
+        client: httpx.AsyncClient | None = None,
+    ):
+        super().__init__(definition)
+        self._timeout = timeout
+        self._test_client = client
+
+    def _get_base_url(self) -> str:
+        return self.definition.config.get("searxng_base_url", "").rstrip("/")
+
+    async def execute(self, args: dict[str, Any]) -> ToolResult:
+        start = time.monotonic()
+
+        query = args.get("query", "").strip()
+        if not query:
+            return self._fail(start, "Missing required parameter: query")
+
+        base_url = self._get_base_url()
+        if not base_url:
+            return self._fail(
+                start,
+                "SearXNG base URL not configured. "
+                "Set searxng_base_url in the web_search tool config.",
+            )
+
+        max_results = args.get("max_results", _DEFAULT_MAX_RESULTS)
+        params: dict[str, Any] = {
+            "q": query,
+            "format": "json",
+        }
+        if args.get("categories"):
+            params["categories"] = args["categories"]
+        if args.get("language"):
+            params["language"] = args["language"]
+        if args.get("time_range"):
+            params["time_range"] = args["time_range"]
+
+        try:
+            if self._test_client:
+                resp = await self._test_client.get(
+                    f"{base_url}/search",
+                    params=params,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            else:
+                async with httpx.AsyncClient(
+                    timeout=self._timeout,
+                    follow_redirects=True,
+                ) as client:
+                    resp = await client.get(f"{base_url}/search", params=params)
+                    resp.raise_for_status()
+                    data = resp.json()
+        except httpx.TimeoutException:
+            return self._fail(start, f"SearXNG request timed out after {self._timeout}s")
+        except httpx.HTTPStatusError as e:
+            return self._fail(
+                start,
+                f"SearXNG returned HTTP {e.response.status_code}: {e.response.text[:200]}",
+            )
+        except Exception as e:
+            return self._fail(start, f"SearXNG request failed: {e}")
+
+        results = data.get("results", [])
+        if not results:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            return ToolResult(
+                tool_name=self.name,
+                output="No search results found.",
+                success=True,
+                duration_ms=elapsed_ms,
+            )
+
+        output = self._format_results(results[:max_results])
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        logger.info(
+            "web_search returned %d results for query '%s'",
+            min(len(results), max_results),
+            query[:80],
+        )
+        return ToolResult(
+            tool_name=self.name,
+            output=output,
+            success=True,
+            duration_ms=elapsed_ms,
+        )
+
+    @staticmethod
+    def _format_results(results: list[dict]) -> str:
+        parts: list[str] = []
+        for i, r in enumerate(results, 1):
+            title = r.get("title", "Untitled")
+            url = r.get("url", "")
+            snippet = r.get("content", "")
+            engines = r.get("engines", [])
+            engine_str = ", ".join(engines) if isinstance(engines, list) else str(engines)
+            parts.append(f"[{i}] {title}")
+            if url:
+                parts.append(f"    URL: {url}")
+            if engine_str:
+                parts.append(f"    Source: {engine_str}")
+            if snippet:
+                parts.append(f"    Snippet: {snippet}")
+            parts.append("")
+        return "\n".join(parts)
+
+    def _fail(self, start: float, error: str) -> ToolResult:
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        logger.error("web_search tool failed: %s", error)
+        return ToolResult(
+            tool_name=self.name,
+            output="",
+            success=False,
+            duration_ms=elapsed_ms,
+            error=error,
+        )

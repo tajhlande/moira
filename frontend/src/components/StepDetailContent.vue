@@ -44,20 +44,28 @@ const toolResults = computed<ToolExecution[]>(() => {
   return props.detail.tool_results as ToolExecution[];
 });
 
-const toolListKeys = computed<string[]>(() => {
-  if (!so.value) return [];
-  return Object.keys(so.value).filter(
-    (k) => k === "selected_tools" || k === "default_tools" || k === "discovered_tools",
-  );
-});
-
-const toolCalls = computed<ToolCallEntry[]>(() => {
+const toolCallsFromOutput = computed<ToolCallEntry[]>(() => {
   if (!so.value?.tool_calls) return [];
   return so.value.tool_calls as ToolCallEntry[];
 });
 
+const toolListKeys = computed<string[]>(() => {
+  if (!so.value) return [];
+  return Object.keys(so.value).filter(
+    (k) =>
+      k === "selected_tools" ||
+      k === "default_tools" ||
+      k === "discovered_tools",
+  );
+});
+
 const isVerification = computed(() => {
-  return so.value && "outcome" in so.value && "case" in so.value && "assessment" in so.value;
+  return (
+    so.value &&
+    "outcome" in so.value &&
+    "case" in so.value &&
+    "assessment" in so.value
+  );
 });
 
 const isReport = computed(() => {
@@ -73,9 +81,7 @@ function getToolNames(key: string): string[] {
 }
 
 function prettyLabel(key: string): string {
-  return key
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function claimList(key: string): unknown[] {
@@ -87,9 +93,17 @@ function claimList(key: string): unknown[] {
 <template>
   <div class="step-detail-content">
     <!-- Prompt section -->
-    <NCollapse v-if="promptMessages.length > 0" :default-expanded-names="[]" class="detail-section">
+    <NCollapse
+      v-if="promptMessages.length > 0"
+      :default-expanded-names="[]"
+      class="detail-section"
+    >
       <NCollapseItem title="Prompt" name="prompt">
-        <div v-for="(msg, mi) in promptMessages" :key="mi" class="detail-message">
+        <div
+          v-for="(msg, mi) in promptMessages"
+          :key="mi"
+          class="detail-message"
+        >
           <div class="detail-message-role">{{ msg.role }}</div>
           <pre class="detail-message-content">{{ msg.content }}</pre>
         </div>
@@ -97,21 +111,33 @@ function claimList(key: string): unknown[] {
     </NCollapse>
 
     <!-- Thinking section -->
-    <NCollapse v-if="thinking" :default-expanded-names="[]" class="detail-section">
+    <NCollapse
+      v-if="thinking"
+      :default-expanded-names="[]"
+      class="detail-section"
+    >
       <NCollapseItem title="Thinking" name="thinking">
         <pre class="detail-text-block">{{ thinking }}</pre>
       </NCollapseItem>
     </NCollapse>
 
     <!-- Response section -->
-    <NCollapse v-if="response" :default-expanded-names="[]" class="detail-section">
+    <NCollapse
+      v-if="response"
+      :default-expanded-names="[]"
+      class="detail-section"
+    >
       <NCollapseItem title="Response" name="response">
         <pre class="detail-text-block">{{ response }}</pre>
       </NCollapseItem>
     </NCollapse>
 
     <!-- Structured output section -->
-    <NCollapse v-if="hasStructuredOutput" :default-expanded-names="[]" class="detail-section">
+    <NCollapse
+      v-if="hasStructuredOutput"
+      :default-expanded-names="[]"
+      class="detail-section"
+    >
       <NCollapseItem title="Structured Output" name="structured">
         <!-- Tool list pills -->
         <div v-for="key in toolListKeys" :key="key" class="structured-section">
@@ -120,22 +146,23 @@ function claimList(key: string): unknown[] {
             <span
               v-for="name in getToolNames(key)"
               :key="name"
-              :class="['tool-tag', toolsStore.defaultToolNames.includes(name) ? 'default' : 'discovered']"
+              :class="[
+                'tool-tag',
+                toolsStore.defaultToolNames.includes(name)
+                  ? 'default'
+                  : 'discovered',
+              ]"
             >
               {{ name }}
             </span>
-            <span v-if="getToolNames(key).length === 0" class="tool-tag none">None</span>
+            <span v-if="getToolNames(key).length === 0" class="tool-tag none"
+              >None</span
+            >
           </div>
         </div>
 
         <!-- Tool calls list -->
-        <div v-if="toolCalls.length > 0" class="structured-section">
-          <div class="detail-label">Tool Calls Requested</div>
-          <div v-for="(tc, tci) in toolCalls" :key="tci" class="step-tool-result">
-            <span class="tool-name success">{{ tc.tool }}</span>
-            <pre class="tool-output">{{ JSON.stringify(tc.args, null, 2) }}</pre>
-          </div>
-        </div>
+        <!-- (moved to dedicated section below) -->
 
         <!-- Verification report -->
         <div v-if="isVerification" class="structured-section">
@@ -143,7 +170,9 @@ function claimList(key: string): unknown[] {
             <span :class="['verification-outcome', String(so!.outcome)]">
               {{ so!.outcome }}
             </span>
-            <span v-if="so!.case" class="verification-case">Case {{ so!.case }}</span>
+            <span v-if="so!.case" class="verification-case"
+              >Case {{ so!.case }}</span
+            >
           </div>
           <div v-if="so!.retry_declined" class="retry-declined-note">
             {{ so!.retry_declined_reason }}
@@ -151,22 +180,37 @@ function claimList(key: string): unknown[] {
           <div v-if="so!.assessment" class="verification-assessment">
             {{ so!.assessment }}
           </div>
-          <div v-if="claimList('supported_claims').length" class="verification-claims">
+          <div
+            v-if="claimList('supported_claims').length"
+            class="verification-claims"
+          >
             <div class="detail-label">Supported Claims</div>
             <ul>
-              <li v-for="(c, ci) in claimList('supported_claims')" :key="ci">{{ c }}</li>
+              <li v-for="(c, ci) in claimList('supported_claims')" :key="ci">
+                {{ c }}
+              </li>
             </ul>
           </div>
-          <div v-if="claimList('unsupported_claims').length" class="verification-claims">
+          <div
+            v-if="claimList('unsupported_claims').length"
+            class="verification-claims"
+          >
             <div class="detail-label">Unsupported Claims</div>
             <ul>
-              <li v-for="(c, ci) in claimList('unsupported_claims')" :key="ci">{{ c }}</li>
+              <li v-for="(c, ci) in claimList('unsupported_claims')" :key="ci">
+                {{ c }}
+              </li>
             </ul>
           </div>
-          <div v-if="claimList('contradictions').length" class="verification-claims">
+          <div
+            v-if="claimList('contradictions').length"
+            class="verification-claims"
+          >
             <div class="detail-label">Contradictions</div>
             <ul>
-              <li v-for="(c, ci) in claimList('contradictions')" :key="ci">{{ c }}</li>
+              <li v-for="(c, ci) in claimList('contradictions')" :key="ci">
+                {{ c }}
+              </li>
             </ul>
           </div>
         </div>
@@ -179,14 +223,55 @@ function claimList(key: string): unknown[] {
       </NCollapseItem>
     </NCollapse>
 
+    <!-- Tool calls (from structured_output) -->
+    <NCollapse
+      v-if="toolCallsFromOutput.length > 0"
+      :default-expanded-names="['tool-calls']"
+      class="detail-section"
+    >
+      <NCollapseItem
+        :title="'Tool Calls (' + toolCallsFromOutput.length + ')'"
+        name="tool-calls"
+      >
+        <div class="tool-results-scroll">
+          <div
+            v-for="(tc, tci) in toolCallsFromOutput"
+            :key="tci"
+            class="step-tool-result"
+          >
+            <span class="tool-name success">{{ tc.tool }}</span>
+            <pre class="tool-output-full">{{
+              JSON.stringify(tc.args, null, 2)
+            }}</pre>
+          </div>
+        </div>
+      </NCollapseItem>
+    </NCollapse>
+
     <!-- Tool results (from run_manager attachment) -->
-    <div v-if="toolResults.length > 0" class="step-tool-results">
-      <div class="detail-label">Tool Executions</div>
-      <div v-for="(tr, tri) in toolResults" :key="tri" class="step-tool-result">
-        <span :class="['tool-name', tr.success ? 'success' : 'error']">{{ tr.tool }}</span>
-        <span class="tool-duration">{{ tr.duration_ms }}ms</span>
-        <pre class="tool-output">{{ tr.result?.slice(0, 200) }}</pre>
-      </div>
-    </div>
+    <NCollapse
+      v-if="toolResults.length > 0"
+      :default-expanded-names="['tool-results']"
+      class="detail-section"
+    >
+      <NCollapseItem
+        :title="'Tool Executions (' + toolResults.length + ')'"
+        name="tool-results"
+      >
+        <div class="tool-results-scroll">
+          <div
+            v-for="(tr, tri) in toolResults"
+            :key="tri"
+            class="step-tool-result"
+          >
+            <span :class="['tool-name', tr.success ? 'success' : 'error']">{{
+              tr.tool
+            }}</span>
+            <span class="tool-duration">{{ tr.duration_ms }}ms</span>
+            <pre class="tool-output-full">{{ tr.result }}</pre>
+          </div>
+        </div>
+      </NCollapseItem>
+    </NCollapse>
   </div>
 </template>

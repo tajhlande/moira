@@ -67,8 +67,8 @@ class ToolEmbeddingRepository:
             if new_data:
                 table.add(new_data)
                 logger.debug("Added %d new tool embeddings", len(new_data))
-        except FileNotFoundError:
-            # First time: create the table
+        except (FileNotFoundError, ValueError):
+            # First time: table doesn't exist yet, create it
             self._db.create_table(self._table_name, data)
             logger.info("Created tool_embeddings table with %d entries", len(data))
 

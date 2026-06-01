@@ -77,10 +77,7 @@ class TestDeductCost:
 
 
 class TestFullCycleCost:
-    def test_full_cycle_is_18(self, config):
-        assert config.full_cycle_cost == 18
-
-    def test_full_cycle_excludes_report_generation(self, config):
+    def test_full_cycle_excludes_compression_and_report_generation(self, config):
         total_all = sum(
             [
                 config.budget.cost_weights.planning,
@@ -93,4 +90,8 @@ class TestFullCycleCost:
                 config.budget.cost_weights.report_generation,
             ]
         )
-        assert config.full_cycle_cost == total_all - config.budget.cost_weights.report_generation
+        assert config.full_cycle_cost == (
+            total_all
+            - config.budget.cost_weights.report_generation
+            - config.budget.cost_weights.compression
+        )

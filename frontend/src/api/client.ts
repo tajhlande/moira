@@ -104,8 +104,7 @@ export const api = {
   createConversation: () =>
     request<ConversationInfo>("/conversations", { method: "POST" }),
 
-  listConversations: () =>
-    request<ConversationInfo[]>("/conversations"),
+  listConversations: () => request<ConversationInfo[]>("/conversations"),
 
   getConversation: (id: string) =>
     request<ConversationDetail>(`/conversations/${id}`),
@@ -146,13 +145,17 @@ export const api = {
       body: JSON.stringify(assignments),
     }),
 
-  getTools: () => request<{ tools: ToolInfo[]; groups: ToolGroupInfo[] }>("/tools"),
+  getTools: () =>
+    request<{ tools: ToolInfo[]; groups: ToolGroupInfo[] }>("/tools"),
 
   patchTool: (name: string, fields: Record<string, unknown>) =>
     request<ToolInfo>(`/tools/${name}`, {
       method: "PATCH",
       body: JSON.stringify(fields),
     }),
+
+  getToolSpec: (name: string) =>
+    request<{ config_schema: Record<string, unknown> }>(`/tools/${name}/spec`),
 };
 
 export interface ToolGroupInfo {

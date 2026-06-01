@@ -6,7 +6,6 @@ from moira.config import MoiraConfig
 from moira.models.state import ResearchState
 from moira.workflow.budget import full_cycle_cost
 from moira.workflow.nodes.research_nodes import (
-    compression,
     draft_synthesis,
     planning,
     report_generation,
@@ -88,28 +87,28 @@ def route_after_error(state: ResearchState) -> str:
 
 
 def build_graph(config: MoiraConfig) -> StateGraph:
-    """Build the LangGraph research workflow with all 8 nodes and
-    conditional routing. Returns an uncompiled StateGraph."""
+    """Build the LangGraph research workflow with 7 active nodes and
+    conditional routing. Compression is bypassed (findings flow directly
+    from research_execution to draft_synthesis). Returns an uncompiled
+    StateGraph."""
     graph = StateGraph(ResearchState)
 
-    # Add all 8 nodes
+    # 7 active nodes (compression bypassed)
     graph.add_node("planning", planning)
     graph.add_node("tool_discovery", tool_discovery)
     graph.add_node("tool_selection", tool_selection)
     graph.add_node("research_execution", research_execution)
-    graph.add_node("compression", compression)
     graph.add_node("draft_synthesis", draft_synthesis)
     graph.add_node("verification", verification)
     graph.add_node("report_generation", report_generation)
 
     # Linear path: START -> Planning -> ToolDiscovery -> ToolSelection ->
-    # ResearchExecution -> Compression -> DraftSynthesis -> Verification
+    # ResearchExecution -> DraftSynthesis -> Verification
     graph.add_edge(START, "planning")
     graph.add_edge("planning", "tool_discovery")
     graph.add_edge("tool_discovery", "tool_selection")
     graph.add_edge("tool_selection", "research_execution")
-    graph.add_edge("research_execution", "compression")
-    graph.add_edge("compression", "draft_synthesis")
+    graph.add_edge("research_execution", "draft_synthesis")
     graph.add_edge("draft_synthesis", "verification")
 
     # Conditional routing after Verification
@@ -125,7 +124,7 @@ def build_graph(config: MoiraConfig) -> StateGraph:
     # ReportGeneration is the terminal node
     graph.add_edge("report_generation", END)
 
-    logger.info("Research graph built with 8 nodes")
+    logger.info("Research graph built with 7 nodes")
     return graph
 
 

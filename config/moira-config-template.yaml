@@ -70,6 +70,13 @@ tools: []
   #   tags: [web, search]
   #   reliability: high
 
+# Built-in tools (web_search, url_content, calculator) are seeded
+# automatically. To configure the web_search tool's SearXNG instance,
+# set the searxng_base_url in the tool's config via the API:
+#
+#   PATCH /api/tools/web_search
+#   { "config": { "searxng_base_url": "http://localhost:8888" } }
+
 # --- MCP Servers (Phase 3) ---
 
 mcp_servers: []

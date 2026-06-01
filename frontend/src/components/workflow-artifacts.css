@@ -35,6 +35,22 @@
   flex: 1;
 }
 
+.step-tool-indicators {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tool-indicator-icon {
+  color: var(--n-primary-color, #18a058);
+}
+
+.tool-indicator-count {
+  font-size: 0.8em;
+  color: var(--n-primary-color, #18a058);
+  margin-left: 1px;
+}
+
 .step-toggle {
   background: none;
   border: none;
@@ -178,6 +194,18 @@
 
 .step-tool-results {
   margin-top: 8px;
+}
+
+.tool-results-scroll {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.tool-output-full {
+  font-size: 0.85em;
+  margin: 4px 0 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .step-tool-result {

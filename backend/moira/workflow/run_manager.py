@@ -233,11 +233,16 @@ class ActiveRun:
                 await self._persist()
 
         except Exception as e:
+            current_node = (
+                self._current_step.get("node", "unknown") if self._current_step else "unknown"
+            )
             logger.error(
-                "Graph run error for conversation %s: %s: %s",
+                "Graph run error for conversation %s (node=%s): %s: %s",
                 self.conversation_id,
+                current_node,
                 type(e).__name__,
                 e,
+                exc_info=True,
             )
             self.error = f"{type(e).__name__}: {e}"
             self.status = "error"

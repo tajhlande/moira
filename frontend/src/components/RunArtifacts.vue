@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { NCollapse, NCollapseItem, NIcon } from "naive-ui";
-import { CircleCheck, CircleX, ChevronRight, ChevronDown } from "@vicons/tabler";
+import {
+  CircleCheck,
+  CircleX,
+  ChevronRight,
+  ChevronDown,
+  Tool,
+} from "@vicons/tabler";
 import type { WorkflowRunInfo, ExecutionStep } from "../api/client";
 import StepDetailContent from "./StepDetailContent.vue";
 import ReportPanel from "./ReportPanel.vue";
@@ -25,6 +31,17 @@ function stepHasDetail(step: ExecutionStep): boolean {
   return !!step.detail && Object.keys(step.detail).length > 0;
 }
 
+function toolCallCount(step: ExecutionStep): number {
+  const tr = step.detail?.tool_results;
+  if (Array.isArray(tr) && tr.length > 0) return tr.length;
+  const tc = step.detail?.structured_output as
+    | Record<string, unknown>
+    | undefined;
+  const calls = tc?.tool_calls;
+  if (Array.isArray(calls)) return calls.length;
+  return 0;
+}
+
 function formatElapsed(ms: number | undefined): string {
   if (ms === undefined || ms === null) return "";
   const totalSec = Math.floor(ms / 1000);
@@ -37,10 +54,7 @@ function formatElapsed(ms: number | undefined): string {
 <template>
   <div>
     <div v-if="run.execution_steps.length > 0" class="steps-container">
-      <div
-        v-for="(step, si) in run.execution_steps"
-        :key="'rs-' + si"
-      >
+      <div v-for="(step, si) in run.execution_steps" :key="'rs-' + si">
         <div :class="['step-row', step.status]">
           <NIcon v-if="step.status === 'completed'" :size="16" color="#18a058">
             <CircleCheck />
@@ -49,10 +63,37 @@ function formatElapsed(ms: number | undefined): string {
             <CircleX />
           </NIcon>
           <span class="step-label">{{ step.label }}</span>
-          <span v-if="step.status === 'completed'" class="step-cost">-{{ step.cost }}</span>
-          <span v-if="step.elapsed_ms != null" class="step-elapsed">{{ formatElapsed(step.elapsed_ms) }}</span>
-          <span v-if="step.status === 'completed'" class="step-budget">{{ step.budget_remaining }} remaining</span>
-          <span v-if="step.status === 'error' && step.error" class="step-error-msg">{{ step.error }}</span>
+          <span v-if="toolCallCount(step) > 0" class="step-tool-indicators">
+            <template v-if="toolCallCount(step) <= 10">
+              <NIcon
+                v-for="ti in toolCallCount(step)"
+                :key="ti"
+                :size="13"
+                class="tool-indicator-icon"
+                ><Tool
+              /></NIcon>
+            </template>
+            <template v-else>
+              <NIcon :size="13" class="tool-indicator-icon"><Tool /></NIcon>
+              <span class="tool-indicator-count"
+                >&times;{{ toolCallCount(step) }}</span
+              >
+            </template>
+          </span>
+          <span v-if="step.status === 'completed'" class="step-cost"
+            >-{{ step.cost }}</span
+          >
+          <span v-if="step.elapsed_ms != null" class="step-elapsed">{{
+            formatElapsed(step.elapsed_ms)
+          }}</span>
+          <span v-if="step.status === 'completed'" class="step-budget"
+            >{{ step.budget_remaining }} remaining</span
+          >
+          <span
+            v-if="step.status === 'error' && step.error"
+            class="step-error-msg"
+            >{{ step.error }}</span
+          >
           <button
             v-if="stepHasDetail(step)"
             class="step-toggle"
@@ -65,18 +106,31 @@ function formatElapsed(ms: number | undefined): string {
           </button>
           <span v-else class="step-toggle-placeholder" />
         </div>
-        <div v-if="expandedSteps.has(si) && stepHasDetail(step)" class="step-detail">
+        <div
+          v-if="expandedSteps.has(si) && stepHasDetail(step)"
+          class="step-detail"
+        >
           <StepDetailContent :detail="step.detail!" />
         </div>
       </div>
     </div>
 
     <NCollapse
-      v-if="run.tool_executions.length > 0 && !run.execution_steps.some(s => s.detail?.tool_results?.length)"
+      v-if="
+        run.tool_executions.length > 0 &&
+        !run.execution_steps.some((s) => s.detail?.tool_results?.length)
+      "
       class="tool-calls-panel"
     >
-      <NCollapse-item :title="'Tool Executions (' + run.tool_executions.length + ')'" name="tools">
-        <div v-for="(tc, tci) in run.tool_executions" :key="tci" class="tool-call">
+      <NCollapse-item
+        :title="'Tool Executions (' + run.tool_executions.length + ')'"
+        name="tools"
+      >
+        <div
+          v-for="(tc, tci) in run.tool_executions"
+          :key="tci"
+          class="tool-call"
+        >
           <span :class="['tool-name', tc.success ? 'success' : 'error']">
             {{ tc.tool }}
           </span>

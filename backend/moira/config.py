@@ -87,6 +87,7 @@ class MoiraConfig(BaseModel):
     @property
     def full_cycle_cost(self) -> int:
         # Cost of one full retry cycle (Planning through Verification).
+        # Compression is bypassed (findings flow directly to draft_synthesis).
         # report_generation is deliberately excluded because it is
         # budget-exempt -- it always executes as the terminal node.
         cw = self.budget.cost_weights
@@ -95,7 +96,6 @@ class MoiraConfig(BaseModel):
             + cw.tool_discovery
             + cw.tool_selection
             + cw.research_execution
-            + cw.compression
             + cw.draft_synthesis
             + cw.verification
         )

@@ -45,7 +45,10 @@ function onDragStart(e: MouseEvent) {
 function onDragMove(e: MouseEvent) {
   if (!dragging) return;
   const delta = e.clientX - dragStartX;
-  siderWidth.value = Math.min(SIDER_MAX, Math.max(SIDER_MIN, dragStartWidth + delta));
+  siderWidth.value = Math.min(
+    SIDER_MAX,
+    Math.max(SIDER_MIN, dragStartWidth + delta),
+  );
 }
 
 function onDragEnd() {

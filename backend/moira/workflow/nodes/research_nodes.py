@@ -11,6 +11,8 @@ from moira.workflow.budget import can_execute, deduct_cost, full_cycle_cost
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MAX_TOOL_ROUNDS = 3
+
 
 def _format_tool_descriptions(tools: list) -> str:
     """Format tool definitions with their argument schemas for LLM consumption.
@@ -106,6 +108,117 @@ def _build_detail(
     if structured_output:
         detail["structured_output"] = structured_output
     return detail
+
+
+async def _execute_tool_round(
+    node: str,
+    response: str,
+    active_tools: list,
+    executor,
+    writer,
+) -> list:
+    """Parse tool calls from a model response, filter against the active tool
+    set, execute them, emit tool_result events, and return the results.
+
+    Returns a list of (ToolResult, valid_calls) tuples where valid_calls is
+    the list of (name, args) pairs that were actually dispatched."""
+    tool_calls = _parse_tool_calls(response)
+    allowed_names = {t.name for t in active_tools}
+    valid_calls, rejected = [], []
+    for name, args in tool_calls:
+        (valid_calls if name in allowed_names else rejected).append((name, args))
+    if rejected:
+        logger.warning(
+            "LLM requested tools not in active set: %s",
+            [n for n, _ in rejected],
+        )
+
+    if not valid_calls:
+        return []
+
+    results = await executor.execute_batch(valid_calls, allowed_tools=allowed_names)
+    for result in results:
+        writer(
+            {
+                "event": "tool_result",
+                "payload": {
+                    "node": node,
+                    "tool": result.tool_name,
+                    "output": result.output[:500],
+                    "duration_ms": result.duration_ms,
+                    "success": result.success,
+                },
+            }
+        )
+    return list(zip(results, valid_calls))
+
+
+async def _run_tool_loop(
+    node: str,
+    messages: list[dict[str, str]],
+    active_tools: list,
+    executor,
+    registry,
+    model_key: str,
+    writer,
+    max_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
+    temperature: float = 0.5,
+) -> tuple[str, str | None, list[dict]]:
+    """Run a multi-round tool-use loop. The model produces tool calls, they
+    are executed, and results are fed back as assistant/user messages. The
+    loop continues until the model stops producing tool calls or max_rounds
+    is reached.
+
+    Returns (final_response, thinking, all_tool_results) where
+    all_tool_results is a flat list of dicts with 'tool', 'args', 'output',
+    'success', 'duration_ms' keys for every tool call across all rounds."""
+    all_tool_results: list[dict] = []
+    response = ""
+    thinking = None
+
+    for round_num in range(max_rounds):
+        _log_prompts(node, messages)
+        resolved = await registry.resolve(model_key)
+        raw = await resolved.client.chat_completion(
+            model=resolved.model_id, messages=messages, temperature=temperature
+        )
+        response, thinking = _extract(node, raw)
+
+        round_results = await _execute_tool_round(node, response, active_tools, executor, writer)
+
+        if not round_results:
+            logger.debug("[%s] No tool calls in round %d, stopping loop", node, round_num + 1)
+            break
+
+        for result, (name, args) in round_results:
+            all_tool_results.append(
+                {
+                    "tool": name,
+                    "args": args,
+                    "output": result.output,
+                    "success": result.success,
+                    "duration_ms": result.duration_ms,
+                }
+            )
+
+        tool_summary_parts: list[str] = []
+        for result, (name, args) in round_results:
+            status = "SUCCESS" if result.success else "FAILED"
+            tool_summary_parts.append(f"Tool: {name}\nStatus: {status}\nResult:\n{result.output}")
+        tool_summary = "\n\n---\n\n".join(tool_summary_parts)
+
+        messages = list(messages)
+        messages.append({"role": "assistant", "content": response})
+        messages.append({"role": "user", "content": f"Tool execution results:\n\n{tool_summary}"})
+
+        logger.info(
+            "[%s] Tool loop round %d: %d tool calls executed",
+            node,
+            round_num + 1,
+            len(round_results),
+        )
+
+    return response, thinking, all_tool_results
 
 
 async def planning(state: ResearchState, config: RunnableConfig) -> dict:
@@ -273,7 +386,7 @@ async def tool_selection(state: ResearchState, config: RunnableConfig) -> dict:
 
 async def research_execution(state: ResearchState, config: RunnableConfig) -> dict:
     """Research Execution node: intelligence model uses selected tools to
-    gather evidence. Cost weight: 5."""
+    gather evidence. Supports multi-round tool use. Cost weight: 5."""
     moira_config = _get_config(config)
     budget = state.get("budget_remaining", 0.0)
     node = "research_execution"
@@ -313,62 +426,32 @@ async def research_execution(state: ResearchState, config: RunnableConfig) -> di
         },
     ]
 
-    resolved = await registry.resolve("intelligence")
-    _log_prompts(node, messages)
-    raw = await resolved.client.chat_completion(
-        model=resolved.model_id, messages=messages, temperature=0.5
+    response, thinking, all_tool_results = await _run_tool_loop(
+        node, messages, active_tools, executor, registry, "intelligence", writer
     )
-    response, thinking = _extract(node, raw)
-
-    tool_calls = _parse_tool_calls(response)
-    allowed_names = {t.name for t in active_tools}
-    valid_calls, rejected = [], []
-    for name, args in tool_calls:
-        (valid_calls if name in allowed_names else rejected).append((name, args))
-    if rejected:
-        logger.warning(
-            "LLM requested tools not in active set: %s",
-            [n for n, _ in rejected],
-        )
-    results = await executor.execute_batch(valid_calls, allowed_tools=allowed_names)
 
     from moira.models.state import Finding
 
     findings: list[Finding] = []
-    for result in results:
-        writer(
-            {
-                "event": "tool_result",
-                "payload": {
-                    "node": node,
-                    "tool": result.tool_name,
-                    "output": result.output[:500],
-                    "duration_ms": result.duration_ms,
-                    "success": result.success,
-                },
-            }
-        )
+    for tr in all_tool_results:
         findings.append(
             Finding(
-                content=result.output,
-                source=result.tool_name,
-                type="evidence" if result.success else "note",
+                content=tr["output"],
+                source=tr["tool"],
+                type="evidence" if tr["success"] else "note",
             )
         )
 
-    _emit_node_end(
-        writer,
-        node,
-        new_budget,
-        detail=_build_detail(
-            response,
-            thinking,
-            messages=messages,
-            structured_output={
-                "tool_calls": [{"tool": name, "args": args} for name, args in valid_calls],
-            },
-        ),
+    detail = _build_detail(
+        response,
+        thinking,
+        messages=messages,
+        structured_output={
+            "tool_calls": [{"tool": tr["tool"], "args": tr["args"]} for tr in all_tool_results],
+        },
     )
+
+    _emit_node_end(writer, node, new_budget, detail=detail)
 
     logger.info("Research execution produced %d findings", len(findings))
     logger.debug("RESEARCH EXECUTION Complete")
@@ -451,8 +534,8 @@ async def draft_synthesis(state: ResearchState, config: RunnableConfig) -> dict:
 
     question = state.get("question", "")
     plan = state.get("plan", "")
-    compressed = state.get("compressed_findings", [])
-    evidence = "\n\n".join(f["content"] for f in compressed)
+    findings = state.get("findings", [])
+    evidence = "\n\n".join(f"[{f['source']}] {f['content']}" for f in findings)
 
     messages = [
         {
@@ -488,9 +571,10 @@ async def draft_synthesis(state: ResearchState, config: RunnableConfig) -> dict:
 
 
 async def verification(state: ResearchState, config: RunnableConfig) -> dict:
-    """Verification node: adversarial review of the draft using tools.
-    Cost weight: 4. Produces a VerificationReport and may route back to
-    Planning if budget permits."""
+    """Verification node: adversarial review of the draft with tool-assisted
+    fact-checking. Uses the same active tools as research_execution for
+    independent claim verification. Cost weight: 4. Produces a
+    VerificationReport and may route back to Planning if budget permits."""
     moira_config = _get_config(config)
     budget = state.get("budget_remaining", 0.0)
     node = "verification"
@@ -506,8 +590,65 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
 
     question = state.get("question", "")
     draft = state.get("draft", "")
+    active_tools = state.get("active_tools", [])
 
-    messages = [
+    # Phase 1: Fact-checking with tools (if tools are available).
+    # The model investigates specific claims using the same tool set
+    # that research_execution had, producing independent evidence.
+    all_tool_results: list[dict] = []
+    fact_check_messages: list[dict[str, str]] = []
+    final_response = ""
+    final_thinking: str | None = None
+
+    if active_tools:
+        executor = _get_executor(config)
+        registry = _get_registry(config)
+        tool_descriptions = _format_tool_descriptions(active_tools)
+
+        fact_check_messages = [
+            {
+                "role": "system",
+                "content": get_prompt("verification.fact_check.system"),
+            },
+            {
+                "role": "user",
+                "content": get_prompt("verification.fact_check.user").format(
+                    question=question, draft=draft, tool_descriptions=tool_descriptions
+                ),
+            },
+        ]
+
+        fc_response, fc_thinking, all_tool_results = await _run_tool_loop(
+            node,
+            fact_check_messages,
+            active_tools,
+            executor,
+            registry,
+            "intelligence",
+            writer,
+            max_rounds=DEFAULT_MAX_TOOL_ROUNDS,
+            temperature=0.3,
+        )
+        logger.info(
+            "Verification fact-check: %d tool calls across rounds",
+            len(all_tool_results),
+        )
+
+    # Phase 2: Verdict. With or without tool evidence, produce the final
+    # structured verdict. When tools were used, the fact-check evidence
+    # is included in the prompt so the verdict is grounded in findings.
+    registry = _get_registry(config)
+
+    if all_tool_results:
+        evidence_parts: list[str] = []
+        for tr in all_tool_results:
+            status = "SUCCESS" if tr["success"] else "FAILED"
+            evidence_parts.append(f"[{tr['tool']}] ({status}) {tr['output']}")
+        fact_check_evidence = "\n\n".join(evidence_parts)
+    else:
+        fact_check_evidence = "No tool-based fact-checking was performed."
+
+    verdict_messages = [
         {
             "role": "system",
             "content": get_prompt("verification.system"),
@@ -518,22 +659,31 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
         },
     ]
 
-    registry = _get_registry(config)
-    resolved = await registry.resolve("intelligence")
-    _log_prompts(node, messages)
-    raw = await resolved.client.chat_completion(
-        model=resolved.model_id, messages=messages, temperature=0.5
-    )
-    response, thinking = _extract(node, raw)
+    if all_tool_results:
+        verdict_messages.append(
+            {
+                "role": "user",
+                "content": get_prompt("verification.evidence").format(
+                    evidence=fact_check_evidence
+                ),
+            }
+        )
 
-    report_dict = _parse_json_object(response)
+    resolved = await registry.resolve("intelligence")
+    _log_prompts(node, verdict_messages)
+    raw = await resolved.client.chat_completion(
+        model=resolved.model_id, messages=verdict_messages, temperature=0.5
+    )
+    final_response, final_thinking = _extract(node, raw)
+
+    report_dict = _parse_json_object(final_response)
 
     # If the model didn't return valid JSON, treat it as a technical
     # failure (case 11). Set outcome to "error" so routing halts.
     if not report_dict:
         logger.warning(
             "Verification response was not valid JSON, treating as error. Response: %s",
-            response[:500],
+            final_response[:500],
         )
         report_dict = {
             "outcome": "error",
@@ -606,17 +756,36 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
                 f"({new_budget:.1f} remaining, {cycle_cost} needed)"
             )
 
-    _emit_node_end(
-        writer,
-        node,
-        new_budget,
-        detail=_build_detail(
-            response,
-            thinking,
-            messages=messages,
-            structured_output=structured,
-        ),
+    # Merge detail: include prompts from both phases plus tool results.
+    # The verdict phase messages are the primary prompt for display, but
+    # fact-check messages and tool results are also attached for transparency.
+    detail = _build_detail(
+        final_response,
+        final_thinking,
+        messages=verdict_messages,
+        structured_output=structured,
     )
+    if fact_check_messages:
+        detail["fact_check_prompt"] = {"messages": fact_check_messages}
+    if all_tool_results:
+        detail["tool_results"] = [
+            {
+                "tool": tr["tool"],
+                "args": tr["args"],
+                "result": tr["output"],
+                "duration_ms": tr["duration_ms"],
+                "success": tr["success"],
+            }
+            for tr in all_tool_results
+        ]
+        detail["structured_output"] = {
+            **structured,
+            "tool_calls": [{"tool": tr["tool"], "args": tr["args"]} for tr in all_tool_results],
+        }
+    else:
+        detail["structured_output"] = structured
+
+    _emit_node_end(writer, node, new_budget, detail=detail)
 
     logger.info(
         "Verification complete: outcome=%s, case=%d, assessment=%s",
@@ -627,7 +796,7 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
     logger.debug("VERIFICATION Complete")
 
     return {
-        "verification": response,
+        "verification": final_response,
         "verification_history": verification_history,
         "unverified_claims": report["unsupported_claims"],
         "budget_remaining": new_budget,
@@ -836,23 +1005,60 @@ def _parse_json_object(text: str) -> dict:
 
 
 def _parse_tool_calls(text: str) -> list[tuple[str, dict]]:
+    """Parse tool calls from model response. Handles two formats:
+    1. JSON array: [{"tool": "name", "args": {...}}, ...]
+    2. Line-delimited JSON objects (one per line, no array wrapper):
+       {"tool": "name", "args": {...}}
+       {"tool": "name", "args": {...}}
+    Local models sometimes omit the array brackets."""
     import json
     import re
 
+    # Try JSON array format first
     match = re.search(r"\[.*\]", text, re.DOTALL)
-    if not match:
-        return []
-    try:
-        calls = json.loads(match.group())
-        result = []
-        for call in calls:
-            name = call.get("tool", "")
-            args = call.get("args", {})
+    if match:
+        try:
+            calls = json.loads(match.group())
+            if isinstance(calls, list):
+                result = []
+                for call in calls:
+                    if not isinstance(call, dict):
+                        continue
+                    name = call.get("tool", "")
+                    args = call.get("args", {})
+                    if name:
+                        result.append((name, args))
+                if result:
+                    return result
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Fallback: line-delimited JSON objects
+    result = []
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            obj = json.loads(line)
+            name = obj.get("tool", "")
+            args = obj.get("args", {})
             if name:
                 result.append((name, args))
-        return result
-    except (json.JSONDecodeError, TypeError):
-        return []
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return result
+
+
+def _looks_like_tool_calls(text: str) -> bool:
+    """Heuristic: does this response look like a JSON array of tool calls
+    rather than a prose synthesis? Used to decide whether to capture the
+    final response as a synthesis finding."""
+    stripped = text.strip()
+    if not stripped.startswith("["):
+        return False
+    calls = _parse_tool_calls(stripped)
+    return len(calls) > 0
 
 
 def _now() -> str:

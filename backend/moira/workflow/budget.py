@@ -6,13 +6,13 @@ logger = logging.getLogger(__name__)
 
 # Nodes that participate in a full research cycle (planning through
 # verification). Report generation is excluded because it is budget-exempt
-# and always runs as the terminal node.
+# and always runs as the terminal node. Compression is bypassed but
+# retained in cost mapping for backward compatibility.
 _FULL_CYCLE_NODES = (
     "planning",
     "tool_discovery",
     "tool_selection",
     "research_execution",
-    "compression",
     "draft_synthesis",
     "verification",
 )

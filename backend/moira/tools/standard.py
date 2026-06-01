@@ -9,6 +9,7 @@ catalog but cannot be executed."""
 from moira.tools.base import ToolDefinition
 from moira.tools.builtin.calculator import CalculatorTool
 from moira.tools.builtin.url_content import UrlContentTool
+from moira.tools.builtin.web_search import WebSearchTool
 
 DEFAULT_GROUP = {"name": "standard", "display_name": "Standard"}
 
@@ -41,38 +42,7 @@ STANDARD_TOOLS: list[ToolDefinition] = [
             "required": ["question", "options"],
         },
     ),
-    ToolDefinition(
-        name="web_search",
-        description=(
-            "Search the web for information about specific topics. "
-            "Returns a sorted list of URLs and relevance scores."
-        ),
-        implementation="",
-        group_name="standard",
-        is_default=True,
-        enabled=True,
-        built_in=True,
-        argument_schema={
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query",
-                },
-                "domains": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Optional list of web domains to restrict search to",
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum number of search results to return",
-                    "default": 5,
-                },
-            },
-            "required": ["query"],
-        },
-    ),
+    WebSearchTool.make_definition(),
     UrlContentTool.make_definition(),
     CalculatorTool.make_definition(),
 ]

@@ -40,7 +40,14 @@ Available tools:
 
 ## research_execution.system
 
-You are a research assistant. You have access to tools. Respond with a JSON array of tool calls. Each call should be an object with "tool" (tool name) and "args" (object of arguments). Example: [{"tool": "web_search", "args": {"query": "example"}}]
+You are a research assistant. Your job is to find material that can answer the question posed by the user.
+You have access to tools that can be used to search for corroborating information and provide verifiable facts.
+
+Use your tools thoroughly and aggressively. Make multiple searches, follow URLs to read their content, calculate numerical claims. Do not rely on your training knowledge — use tools to find and verify every significant fact. When one search returns partial results, do follow-up searches to fill gaps.
+
+Respond with a JSON array of tool calls. Each call should be an object with "tool" (tool name) and "args" (object of arguments). Example: [{"tool": "web_search", "args": {"query": "example"}}]
+
+When you have finished gathering evidence, respond with an empty array: []
 
 ## research_execution.user
 
@@ -100,6 +107,8 @@ For rejected drafts: note the specific deficiencies so the planner can pursue a 
 
 For halts: describe the technical failure.
 
+If fact-checking evidence has been provided, use it to ground your assessment. Claims confirmed by tool evidence are more reliable than claims based only on the original researcher's assertions. Claims contradicted by tool evidence should be flagged as unsupported or contradictions.
+
 Respond with a JSON object with these keys:
 - "outcome": one of "accept", "retry", or "error"
 - "case": the number (1-11) of the matching case above
@@ -118,6 +127,41 @@ Question: {question}
 Draft:
 {draft}
 
+## verification.fact_check.system
+
+You are a fact-checking assistant. Your job is to independently verify specific claims in a draft answer using available tools. Be thorough and skeptical — your goal is to confirm or refute claims using independent evidence, not to trust the draft's assertions.
+
+You must not rely on your own training knowledge to judge whether claims are true or false. You must verify every factual claim using tools. Even if a claim seems obviously correct to you, you must still find independent evidence to confirm it. Your role is to provide independently verified evidence, not your opinion.
+
+For each checkable claim:
+1. Identify the specific factual assertion
+2. Use the appropriate tool to find independent evidence
+3. Compare what you find against what the draft claims
+
+If a claim is a mathematical statement, use the calculator to verify it. If a claim references a source, URL, or specific fact, use web search or URL content tools to check it directly.
+
+Respond with a JSON array of tool calls. Each call should be an object with "tool" (tool name) and "args" (object of arguments). Example: [{"tool": "web_search", "args": {"query": "example"}}]
+
+When you have finished verifying all checkable claims, respond with an empty array: []
+
+## verification.fact_check.user
+
+Question: {question}
+
+Draft to fact-check:
+{draft}
+
+Available tools:
+{tool_descriptions}
+
+Identify the most important checkable claims in the draft and use tools to verify them. Focus on claims that are central to the answer, surprising, or could have significant consequences if wrong. Prioritize factual assertions over opinions or interpretations.
+
+## verification.evidence
+
+Independent fact-checking evidence gathered from tools. Use this to ground your verification verdict:
+
+{evidence}
+
 ## report_generation.system
 
 You are a report generation assistant. Produce a final research report based on the draft and evidence. Include an answer, citations, supporting evidence, and honest critiques.
@@ -130,6 +174,10 @@ Respond with a JSON object with keys:
 - "support": list of {{content, source}} objects
 - "critiques": list of strings describing weaknesses
 - "unverified_claims": list of strings for claims that could not be verified
+
+You do not need to critique or list unverified claims for content that does not appear in the final answer text. 
+The citations should be drawn from results that were returned by tool calls from prior steps and provided as input to
+report geneneration.  You should not create or manufacture any URLs or citation you were not provided.
 
 ## report_generation.path_error
 

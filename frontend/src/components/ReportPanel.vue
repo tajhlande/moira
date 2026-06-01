@@ -13,7 +13,9 @@ const copiedFull = ref(false);
 async function copyAnswer() {
   await navigator.clipboard.writeText(props.report.answer);
   copiedAnswer.value = true;
-  setTimeout(() => { copiedAnswer.value = false; }, 1500);
+  setTimeout(() => {
+    copiedAnswer.value = false;
+  }, 1500);
 }
 
 function buildFullReport(): string {
@@ -41,7 +43,9 @@ function buildFullReport(): string {
 async function copyFullReport() {
   await navigator.clipboard.writeText(buildFullReport());
   copiedFull.value = true;
-  setTimeout(() => { copiedFull.value = false; }, 1500);
+  setTimeout(() => {
+    copiedFull.value = false;
+  }, 1500);
 }
 </script>
 
@@ -50,7 +54,13 @@ async function copyFullReport() {
     <h3>Research Report</h3>
     <MarkdownContent class="report-answer" :content="report.answer" />
     <div class="answer-footer">
-      <NButton quaternary circle size="tiny" class="copy-btn" @click="copyAnswer">
+      <NButton
+        quaternary
+        circle
+        size="tiny"
+        class="copy-btn"
+        @click="copyAnswer"
+      >
         <template #icon>
           <NIcon size="14">
             <Copy v-if="!copiedAnswer" />
@@ -65,7 +75,13 @@ async function copyFullReport() {
       <ul>
         <li v-for="(c, ci) in report.citations" :key="ci">
           {{ c.source }}
-          <a v-if="c.url" :href="c.url" target="_blank" rel="noopener noreferrer">{{ c.url }}</a>
+          <a
+            v-if="c.url"
+            :href="c.url"
+            target="_blank"
+            rel="noopener noreferrer"
+            >{{ c.url }}</a
+          >
           <span v-if="c.excerpt" class="citation-excerpt">{{ c.excerpt }}</span>
         </li>
       </ul>
@@ -83,7 +99,11 @@ async function copyFullReport() {
     <div v-if="report.unverified_claims.length > 0" class="report-section">
       <h4>Unverified Claims</h4>
       <ul>
-        <li v-for="(c, ci) in report.unverified_claims" :key="ci" class="unverified">
+        <li
+          v-for="(c, ci) in report.unverified_claims"
+          :key="ci"
+          class="unverified"
+        >
           <MarkdownContent :content="c" inline />
         </li>
       </ul>
@@ -93,7 +113,13 @@ async function copyFullReport() {
       <span class="budget-consumed">
         Budget consumed: {{ report.budget_consumed.toFixed(0) }}
       </span>
-      <NButton quaternary circle size="tiny" class="copy-btn" @click="copyFullReport">
+      <NButton
+        quaternary
+        circle
+        size="tiny"
+        class="copy-btn"
+        @click="copyFullReport"
+      >
         <template #icon>
           <NIcon size="14">
             <Copy v-if="!copiedFull" />

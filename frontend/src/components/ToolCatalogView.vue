@@ -47,23 +47,39 @@ async function onToggleEnabled(name: string, enabled: boolean) {
     </NText>
 
     <div class="catalog-groups">
-      <div v-for="[group, tools] of store.groups" :key="group" class="catalog-group">
-        <NText strong class="catalog-group-title">{{ tools[0]?.groupDisplayName || group }}</NText>
+      <div
+        v-for="[group, tools] of store.groups"
+        :key="group"
+        class="catalog-group"
+      >
+        <NText strong class="catalog-group-title">{{
+          tools[0]?.groupDisplayName || group
+        }}</NText>
         <div class="catalog-tool-list">
           <div
             v-for="tool in tools"
             :key="tool.name"
             class="catalog-tool-card"
-            @click="router.push({ name: 'tool-detail', params: { name: tool.name } })"
+            @click="
+              router.push({ name: 'tool-detail', params: { name: tool.name } })
+            "
           >
             <NText strong class="catalog-tool-name">{{ tool.name }}</NText>
-            <NText depth="3" class="catalog-tool-desc">{{ tool.description }}</NText>
+            <NText depth="3" class="catalog-tool-desc">{{
+              tool.description
+            }}</NText>
             <div class="catalog-tool-meta">
               <NText depth="3" class="catalog-tool-params">
-                {{ tool.parameters.length }} parameter{{ tool.parameters.length !== 1 ? 's' : '' }}
+                {{ tool.parameters.length }} parameter{{
+                  tool.parameters.length !== 1 ? "s" : ""
+                }}
               </NText>
-              <NText v-if="tool.isDefault" depth="3" class="catalog-tool-badge">Default</NText>
-              <NText v-if="tool.builtIn" depth="3" class="catalog-tool-badge">Built-in</NText>
+              <NText v-if="tool.isDefault" depth="3" class="catalog-tool-badge"
+                >Default</NText
+              >
+              <NText v-if="tool.builtIn" depth="3" class="catalog-tool-badge"
+                >Built-in</NText
+              >
               <NSwitch
                 :value="tool.enabled"
                 @update:value="(v: boolean) => onToggleEnabled(tool.name, v)"

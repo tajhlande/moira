@@ -49,11 +49,12 @@ async function onToggleEnabled(name: string, enabled: boolean) {
         Add Tool
       </NButton>
 
-      <div v-for="[group, tools] of store.groups" :key="group" class="tool-group">
-        <div
-          class="group-header"
-          @click="toggleGroup(group)"
-        >
+      <div
+        v-for="[group, tools] of store.groups"
+        :key="group"
+        class="tool-group"
+      >
+        <div class="group-header" @click="toggleGroup(group)">
           <NIcon :size="16" class="group-chevron">
             <ChevronDown v-if="!collapsed.has(group)" />
             <ChevronRight v-else />
@@ -65,12 +66,17 @@ async function onToggleEnabled(name: string, enabled: boolean) {
           <div
             v-for="tool in tools"
             :key="tool.name"
-            :class="['tool-item', { active: store.selectedToolName === tool.name }]"
+            :class="[
+              'tool-item',
+              { active: store.selectedToolName === tool.name },
+            ]"
           >
             <NIcon :size="16" class="tool-icon">
               <Tool />
             </NIcon>
-            <span class="tool-name" @click="selectTool(tool.name)">{{ tool.name }}</span>
+            <span class="tool-name" @click="selectTool(tool.name)">{{
+              tool.name
+            }}</span>
             <NSwitch
               :value="tool.enabled"
               @update:value="(v: boolean) => onToggleEnabled(tool.name, v)"

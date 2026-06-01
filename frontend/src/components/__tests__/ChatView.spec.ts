@@ -10,8 +10,17 @@ beforeEach(async () => {
   router = createRouter({
     history: createMemoryHistory(),
     routes: [
-      { path: "/conversation/new", name: "new-conversation", component: { template: "<div/>" } },
-      { path: "/conversation/:id", name: "conversation", component: { template: "<div/>" }, props: true },
+      {
+        path: "/conversation/new",
+        name: "new-conversation",
+        component: { template: "<div/>" },
+      },
+      {
+        path: "/conversation/:id",
+        name: "conversation",
+        component: { template: "<div/>" },
+        props: true,
+      },
       { path: "/", redirect: "/conversation/new" },
     ],
   });
@@ -67,7 +76,9 @@ vi.mock("../../api/client", () => ({
       run_id: "run-1",
       user_message_id: 1,
     })),
-    streamUrl: vi.fn(() => "http://localhost:8000/api/conversations/conv-1/stream"),
+    streamUrl: vi.fn(
+      () => "http://localhost:8000/api/conversations/conv-1/stream",
+    ),
     generateTitle: vi.fn(async () => {}),
   },
 }));
@@ -92,39 +103,38 @@ function mockStartRunAndStream(events: { event: string; data: string }[]) {
 describe("ChatView", () => {
   it("renders chat messages using mocked SSE streaming", async () => {
     mockStartRunAndStream([
-        {
-          event: "node_start",
-          data: JSON.stringify({
-            node: "planning",
-            timestamp: "t1",
-            started_at: new Date().toISOString(),
-          }),
-        },
-        {
-          event: "node_end",
-          data: JSON.stringify({
-            node: "planning",
-            timestamp: "t2",
-            budget_remaining: 48,
-            elapsed_ms: 1200,
-          }),
-        },
-        {
-          event: "run_complete",
-          data: JSON.stringify({
-            report: {
-              answer: "Mocked SSE response",
-              citations: [],
-              support: [],
-              critiques: [],
-              unverified_claims: [],
-              budget_consumed: 21,
-            },
-            total_elapsed_ms: 5000,
-          }),
-        },
-      ]
-    );
+      {
+        event: "node_start",
+        data: JSON.stringify({
+          node: "planning",
+          timestamp: "t1",
+          started_at: new Date().toISOString(),
+        }),
+      },
+      {
+        event: "node_end",
+        data: JSON.stringify({
+          node: "planning",
+          timestamp: "t2",
+          budget_remaining: 48,
+          elapsed_ms: 1200,
+        }),
+      },
+      {
+        event: "run_complete",
+        data: JSON.stringify({
+          report: {
+            answer: "Mocked SSE response",
+            citations: [],
+            support: [],
+            critiques: [],
+            unverified_claims: [],
+            budget_consumed: 21,
+          },
+          total_elapsed_ms: 5000,
+        }),
+      },
+    ]);
 
     const pinia = createPinia();
     setActivePinia(pinia);
@@ -142,37 +152,36 @@ describe("ChatView", () => {
 
   it("finalizes run with steps and timing after stream completes", async () => {
     mockStartRunAndStream([
-        {
-          event: "node_start",
-          data: JSON.stringify({
-            node: "planning",
-            started_at: new Date().toISOString(),
-          }),
-        },
-        {
-          event: "node_end",
-          data: JSON.stringify({
-            node: "planning",
-            budget_remaining: 48,
-            elapsed_ms: 1200,
-          }),
-        },
-        {
-          event: "run_complete",
-          data: JSON.stringify({
-            report: {
-              answer: "Done",
-              citations: [],
-              support: [],
-              critiques: [],
-              unverified_claims: [],
-              budget_consumed: 2,
-            },
-            total_elapsed_ms: 5000,
-          }),
-        },
-      ]
-    );
+      {
+        event: "node_start",
+        data: JSON.stringify({
+          node: "planning",
+          started_at: new Date().toISOString(),
+        }),
+      },
+      {
+        event: "node_end",
+        data: JSON.stringify({
+          node: "planning",
+          budget_remaining: 48,
+          elapsed_ms: 1200,
+        }),
+      },
+      {
+        event: "run_complete",
+        data: JSON.stringify({
+          report: {
+            answer: "Done",
+            citations: [],
+            support: [],
+            critiques: [],
+            unverified_claims: [],
+            budget_consumed: 2,
+          },
+          total_elapsed_ms: 5000,
+        }),
+      },
+    ]);
 
     const pinia = createPinia();
     setActivePinia(pinia);
@@ -205,54 +214,53 @@ describe("ChatView", () => {
     // The backend report_generation node emits run_complete BEFORE node_end.
     // This test reproduces that exact event ordering to verify steps don't disappear.
     mockStartRunAndStream([
-        {
-          event: "node_start",
-          data: JSON.stringify({
-            node: "planning",
-            started_at: new Date().toISOString(),
-          }),
-        },
-        {
-          event: "node_end",
-          data: JSON.stringify({
-            node: "planning",
-            budget_remaining: 48,
-            elapsed_ms: 1000,
-          }),
-        },
-        {
-          event: "node_start",
-          data: JSON.stringify({
-            node: "report_generation",
-            started_at: new Date().toISOString(),
-          }),
-        },
-        // run_complete fires BEFORE report_generation's node_end
-        {
-          event: "run_complete",
-          data: JSON.stringify({
-            report: {
-              answer: "Final answer",
-              citations: [],
-              support: [],
-              critiques: [],
-              unverified_claims: [],
-              budget_consumed: 10,
-            },
-            total_elapsed_ms: 8000,
-          }),
-        },
-        // node_end for report_generation arrives AFTER run_complete
-        {
-          event: "node_end",
-          data: JSON.stringify({
-            node: "report_generation",
-            budget_remaining: 40,
-            elapsed_ms: 2000,
-          }),
-        },
-      ]
-    );
+      {
+        event: "node_start",
+        data: JSON.stringify({
+          node: "planning",
+          started_at: new Date().toISOString(),
+        }),
+      },
+      {
+        event: "node_end",
+        data: JSON.stringify({
+          node: "planning",
+          budget_remaining: 48,
+          elapsed_ms: 1000,
+        }),
+      },
+      {
+        event: "node_start",
+        data: JSON.stringify({
+          node: "report_generation",
+          started_at: new Date().toISOString(),
+        }),
+      },
+      // run_complete fires BEFORE report_generation's node_end
+      {
+        event: "run_complete",
+        data: JSON.stringify({
+          report: {
+            answer: "Final answer",
+            citations: [],
+            support: [],
+            critiques: [],
+            unverified_claims: [],
+            budget_consumed: 10,
+          },
+          total_elapsed_ms: 8000,
+        }),
+      },
+      // node_end for report_generation arrives AFTER run_complete
+      {
+        event: "node_end",
+        data: JSON.stringify({
+          node: "report_generation",
+          budget_remaining: 40,
+          elapsed_ms: 2000,
+        }),
+      },
+    ]);
 
     const pinia = createPinia();
     setActivePinia(pinia);
@@ -277,52 +285,51 @@ describe("ChatView", () => {
     // The bug symptom: steps disappear when finalizeRun switches rendering from
     // live template to RunArtifacts component.
     mockStartRunAndStream([
-        {
-          event: "node_start",
-          data: JSON.stringify({
-            node: "planning",
-            started_at: new Date().toISOString(),
-          }),
-        },
-        {
-          event: "node_end",
-          data: JSON.stringify({
-            node: "planning",
-            budget_remaining: 48,
-            elapsed_ms: 1000,
-          }),
-        },
-        {
-          event: "node_start",
-          data: JSON.stringify({
-            node: "report_generation",
-            started_at: new Date().toISOString(),
-          }),
-        },
-        {
-          event: "run_complete",
-          data: JSON.stringify({
-            report: {
-              answer: "Rendered answer",
-              citations: [],
-              support: [],
-              critiques: [],
-              unverified_claims: [],
-              budget_consumed: 10,
-            },
-            total_elapsed_ms: 8000,
-          }),
-        },
-        {
-          event: "node_end",
-          data: JSON.stringify({
-            node: "report_generation",
-            budget_remaining: 40,
-            elapsed_ms: 2000,
-          }),
-        },
-      ]
-    );
+      {
+        event: "node_start",
+        data: JSON.stringify({
+          node: "planning",
+          started_at: new Date().toISOString(),
+        }),
+      },
+      {
+        event: "node_end",
+        data: JSON.stringify({
+          node: "planning",
+          budget_remaining: 48,
+          elapsed_ms: 1000,
+        }),
+      },
+      {
+        event: "node_start",
+        data: JSON.stringify({
+          node: "report_generation",
+          started_at: new Date().toISOString(),
+        }),
+      },
+      {
+        event: "run_complete",
+        data: JSON.stringify({
+          report: {
+            answer: "Rendered answer",
+            citations: [],
+            support: [],
+            critiques: [],
+            unverified_claims: [],
+            budget_consumed: 10,
+          },
+          total_elapsed_ms: 8000,
+        }),
+      },
+      {
+        event: "node_end",
+        data: JSON.stringify({
+          node: "report_generation",
+          budget_remaining: 40,
+          elapsed_ms: 2000,
+        }),
+      },
+    ]);
 
     const pinia = createPinia();
     setActivePinia(pinia);
@@ -353,37 +360,36 @@ describe("ChatView", () => {
     // After streamMessage returns, sendMessage pushes an assistant message.
     // This changes the messages array and re-renders. Steps must survive this.
     mockStartRunAndStream([
-        {
-          event: "node_start",
-          data: JSON.stringify({
-            node: "planning",
-            started_at: new Date().toISOString(),
-          }),
-        },
-        {
-          event: "node_end",
-          data: JSON.stringify({
-            node: "planning",
-            budget_remaining: 48,
-            elapsed_ms: 1000,
-          }),
-        },
-        {
-          event: "run_complete",
-          data: JSON.stringify({
-            report: {
-              answer: "Persisted answer",
-              citations: [],
-              support: [],
-              critiques: [],
-              unverified_claims: [],
-              budget_consumed: 5,
-            },
-            total_elapsed_ms: 3000,
-          }),
-        },
-      ]
-    );
+      {
+        event: "node_start",
+        data: JSON.stringify({
+          node: "planning",
+          started_at: new Date().toISOString(),
+        }),
+      },
+      {
+        event: "node_end",
+        data: JSON.stringify({
+          node: "planning",
+          budget_remaining: 48,
+          elapsed_ms: 1000,
+        }),
+      },
+      {
+        event: "run_complete",
+        data: JSON.stringify({
+          report: {
+            answer: "Persisted answer",
+            citations: [],
+            support: [],
+            critiques: [],
+            unverified_claims: [],
+            budget_consumed: 5,
+          },
+          total_elapsed_ms: 3000,
+        }),
+      },
+    ]);
 
     const pinia = createPinia();
     setActivePinia(pinia);

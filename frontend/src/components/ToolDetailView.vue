@@ -1,9 +1,19 @@
 <script setup lang="ts">
-import { NText, NIcon, NDivider, NButton, NSwitch, NScrollbar } from "naive-ui";
+import { ref } from "vue";
+import {
+  NText,
+  NIcon,
+  NDivider,
+  NButton,
+  NSwitch,
+  NScrollbar,
+  NInput,
+} from "naive-ui";
 import { ArrowLeft } from "@vicons/tabler";
 import { useToolsStore } from "../stores/tools";
 import { useRoute, useRouter } from "vue-router";
 import { computed } from "vue";
+import { api } from "../api/client";
 
 const store = useToolsStore();
 const route = useRoute();
@@ -11,6 +21,67 @@ const router = useRouter();
 
 const toolName = computed(() => route.params.name as string);
 const tool = computed(() => store.tools.find((t) => t.name === toolName.value));
+
+const configSchema = ref<Record<string, unknown> | null>(null);
+const configSchemaLoading = ref(false);
+const configEdits = ref<Record<string, string>>({});
+const configSaving = ref(false);
+
+async function fetchSpec() {
+  if (!toolName.value) return;
+  configSchemaLoading.value = true;
+  try {
+    const spec = await api.getToolSpec(toolName.value);
+    configSchema.value = spec.config_schema ?? null;
+  } catch (e) {
+    console.warn("Failed to fetch tool spec:", e);
+    configSchema.value = null;
+  } finally {
+    configSchemaLoading.value = false;
+  }
+}
+
+fetchSpec();
+
+interface SchemaProperty {
+  type?: string;
+  title?: string;
+  description?: string;
+  default?: unknown;
+}
+
+const configProperties = computed(() => {
+  if (!configSchema.value) return [];
+  const props = (
+    configSchema.value as { properties?: Record<string, SchemaProperty> }
+  ).properties;
+  if (!props) return [];
+  return Object.entries(props).map(([key, schema]) => ({
+    key,
+    title: schema.title || key,
+    description: schema.description || "",
+    type: schema.type || "string",
+    required: (
+      (configSchema.value as { required?: string[] }).required ?? []
+    ).includes(key),
+    currentValue: tool.value?.config?.[key]?.toString() ?? "",
+  }));
+});
+
+async function saveConfig() {
+  if (!toolName.value) return;
+  configSaving.value = true;
+  try {
+    const newConfig: Record<string, unknown> = { ...tool.value?.config };
+    for (const [key, val] of Object.entries(configEdits.value)) {
+      newConfig[key] = val;
+    }
+    await store.patchTool(toolName.value, { config: newConfig });
+    configEdits.value = {};
+  } finally {
+    configSaving.value = false;
+  }
+}
 
 async function onToggleEnabled(enabled: boolean) {
   if (tool.value) {
@@ -45,7 +116,9 @@ function flattenConfig(obj: Record<string, unknown>, prefix = ""): FlatEntry[] {
     } else if (Array.isArray(val)) {
       val.forEach((item, i) => {
         if (typeof item === "object" && item !== null) {
-          entries.push(...flattenConfig(item as Record<string, unknown>, `${path}[${i}]`));
+          entries.push(
+            ...flattenConfig(item as Record<string, unknown>, `${path}[${i}]`),
+          );
         } else {
           entries.push({ path: `${path}[${i}]`, value: String(item) });
         }
@@ -60,7 +133,9 @@ function flattenConfig(obj: Record<string, unknown>, prefix = ""): FlatEntry[] {
 }
 
 const configEntries = computed(() => {
-  if (!tool.value?.config || Object.keys(tool.value.config).length === 0) return [];
+  if (configProperties.value.length > 0) return [];
+  if (!tool.value?.config || Object.keys(tool.value.config).length === 0)
+    return [];
   return flattenConfig(tool.value.config);
 });
 </script>
@@ -76,7 +151,9 @@ const configEntries = computed(() => {
       <div class="detail-title-area">
         <div class="detail-title-line">
           <NText class="detail-name">{{ tool.name }}</NText>
-          <NText v-if="tool.builtIn" depth="3" class="detail-badge">Built-in</NText>
+          <NText v-if="tool.builtIn" depth="3" class="detail-badge"
+            >Built-in</NText
+          >
         </div>
         <div class="detail-controls">
           <div class="control-item">
@@ -122,19 +199,59 @@ const configEntries = computed(() => {
 
     <NDivider />
 
+    <div v-if="configProperties.length > 0" class="config-section">
+      <NText strong class="config-heading">Configuration</NText>
+      <div class="config-form">
+        <div
+          v-for="prop in configProperties"
+          :key="prop.key"
+          class="config-field"
+        >
+          <div class="config-field-header">
+            <NText strong class="config-field-title">{{ prop.title }}</NText>
+            <NText v-if="prop.required" depth="3" class="config-field-required"
+              >required</NText
+            >
+          </div>
+          <NText v-if="prop.description" depth="3" class="config-field-desc">{{
+            prop.description
+          }}</NText>
+          <NInput
+            :value="configEdits[prop.key] ?? prop.currentValue"
+            @update:value="(v: string) => (configEdits[prop.key] = v)"
+            :placeholder="prop.currentValue || `Enter ${prop.title}`"
+            size="small"
+          />
+        </div>
+        <NButton
+          type="primary"
+          size="small"
+          :loading="configSaving"
+          :disabled="Object.keys(configEdits).length === 0"
+          @click="saveConfig"
+        >
+          Save Config
+        </NButton>
+      </div>
+    </div>
+
     <div class="info-section">
       <NText strong class="info-heading">Implementation</NText>
       <div class="info-box">
         <div class="info-row">
           <NText depth="3" class="info-key">Class</NText>
-          <NText code class="info-val">{{ tool.implementation || '—' }}</NText>
+          <NText code class="info-val">{{ tool.implementation || "—" }}</NText>
         </div>
         <template v-if="configEntries.length > 0">
           <NDivider style="margin: 8px 0" />
           <NText depth="3" class="info-key">Configuration</NText>
           <NScrollbar class="config-scroll">
             <div class="config-entries">
-              <div v-for="entry in configEntries" :key="entry.path" class="config-row">
+              <div
+                v-for="entry in configEntries"
+                :key="entry.path"
+                class="config-row"
+              >
                 <NText code class="config-path">{{ entry.path }}</NText>
                 <NText class="config-value">{{ entry.value }}</NText>
               </div>
@@ -250,6 +367,42 @@ const configEntries = computed(() => {
   display: block;
   font-size: 0.85em;
   margin-top: 2px;
+}
+
+.config-section {
+  margin-bottom: 20px;
+}
+
+.config-heading {
+  display: block;
+  margin-bottom: 10px;
+}
+
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.config-field-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.config-field-title {
+  font-size: 0.9em;
+}
+
+.config-field-required {
+  font-size: 0.75em;
+  font-style: italic;
+}
+
+.config-field-desc {
+  display: block;
+  font-size: 0.85em;
+  margin-bottom: 4px;
 }
 
 .info-section {

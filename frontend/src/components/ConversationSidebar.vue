@@ -1,10 +1,5 @@
 <script setup lang="ts">
-import {
-  NButton,
-  NScrollbar,
-  NIcon,
-  NInput,
-} from "naive-ui";
+import { NButton, NScrollbar, NIcon, NInput } from "naive-ui";
 import { Pencil, Check, Wand, Trash } from "@vicons/tabler";
 import { useChatStore } from "../stores/chat";
 import { useRouter } from "vue-router";
@@ -88,7 +83,10 @@ function hasMessages(conversationId: string): boolean {
         <div
           v-for="conversation in store.conversations"
           :key="conversation.id"
-          :class="['conv-item', { active: conversation.id === store.currentConversationId }]"
+          :class="[
+            'conv-item',
+            { active: conversation.id === store.currentConversationId },
+          ]"
         >
           <div
             v-if="editingId === conversation.id"
@@ -118,7 +116,12 @@ function hasMessages(conversationId: string): boolean {
           <div
             v-else
             class="conv-row"
-            @click="router.push({ name: 'conversation', params: { id: conversation.id } })"
+            @click="
+              router.push({
+                name: 'conversation',
+                params: { id: conversation.id },
+              })
+            "
           >
             <span class="conv-title">{{ conversation.title }}</span>
             <span class="conv-actions">

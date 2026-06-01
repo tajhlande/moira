@@ -67,6 +67,10 @@ class BaseTool(ABC):
     tool_description: str = ""
     tool_argument_schema: dict[str, Any] = {}
     tool_group: str = ""
+    # JSON Schema for config values stored in ToolDefinition.config.
+    # The frontend uses this to render a configuration form on the tool
+    # detail page. Tools with no config leave this empty.
+    tool_config_schema: dict[str, Any] = {}
 
     def __init__(self, definition: ToolDefinition):
         self.definition = definition
@@ -74,6 +78,14 @@ class BaseTool(ABC):
     @property
     def name(self) -> str:
         return self.definition.name
+
+    @classmethod
+    def get_spec(cls) -> dict[str, Any]:
+        """Return the tool's config and secret schemas. The frontend uses
+        this to render configuration forms on the tool detail page."""
+        return {
+            "config_schema": cls.tool_config_schema,
+        }
 
     @classmethod
     def make_definition(cls, **overrides: Any) -> ToolDefinition:

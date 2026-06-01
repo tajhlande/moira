@@ -14,7 +14,7 @@ async function render() {
   if (!marked) {
     marked = await initMarked();
   }
-  const raw = await marked.parse(props.content) as string;
+  const raw = (await marked.parse(props.content)) as string;
   // Inline mode: strip wrapping <p> tags so the content flows inline
   // within list items and other block elements.
   if (props.inline) {
@@ -64,7 +64,11 @@ function handleClick(e: MouseEvent) {
   <component
     :is="inline ? 'span' : 'div'"
     v-else
-    :class="['markdown-content', 'markdown-loading', isDark ? 'markdown-dark' : 'markdown-light']"
+    :class="[
+      'markdown-content',
+      'markdown-loading',
+      isDark ? 'markdown-dark' : 'markdown-light',
+    ]"
   >
     {{ content }}
   </component>

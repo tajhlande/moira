@@ -248,9 +248,9 @@ class TestUrlContentIntegration:
     async def test_wttr_in_weather(self, live_tool):
         """wttr.in with format=3 returns a one-line weather report.
         The response contains a temperature reading."""
-        r = await live_tool.execute({"url": "https://wttr.in/?format=3"})
+        r = await live_tool.execute({"url": "https://wttr.in/20500?format=3"})
         assert r.success
-        assert r.output.strip() != ""
+        assert "20500" in r.output
 
     @pytest.mark.asyncio
     async def test_hacker_news_text_only(self, live_tool):

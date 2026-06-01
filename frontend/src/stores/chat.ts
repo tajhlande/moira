@@ -159,7 +159,9 @@ export const useChatStore = defineStore("chat", () => {
       // Re-fetch conversation state to get the persisted run.
       if (resp.status === 404) {
         const detail = await api.getConversation(conversationId);
-        const run = detail.runs.find((r) => r.user_message_id === userMessageId);
+        const run = detail.runs.find(
+          (r) => r.user_message_id === userMessageId,
+        );
         if (run) {
           const newMap = new Map(runs.value);
           newMap.set(userMessageId, run);
@@ -215,7 +217,11 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
-  function handleEvent(eventType: string, payload: any, userMessageId?: number) {
+  function handleEvent(
+    eventType: string,
+    payload: any,
+    userMessageId?: number,
+  ) {
     switch (eventType) {
       case "node_start":
         if (currentStep.value) {
@@ -274,7 +280,9 @@ export const useChatStore = defineStore("chat", () => {
             if (!currentStep.value.detail.tool_results) {
               currentStep.value.detail.tool_results = [];
             }
-            (currentStep.value.detail.tool_results as Array<typeof toolEntry>).push(toolEntry);
+            (
+              currentStep.value.detail.tool_results as Array<typeof toolEntry>
+            ).push(toolEntry);
           }
         }
         break;
@@ -379,7 +387,9 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
-  function getRunForMessage(messageId: number | undefined): WorkflowRunInfo | null {
+  function getRunForMessage(
+    messageId: number | undefined,
+  ): WorkflowRunInfo | null {
     if (!messageId) return null;
     return runs.value.get(messageId) || null;
   }
