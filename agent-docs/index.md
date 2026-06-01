@@ -5,7 +5,7 @@
 | **architecture.md**             | System goals, component structure, persistence strategy, and implementation guidelines for the MOiRA platform.                     |
 | **architecture-critique.md**    | External review of the architecture document, identifying gaps and risks.                                                          |
 | **architecture-adjustments.md** | Planned changes to the architecture in response to the critique.                                                                   |
-| **implementation-plan.md**      | Phased build plan — each phase is a vertical spike producing a runnable increment.                                                 |
+| **implementation-plan.md**      | Phased build plan — Phases 1–2 complete, Phase 3 in progress. Updated to reflect current implementation state.                     |
 | **implementation-feedback.md**  | Review of the implementation plan against the (adjusted) architecture and critique.                                                |
 | **implementation-response.md**  | Decisions and remedies responding to the implementation feedback.                                                                  |
 | **conversation-state.md**       | Conceptual data model of a conversation (Section 0) and complete inventory of every data element across all implementation layers. |
