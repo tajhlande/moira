@@ -28,7 +28,19 @@
 }
 
 .step-row.error {
-  color: #d03050;
+  color: var(--n-error-color, #d03050);
+}
+
+.step-completed-icon {
+  color: var(--n-success-color, #18a058);
+}
+
+.step-error-icon {
+  color: var(--n-error-color, #d03050);
+}
+
+.retry-branch-icon {
+  color: var(--n-warning-color, #f0a020);
 }
 
 .step-label {

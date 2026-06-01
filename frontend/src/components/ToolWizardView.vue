@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { NText, NIcon, NButton } from "naive-ui";
-import { ArrowLeft, Plus } from "@vicons/tabler";
+import { NText, NButton } from "naive-ui";
+import { IconArrowLeft, IconPlus } from "@tabler/icons-vue";
 import { useRouter } from "vue-router";
 
 const router = useRouter();
@@ -11,10 +11,10 @@ const router = useRouter();
     <div class="wizard-header">
       <NButton quaternary circle @click="router.push({ name: 'tools' })">
         <template #icon>
-          <NIcon><ArrowLeft /></NIcon>
+          <IconArrowLeft />
         </template>
       </NButton>
-      <NIcon :size="24" class="wizard-icon"><Plus /></NIcon>
+      <IconPlus :size="24" class="wizard-icon" />
       <NText class="wizard-title">Add New Tool</NText>
     </div>
 

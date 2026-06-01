@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { NText, NIcon } from "naive-ui";
-import { Settings } from "@vicons/tabler";
+import { NText } from "naive-ui";
+import { IconSettings } from "@tabler/icons-vue";
 </script>
 
 <template>
   <div class="settings-view">
     <div class="settings-header">
-      <NIcon :size="28" class="header-icon"><Settings /></NIcon>
+      <IconSettings :size="28" class="header-icon" />
       <NText class="header-title">Settings</NText>
     </div>
 

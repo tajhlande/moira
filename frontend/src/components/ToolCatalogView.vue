@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { NText, NIcon, NDivider, NSwitch } from "naive-ui";
-import { Tools } from "@vicons/tabler";
+import { NText, NDivider, NSwitch } from "naive-ui";
+import { IconTools } from "@tabler/icons-vue";
 import { useToolsStore } from "../stores/tools";
 import { useRouter } from "vue-router";
 import { onMounted } from "vue";
@@ -20,7 +20,7 @@ async function onToggleEnabled(name: string, enabled: boolean) {
 <template>
   <div class="catalog-view">
     <div class="catalog-header">
-      <NIcon :size="28" class="header-icon"><Tools /></NIcon>
+      <IconTools :size="28" class="header-icon" />
       <NText class="header-title">Tool Catalog</NText>
     </div>
 

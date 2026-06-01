@@ -2,14 +2,13 @@
 import { ref } from "vue";
 import {
   NText,
-  NIcon,
   NDivider,
   NButton,
   NSwitch,
   NScrollbar,
   NInput,
 } from "naive-ui";
-import { ArrowLeft } from "@vicons/tabler";
+import { IconArrowLeft } from "@tabler/icons-vue";
 import { useToolsStore } from "../stores/tools";
 import { useRoute, useRouter } from "vue-router";
 import { computed } from "vue";
@@ -145,7 +144,7 @@ const configEntries = computed(() => {
     <div class="detail-header">
       <NButton quaternary circle @click="router.push({ name: 'tools' })">
         <template #icon>
-          <NIcon><ArrowLeft /></NIcon>
+          <IconArrowLeft />
         </template>
       </NButton>
       <div class="detail-title-area">

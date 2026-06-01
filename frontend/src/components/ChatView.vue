@@ -10,15 +10,15 @@ import {
   NText,
 } from "naive-ui";
 import {
-  CircleCheck,
-  CircleX,
-  Loader,
-  Copy,
-  ChevronRight,
-  ChevronDown,
-  Tool,
-} from "@vicons/tabler";
-import { NIcon } from "naive-ui";
+  IconCircleCheck,
+  IconCircleX,
+  IconLoader,
+  IconCopy,
+  IconChevronRight,
+  IconChevronDown,
+  IconTool,
+  IconRestore,
+} from "@tabler/icons-vue";
 import { useRoute, useRouter } from "vue-router";
 import { useChatStore } from "../stores/chat";
 import { useToolsStore } from "../stores/tools";
@@ -116,6 +116,16 @@ function toolCallCount(step: ExecutionStep): number {
   return 0;
 }
 
+// A verification step that sent control flow back to planning (outcome=retry)
+// gets a distinct branch icon instead of the standard checkmark.
+function isRetryBranch(step: ExecutionStep): boolean {
+  if (step.node !== "verification" || step.status !== "completed") return false;
+  const so = step.detail?.structured_output as
+    | Record<string, unknown>
+    | undefined;
+  return so?.outcome === "retry";
+}
+
 // Compute live elapsed for the currently running step
 function liveElapsedMs(step: ExecutionStep): number | undefined {
   if (step.status !== "running" || !step.started_at) return step.elapsed_ms;
@@ -198,10 +208,8 @@ async function copyMessage(content: string, index: number) {
               @click="copyMessage(msg.content, i)"
             >
               <template #icon>
-                <NIcon size="14">
-                  <Copy v-if="copiedMsgIndex !== i" />
-                  <CircleCheck v-else />
-                </NIcon>
+                <IconCopy v-if="copiedMsgIndex !== i" :size="14" />
+                <IconCircleCheck v-else :size="14" />
               </template>
             </NButton>
           </div>
@@ -229,34 +237,32 @@ async function copyMessage(content: string, index: number) {
             >
               <div v-for="(step, si) in store.executionSteps" :key="'ls-' + si">
                 <div :class="['step-row', step.status]">
-                  <NIcon
-                    v-if="step.status === 'completed'"
+                  <IconRestore
+                    v-if="isRetryBranch(step)"
                     :size="16"
-                    color="#18a058"
-                  >
-                    <CircleCheck />
-                  </NIcon>
-                  <NIcon v-else :size="16" color="#d03050">
-                    <CircleX />
-                  </NIcon>
+                    class="retry-branch-icon"
+                  />
+                  <IconCircleCheck
+                    v-else-if="step.status === 'completed'"
+                    :size="16"
+                    class="step-completed-icon"
+                  />
+                  <IconCircleX v-else :size="16" class="step-error-icon" />
                   <span class="step-label">{{ step.label }}</span>
                   <span
                     v-if="toolCallCount(step) > 0"
                     class="step-tool-indicators"
                   >
                     <template v-if="toolCallCount(step) <= 10">
-                      <NIcon
+                      <IconTool
                         v-for="ti in toolCallCount(step)"
                         :key="ti"
                         :size="13"
                         class="tool-indicator-icon"
-                        ><Tool
-                      /></NIcon>
+                      />
                     </template>
                     <template v-else>
-                      <NIcon :size="13" class="tool-indicator-icon"
-                        ><Tool
-                      /></NIcon>
+                      <IconTool :size="13" class="tool-indicator-icon" />
                       <span class="tool-indicator-count"
                         >&times;{{ toolCallCount(step) }}</span
                       >
@@ -281,10 +287,8 @@ async function copyMessage(content: string, index: number) {
                     class="step-toggle"
                     @click="toggleStep(si)"
                   >
-                    <NIcon :size="14">
-                      <ChevronDown v-if="expandedSteps.has(si)" />
-                      <ChevronRight v-else />
-                    </NIcon>
+                    <IconChevronDown v-if="expandedSteps.has(si)" :size="14" />
+                    <IconChevronRight v-else :size="14" />
                   </button>
                   <span v-else class="step-toggle-placeholder" />
                 </div>
@@ -296,9 +300,7 @@ async function copyMessage(content: string, index: number) {
                 </div>
               </div>
               <div v-if="store.currentStep" class="step-row running">
-                <NIcon :size="16" class="spinning">
-                  <Loader />
-                </NIcon>
+                <IconLoader :size="16" class="spinning" />
                 <span class="step-label">{{ store.currentStep.label }}</span>
                 <span class="step-elapsed">{{
                   formatElapsed(liveElapsedMs(store.currentStep))

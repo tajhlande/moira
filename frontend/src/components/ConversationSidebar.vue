@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { NButton, NScrollbar, NIcon, NInput } from "naive-ui";
-import { Pencil, Check, Wand, Trash } from "@vicons/tabler";
+import { NButton, NScrollbar, NInput } from "naive-ui";
+import { IconPencil, IconCheck, IconSparkles, IconTrash } from "@tabler/icons-vue";
 import { useChatStore } from "../stores/chat";
 import { useRouter } from "vue-router";
 import { ref, nextTick } from "vue";
@@ -109,7 +109,7 @@ function hasMessages(conversationId: string): boolean {
               class="icon-btn"
             >
               <template #icon>
-                <NIcon size="22"><Check /></NIcon>
+                <IconCheck :size="22" />
               </template>
             </NButton>
           </div>
@@ -133,7 +133,7 @@ function hasMessages(conversationId: string): boolean {
                 class="icon-btn"
               >
                 <template #icon>
-                  <NIcon size="18"><Pencil /></NIcon>
+                  <IconPencil :size="18" />
                 </template>
               </NButton>
               <NButton
@@ -146,7 +146,7 @@ function hasMessages(conversationId: string): boolean {
                 class="icon-btn"
               >
                 <template #icon>
-                  <NIcon size="18"><Wand /></NIcon>
+                  <IconSparkles :size="18" />
                 </template>
               </NButton>
               <NButton
@@ -157,7 +157,7 @@ function hasMessages(conversationId: string): boolean {
                 class="icon-btn icon-btn-delete"
               >
                 <template #icon>
-                  <NIcon size="18"><Trash /></NIcon>
+                  <IconTrash :size="18" />
                 </template>
               </NButton>
             </span>

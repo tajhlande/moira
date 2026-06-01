@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { NScrollbar, NIcon, NButton, NText, NSwitch } from "naive-ui";
-import { Plus, ChevronRight, ChevronDown, Tool } from "@vicons/tabler";
+import { NScrollbar, NButton, NText, NSwitch } from "naive-ui";
+import { IconPlus, IconChevronRight, IconChevronDown, IconTool } from "@tabler/icons-vue";
 import { useToolsStore } from "../stores/tools";
 import { useRouter } from "vue-router";
 import { ref, onMounted } from "vue";
@@ -44,7 +44,7 @@ async function onToggleEnabled(name: string, enabled: boolean) {
         style="margin-bottom: 16px"
       >
         <template #icon>
-          <NIcon><Plus /></NIcon>
+          <IconPlus />
         </template>
         Add Tool
       </NButton>
@@ -55,10 +55,8 @@ async function onToggleEnabled(name: string, enabled: boolean) {
         class="tool-group"
       >
         <div class="group-header" @click="toggleGroup(group)">
-          <NIcon :size="16" class="group-chevron">
-            <ChevronDown v-if="!collapsed.has(group)" />
-            <ChevronRight v-else />
-          </NIcon>
+          <IconChevronDown v-if="!collapsed.has(group)" :size="16" class="group-chevron" />
+          <IconChevronRight v-else :size="16" class="group-chevron" />
           <NText strong>{{ tools[0]?.groupDisplayName || group }}</NText>
           <NText depth="3" class="group-count">({{ tools.length }})</NText>
         </div>
@@ -71,9 +69,7 @@ async function onToggleEnabled(name: string, enabled: boolean) {
               { active: store.selectedToolName === tool.name },
             ]"
           >
-            <NIcon :size="16" class="tool-icon">
-              <Tool />
-            </NIcon>
+            <IconTool :size="16" class="tool-icon" />
             <span class="tool-name" @click="selectTool(tool.name)">{{
               tool.name
             }}</span>

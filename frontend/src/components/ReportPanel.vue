@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { NButton, NIcon } from "naive-ui";
-import { Copy, CircleCheck } from "@vicons/tabler";
+import { NButton } from "naive-ui";
+import { IconCopy, IconCircleCheck } from "@tabler/icons-vue";
 import type { ResearchReport } from "../api/client";
 import MarkdownContent from "./MarkdownContent.vue";
 import "./workflow-artifacts.css";
@@ -62,10 +62,8 @@ async function copyFullReport() {
         @click="copyAnswer"
       >
         <template #icon>
-          <NIcon size="14">
-            <Copy v-if="!copiedAnswer" />
-            <CircleCheck v-else />
-          </NIcon>
+          <IconCopy v-if="!copiedAnswer" :size="14" />
+          <IconCircleCheck v-else :size="14" />
         </template>
       </NButton>
     </div>
@@ -121,10 +119,8 @@ async function copyFullReport() {
         @click="copyFullReport"
       >
         <template #icon>
-          <NIcon size="14">
-            <Copy v-if="!copiedFull" />
-            <CircleCheck v-else />
-          </NIcon>
+          <IconCopy v-if="!copiedFull" :size="14" />
+          <IconCircleCheck v-else :size="14" />
         </template>
       </NButton>
     </div>

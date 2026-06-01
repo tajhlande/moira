@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { NCollapse, NCollapseItem, NIcon } from "naive-ui";
+import { NCollapse, NCollapseItem } from "naive-ui";
 import {
-  CircleCheck,
-  CircleX,
-  ChevronRight,
-  ChevronDown,
-  Tool,
-} from "@vicons/tabler";
+  IconCircleCheck,
+  IconCircleX,
+  IconChevronRight,
+  IconChevronDown,
+  IconTool,
+  IconRestore,
+} from "@tabler/icons-vue";
 import type { WorkflowRunInfo, ExecutionStep } from "../api/client";
 import StepDetailContent from "./StepDetailContent.vue";
 import ReportPanel from "./ReportPanel.vue";
@@ -42,6 +43,14 @@ function toolCallCount(step: ExecutionStep): number {
   return 0;
 }
 
+function isRetryBranch(step: ExecutionStep): boolean {
+  if (step.node !== "verification" || step.status !== "completed") return false;
+  const so = step.detail?.structured_output as
+    | Record<string, unknown>
+    | undefined;
+  return so?.outcome === "retry";
+}
+
 function formatElapsed(ms: number | undefined): string {
   if (ms === undefined || ms === null) return "";
   const totalSec = Math.floor(ms / 1000);
@@ -56,25 +65,21 @@ function formatElapsed(ms: number | undefined): string {
     <div v-if="run.execution_steps.length > 0" class="steps-container">
       <div v-for="(step, si) in run.execution_steps" :key="'rs-' + si">
         <div :class="['step-row', step.status]">
-          <NIcon v-if="step.status === 'completed'" :size="16" color="#18a058">
-            <CircleCheck />
-          </NIcon>
-          <NIcon v-else :size="16" color="#d03050">
-            <CircleX />
-          </NIcon>
+          <IconRestore v-if="isRetryBranch(step)" :size="16" class="retry-branch-icon" />
+          <IconCircleCheck v-else-if="step.status === 'completed'" :size="16" class="step-completed-icon" />
+          <IconCircleX v-else :size="16" class="step-error-icon" />
           <span class="step-label">{{ step.label }}</span>
           <span v-if="toolCallCount(step) > 0" class="step-tool-indicators">
             <template v-if="toolCallCount(step) <= 10">
-              <NIcon
+              <IconTool
                 v-for="ti in toolCallCount(step)"
                 :key="ti"
                 :size="13"
                 class="tool-indicator-icon"
-                ><Tool
-              /></NIcon>
+              />
             </template>
             <template v-else>
-              <NIcon :size="13" class="tool-indicator-icon"><Tool /></NIcon>
+              <IconTool :size="13" class="tool-indicator-icon" />
               <span class="tool-indicator-count"
                 >&times;{{ toolCallCount(step) }}</span
               >
@@ -99,10 +104,8 @@ function formatElapsed(ms: number | undefined): string {
             class="step-toggle"
             @click="toggleStep(si)"
           >
-            <NIcon :size="14">
-              <ChevronDown v-if="expandedSteps.has(si)" />
-              <ChevronRight v-else />
-            </NIcon>
+            <IconChevronDown v-if="expandedSteps.has(si)" :size="14" />
+            <IconChevronRight v-else :size="14" />
           </button>
           <span v-else class="step-toggle-placeholder" />
         </div>

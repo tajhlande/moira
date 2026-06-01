@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { NButton, NIcon } from "naive-ui";
-import { MessageCircle, Tools, Settings } from "@vicons/tabler";
+import { NButton } from "naive-ui";
+import { IconMessage, IconTools, IconSettings } from "@tabler/icons-vue";
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
@@ -19,14 +19,14 @@ interface NavItem {
 const items: NavItem[] = [
   {
     mode: "conversations",
-    icon: MessageCircle,
+    icon: IconMessage,
     label: "Conversations",
     route: { name: "new-conversation" },
   },
-  { mode: "tools", icon: Tools, label: "Tools", route: { name: "tools" } },
+  { mode: "tools", icon: IconTools, label: "Tools", route: { name: "tools" } },
   {
     mode: "settings",
-    icon: Settings,
+    icon: IconSettings,
     label: "Settings",
     route: { name: "settings" },
   },
@@ -58,7 +58,7 @@ function navigate(item: NavItem) {
       @click="navigate(item)"
     >
       <template #icon>
-        <NIcon :size="22"><component :is="item.icon" /></NIcon>
+        <component :is="item.icon" :size="22" />
       </template>
     </NButton>
   </div>
