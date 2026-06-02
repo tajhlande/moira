@@ -19,3 +19,5 @@
 | **phase3-ui-prep.md**             | Phase 3 preparation: multi-view navigation framework, tool catalog UI, and standard tool definitions.                              |
 | **tool-secrets-and-spec.md**      | Plan for encrypted secrets storage on tools and spec-from-implementation (config/secret schemas from tool classes, not DB).        |
 | **draft-retry-routing.md**        | Plan for routing verification failures directly to draft synthesis (bypassing research) for synthesis-specific problems (cases 7-8). |
+| **kagi-web-search-plan.md**      | Plan for the Kagi web search tool — first tool to use the credential store, using the Kagi Search API with Bearer auth. |
+| **tool-metrics-plan.md**         | Plan for tool call metrics — rolling counters with hourly buckets, call_type, latency min/max/sum. Cost computed at query time. |
