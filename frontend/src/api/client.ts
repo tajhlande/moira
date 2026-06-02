@@ -83,6 +83,10 @@ export interface ConversationDetail {
   runs: WorkflowRunInfo[];
 }
 
+export interface RunSettings {
+  budget?: number;
+}
+
 export interface ModelSelection {
   endpoint: string;
   model: string;
@@ -125,12 +129,16 @@ export const api = {
       method: "DELETE",
     }),
 
-  startRun: (conversationId: string, content: string) =>
+  startRun: (
+    conversationId: string,
+    content: string,
+    settings?: RunSettings,
+  ) =>
     request<{ run_id: string; user_message_id: number }>(
       `/conversations/${conversationId}/messages`,
       {
         method: "POST",
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, settings }),
       },
     ),
 

@@ -10,6 +10,7 @@ import {
   type ResearchReport,
   type ToolExecution,
   type VerificationAttempt,
+  type RunSettings,
 } from "../api/client";
 
 const STAGE_LABELS: Record<string, string> = {
@@ -44,6 +45,8 @@ export const useChatStore = defineStore("chat", () => {
   const verificationAttempts = ref(0);
   const activeUserMessageId = ref<number | null>(null);
   const totalElapsedMs = ref<number | null>(null);
+
+  const runSettings = ref<RunSettings>({ budget: 50 });
 
   async function fetchConversations() {
     try {
@@ -120,6 +123,7 @@ export const useChatStore = defineStore("chat", () => {
       const { user_message_id } = await api.startRun(
         currentConversationId.value,
         content,
+        runSettings.value,
       );
 
       // Fire title generation after the user message is persisted — don't
@@ -415,6 +419,7 @@ export const useChatStore = defineStore("chat", () => {
     verificationAttemptData,
     activeUserMessageId,
     totalElapsedMs,
+    runSettings,
     fetchConversations,
     startNewChat,
     selectConversation,

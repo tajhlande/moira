@@ -59,6 +59,11 @@ async def send_message(
     config = _config()
     budget_limit = config.budget.default_limit
 
+    settings = body.get("settings") or {}
+    raw_budget = settings.get("budget")
+    if isinstance(raw_budget, (int, float)):
+        budget_limit = max(35, min(150, int(raw_budget)))
+
     # Check for prior report to carry forward as context
     messages = await conversations.get_messages(conversation_id)
     prior_report = None

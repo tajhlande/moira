@@ -8,6 +8,7 @@ import {
   NCollapse,
   NCollapseItem,
   NText,
+  NSlider,
 } from "naive-ui";
 import {
   IconCircleCheck,
@@ -18,6 +19,7 @@ import {
   IconChevronDown,
   IconTool,
   IconRestore,
+  IconAdjustments,
 } from "@tabler/icons-vue";
 import { useRoute, useRouter } from "vue-router";
 import { useChatStore } from "../stores/chat";
@@ -34,6 +36,7 @@ const toolsStore = useToolsStore();
 const route = useRoute();
 const router = useRouter();
 const inputText = ref("");
+const showSettings = ref(false);
 
 // Track which steps are expanded
 const expandedSteps = ref<Set<number>>(new Set());
@@ -381,6 +384,25 @@ async function copyMessage(content: string, index: number) {
     <NAlert v-if="store.error" type="error" style="margin: 8px 40px" closable>
       {{ store.error }}
     </NAlert>
+    <div :class="['settings-tray', { open: showSettings }]">
+      <div class="settings-tray-inner">
+        <div class="settings-row">
+          <label class="settings-label">Budget</label>
+          <NSlider
+            :value="store.runSettings.budget ?? 50"
+            :min="35"
+            :max="150"
+            :step="1"
+            :tooltip="false"
+            style="flex: 1"
+            @update:value="
+              (v: number) => (store.runSettings.budget = v)
+            "
+          />
+          <span class="settings-value">{{ store.runSettings.budget ?? 50 }}</span>
+        </div>
+      </div>
+    </div>
     <div class="input-area">
       <NInput
         v-model:value="inputText"
@@ -390,6 +412,17 @@ async function copyMessage(content: string, index: number) {
         @keyup.enter="send"
         :disabled="store.loading"
       />
+      <NButton
+        quaternary
+        circle
+        :type="showSettings ? 'primary' : 'default'"
+        @click="showSettings = !showSettings"
+        title="Run settings"
+      >
+        <template #icon>
+          <IconAdjustments :size="18" />
+        </template>
+      </NButton>
       <NButton
         type="primary"
         @click="send"
@@ -478,5 +511,49 @@ async function copyMessage(content: string, index: number) {
   box-sizing: border-box;
   padding: 0 40px;
   border-top: 1px solid var(--moira-border, #e0e0e0);
+}
+
+.settings-tray {
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition: max-height 200ms ease, opacity 150ms ease, padding 200ms ease;
+  padding: 0 40px;
+  border-top: 1px solid transparent;
+}
+
+.settings-tray.open {
+  max-height: 64px;
+  opacity: 1;
+  padding: 12px 40px;
+  border-top-color: var(--moira-border, #e0e0e0);
+}
+
+.settings-tray-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 320px;
+}
+
+.settings-label {
+  font-size: 0.85em;
+  font-weight: 500;
+  opacity: 0.7;
+  min-width: 50px;
+}
+
+.settings-value {
+  font-size: 0.85em;
+  font-weight: 600;
+  min-width: 28px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 </style>
