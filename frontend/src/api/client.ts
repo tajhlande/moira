@@ -102,6 +102,14 @@ export interface ModelsResponse {
   assignments: ModelAssignments;
 }
 
+export interface CredentialInfo {
+  owner: string;
+  name: string;
+  encryption_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export const api = {
   health: () => request<{ status: string }>("/health"),
 
@@ -164,6 +172,29 @@ export const api = {
 
   getToolSpec: (name: string) =>
     request<{ config_schema: Record<string, unknown> }>(`/tools/${name}/spec`),
+
+  listCredentials: (owner?: string) => {
+    const params = owner ? `?owner=${encodeURIComponent(owner)}` : "";
+    return request<{ credentials: CredentialInfo[] }>(`/credentials${params}`);
+  },
+
+  createCredential: (name: string, value: Record<string, unknown>, owner?: string) =>
+    request<CredentialInfo>("/credentials", {
+      method: "POST",
+      body: JSON.stringify({ name, value, ...(owner ? { owner } : {}) }),
+    }),
+
+  getCredential: (name: string, owner?: string) => {
+    const params = owner ? `?owner=${encodeURIComponent(owner)}` : "";
+    return request<CredentialInfo>(`/credentials/${name}${params}`);
+  },
+
+  deleteCredential: (name: string, owner?: string) => {
+    const params = owner ? `?owner=${encodeURIComponent(owner)}` : "";
+    return request<{ status: string }>(`/credentials/${name}${params}`, {
+      method: "DELETE",
+    }),
+  },
 };
 
 export interface ToolGroupInfo {

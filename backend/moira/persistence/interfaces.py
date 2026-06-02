@@ -49,6 +49,17 @@ class WorkflowRun:
     total_elapsed_ms: int = 0
 
 
+@dataclass
+class CredentialRow:
+    owner: str
+    name: str
+    encrypted_data: str
+    salt: str
+    encryption_version: int
+    created_at: str
+    updated_at: str
+
+
 class ConversationRepository(ABC):
     @abstractmethod
     async def create_conversation(self, user_id: str, title: str) -> Conversation: ...
@@ -109,3 +120,24 @@ class ToolRepository(ABC):
 
     @abstractmethod
     async def save_group(self, group) -> None: ...
+
+
+class CredentialRepository(ABC):
+    @abstractmethod
+    async def get_by_name(self, owner: str, name: str) -> CredentialRow | None: ...
+
+    @abstractmethod
+    async def save(
+        self,
+        owner: str,
+        name: str,
+        encrypted_data: str,
+        salt: str,
+        encryption_version: int,
+    ) -> None: ...
+
+    @abstractmethod
+    async def delete(self, owner: str, name: str) -> bool: ...
+
+    @abstractmethod
+    async def list_all(self, owner: str | None = None) -> list[CredentialRow]: ...

@@ -333,3 +333,49 @@ async def _sync_tool_to_index(tool) -> None:
         )
     else:
         await embedding_repo.delete(tool.name)
+
+
+def _credential_service():
+    from moira.services.credentials.credential_service import CredentialService
+
+    return cast(CredentialService, service_provider("credential_service"))
+
+
+@router.get("/credentials")
+async def list_credentials(owner: str | None = None):
+    svc = _credential_service()
+    creds = await svc.list_credentials(owner=owner)
+    return {"credentials": [c.to_dict() for c in creds]}
+
+
+@router.post("/credentials", status_code=201)
+async def create_credential(body: dict[str, Any]):
+    name = body.get("name")
+    value = body.get("value")
+    owner = body.get("owner")
+    if not name or not isinstance(name, str):
+        raise HTTPException(status_code=400, detail="name is required")
+    if not value or not isinstance(value, dict):
+        raise HTTPException(status_code=400, detail="value is required")
+    svc = _credential_service()
+    info = await svc.store_credential(name=name, value=value, owner=owner)
+    return info.to_dict()
+
+
+@router.get("/credentials/{name}")
+async def get_credential(name: str, owner: str | None = None):
+    svc = _credential_service()
+    creds = await svc.list_credentials(owner=owner)
+    for c in creds:
+        if c.name == name:
+            return c.to_dict()
+    raise HTTPException(status_code=404, detail="Credential not found")
+
+
+@router.delete("/credentials/{name}")
+async def delete_credential(name: str, owner: str | None = None):
+    svc = _credential_service()
+    deleted = await svc.delete_credential(name=name, owner=owner)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Credential not found")
+    return {"status": "deleted"}

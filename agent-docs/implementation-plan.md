@@ -409,6 +409,12 @@ Each phase is a vertical spike: it touches the backend, frontend, persistence, a
    - `ProjectRepository`: create, get, list, update, delete
    - `GET/POST /api/projects`, conversations scoped to project
 
+8. **Service lifecycle interface**
+   - Introduce `Service` base class with `async start()` / `async stop()` methods
+   - Services with lifecycle needs (`InferenceClient`, `CredentialService`, checkpointer wrapper) subclass it
+   - `init_services()` calls `start()` on each, `shutdown_services()` iterates and calls `stop()`
+   - `service_setup.py` becomes pure orchestration — no service-specific implementation details
+
 ### Frontend
 
 1. **Parallel branch visualization**

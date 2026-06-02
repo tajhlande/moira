@@ -67,10 +67,12 @@ class BaseTool(ABC):
     tool_description: str = ""
     tool_argument_schema: dict[str, Any] = {}
     tool_group: str = ""
-    # JSON Schema for config values stored in ToolDefinition.config.
-    # The frontend uses this to render a configuration form on the tool
-    # detail page. Tools with no config leave this empty.
+    # JSON Schema for config values stored in ToolDefinition.config, and
+    # for secret values stored in the credential store. The frontend uses
+    # these to render configuration and credential forms on the tool detail
+    # page. Tools with no config or secret requirements leave these empty.
     tool_config_schema: dict[str, Any] = {}
+    tool_secret_schema: dict[str, Any] = {}
 
     def __init__(self, definition: ToolDefinition):
         self.definition = definition
@@ -85,6 +87,7 @@ class BaseTool(ABC):
         this to render configuration forms on the tool detail page."""
         return {
             "config_schema": cls.tool_config_schema,
+            "secret_schema": cls.tool_secret_schema,
         }
 
     @classmethod

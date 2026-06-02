@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import cast
 
 from moira.config import MoiraConfig, resolve_db_path, resolve_lancedb_path
 from moira.inference.client import InferenceClient
@@ -18,6 +19,8 @@ logger = logging.getLogger(__name__)
 # Known service keys:
 #   "conversation_repository"               -> ConversationRepository
 #   "model_preferences_repository"         -> ModelPreferencesRepository
+#   "credential_repository"                -> CredentialRepository
+#   "credential_service"                   -> CredentialService
 #   "model_registry"                       -> ModelRegistry
 #   "inference_client:{endpoint_name}"     -> InferenceClient
 #   "embedding_provider"                   -> EmbeddingProvider
@@ -54,11 +57,7 @@ async def init_services(
     conversation_repo: ConversationRepository | None = None,
     prefs_repo: ModelPreferencesRepository | None = None,
 ) -> None:
-    """Create and register all application services. Accepts optional
-    pre-built repositories for testing; if omitted, SQLite implementations
-    are created from config. Partial injection is supported: if only one
-    repo is provided, the other is still created from SQLite, both sharing
-    the same db_path."""
+    """Create and register all application services."""
     logger.info("Initializing services")
     from moira.persistence.sqlite.schema import run_migrations
 
@@ -77,6 +76,26 @@ async def init_services(
 
     _services["conversation_repository"] = conversation_repo
     _services["model_preferences_repository"] = prefs_repo
+
+    # --- Credential service ---
+    from moira.persistence.sqlite.repos import SqliteCredentialRepository
+    from moira.services.credentials.credential_service import CredentialService
+    from moira.services.credentials.secrets import get_master_key, is_encryption_configured
+
+    cred_repo = SqliteCredentialRepository(db_path)
+    _services["credential_repository"] = cred_repo
+
+    master_key = get_master_key()
+    if is_encryption_configured():
+        logger.info("MOIRA_SECRETS_KEY configured — credential encryption enabled")
+    else:
+        logger.warning("MOIRA_SECRETS_KEY not configured")
+
+    try:
+        cred_service = CredentialService(repo=cred_repo, master_key=master_key)
+        _services["credential_service"] = cred_service
+    except Exception as e:
+        logger.error("Credential service not available: %s", e)
 
     clients: dict[str, InferenceClient] = {}
     for ep in config.inference.providers:
@@ -207,7 +226,8 @@ async def shutdown_services() -> None:
     from moira.inference.client import InferenceClient
 
     # Clean up the async aiosqlite connection used by the checkpoint saver.
-    conn = _services.pop("_checkpointer_conn", None)
+    import aiosqlite
+    conn = cast(aiosqlite.Connection, _services.pop("_checkpointer_conn", None))
     if conn is not None:
         try:
             await conn.close()
