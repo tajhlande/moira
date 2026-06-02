@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 #   "tool_catalog"                         -> ToolCatalog
 #   "tool_discovery"                       -> ToolDiscovery
 #   "tool_executor"                        -> ToolExecutor
+#   "tool_metrics_repository"              -> ToolMetricsRepository
 #   "tool_embedding_repo"                  -> ToolEmbeddingRepository
 #   "research_graph"                       -> CompiledStateGraph
 #   "config"                               -> MoiraConfig
@@ -182,9 +183,13 @@ async def init_services(
     _services["tool_discovery"] = discovery
 
     # --- Phase 2: Tool executor ---
+    from moira.persistence.sqlite.repos import SqliteToolMetricsRepository
     from moira.tools.executor import ToolExecutor
 
-    executor = ToolExecutor()
+    metrics_repo = SqliteToolMetricsRepository(db_path)
+    _services["tool_metrics_repository"] = metrics_repo
+
+    executor = ToolExecutor(metrics_repo=metrics_repo)
     executor.register_tools(catalog.get_all())
     _services["tool_executor"] = executor
 

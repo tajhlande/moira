@@ -193,7 +193,7 @@ export const api = {
     const params = owner ? `?owner=${encodeURIComponent(owner)}` : "";
     return request<{ status: string }>(`/credentials/${name}${params}`, {
       method: "DELETE",
-    }),
+    });
   },
 };
 

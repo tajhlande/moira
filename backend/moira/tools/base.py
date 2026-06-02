@@ -107,5 +107,13 @@ class BaseTool(ABC):
         defaults.update(overrides)
         return ToolDefinition(**defaults)
 
+    def report_call_type(self, args: dict[str, Any], result: "ToolResult") -> str | None:
+        """Return a call_type string for metrics bucketing, or None to use
+        the default ("default"). Subclasses override this to classify
+        calls by pricing tier or usage category (e.g., "search",
+        "summarize", "search+extract"). Cost estimation is the
+        tool's responsibility, not the metrics layer's."""
+        return None
+
     @abstractmethod
     async def execute(self, args: dict[str, Any]) -> ToolResult: ...

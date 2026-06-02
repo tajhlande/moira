@@ -1,8 +1,10 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from moira.tools.base import BaseTool, ToolDefinition, ToolResult
+from moira.tools.metrics import ToolMetricsRepository
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +23,11 @@ class ToolExecutor:
         self,
         timeout: float = DEFAULT_TIMEOUT,
         max_retries: int = DEFAULT_MAX_RETRIES,
+        metrics_repo: ToolMetricsRepository | None = None,
     ):
         self._timeout = timeout
         self._max_retries = max_retries
+        self._metrics_repo = metrics_repo
         self._tool_instances: dict[str, BaseTool] = {}
 
     def register_tool(self, tool: BaseTool) -> None:
@@ -65,22 +69,26 @@ class ToolExecutor:
     ) -> ToolResult:
         if allowed_tools is not None and tool_name not in allowed_tools:
             logger.warning("Tool '%s' blocked — not in allowed set", tool_name)
-            return ToolResult(
+            result = ToolResult(
                 tool_name=tool_name,
                 output="",
                 success=False,
                 error=f"Tool '{tool_name}' is not available for this run",
             )
+            await self._record_metrics(tool_name, args, result)
+            return result
 
         tool = self._tool_instances.get(tool_name)
         if tool is None:
             logger.error("Tool '%s' not found in executor", tool_name)
-            return ToolResult(
+            result = ToolResult(
                 tool_name=tool_name,
                 output="",
                 success=False,
                 error=f"Tool '{tool_name}' not found",
             )
+            await self._record_metrics(tool_name, args, result)
+            return result
 
         last_result = None
         for attempt in range(self._max_retries + 1):
@@ -90,6 +98,7 @@ class ToolExecutor:
                     timeout=self._timeout,
                 )
                 if result.success:
+                    await self._record_metrics(tool_name, args, result)
                     return result
                 last_result = result
                 if attempt < self._max_retries:
@@ -103,24 +112,58 @@ class ToolExecutor:
             except asyncio.TimeoutError:
                 elapsed = self._timeout
                 logger.error("Tool '%s' timed out after %.1fs", tool_name, elapsed)
-                return ToolResult(
+                result = ToolResult(
                     tool_name=tool_name,
                     output="",
                     success=False,
                     duration_ms=int(elapsed * 1000),
                     error=f"Timeout after {elapsed}s",
                 )
+                await self._record_metrics(tool_name, args, result)
+                return result
             except Exception as e:
                 logger.error("Tool '%s' unexpected error: %s", tool_name, e)
-                return ToolResult(
+                result = ToolResult(
                     tool_name=tool_name,
                     output="",
                     success=False,
                     error=str(e),
                 )
+                await self._record_metrics(tool_name, args, result)
+                return result
 
         assert last_result is not None
+        await self._record_metrics(tool_name, args, last_result)
         return last_result
+
+    async def _record_metrics(
+        self, tool_name: str, args: dict, result: ToolResult
+    ) -> None:
+        """Record metrics for a tool call. Silently skipped when no
+        metrics_repo is configured. Exceptions from report_call_type() are
+        swallowed so metrics never break execution."""
+        if self._metrics_repo is None:
+            return
+        call_type = "default"
+        tool = self._tool_instances.get(tool_name)
+        if tool is not None:
+            try:
+                reported = tool.report_call_type(args, result)
+                if reported is not None:
+                    call_type = reported
+            except Exception:
+                pass
+        period_hour = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:00")
+        try:
+            await self._metrics_repo.record_call(
+                tool_name=tool_name,
+                call_type=call_type,
+                period_hour=period_hour,
+                success=result.success,
+                duration_ms=result.duration_ms,
+            )
+        except Exception:
+            logger.debug("Failed to record metrics for %s", tool_name, exc_info=True)
 
     async def execute_batch(
         self,
