@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
+from moira.tools.base import ToolDefinition
+
 DEFAULT_USER_ID = "default"
 
 
@@ -101,13 +103,13 @@ class ModelPreferencesRepository(ABC):
 
 class ToolRepository(ABC):
     @abstractmethod
-    async def get_all_tools(self) -> list: ...
+    async def get_all_tools(self) -> list[ToolDefinition]: ...
 
     @abstractmethod
-    async def get_tool(self, name: str): ...
+    async def get_tool(self, name: str) -> ToolDefinition | None: ...
 
     @abstractmethod
-    async def save_tool(self, tool) -> None: ...
+    async def save_tool(self, tool: ToolDefinition) -> None: ...
 
     @abstractmethod
     async def delete_tool(self, name: str) -> bool: ...

@@ -1,10 +1,9 @@
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from moira.persistence.interfaces import CredentialRepository
+from moira.persistence.interfaces import CredentialRepository
 
 from moira.persistence.interfaces import CredentialRow
 from moira.services.credentials.credential_types import (
