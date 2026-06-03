@@ -6,6 +6,7 @@ import { useChatStore } from "../stores/chat";
 import { useToolsStore } from "../stores/tools";
 import ConversationSidebar from "./ConversationSidebar.vue";
 import ToolSidebar from "./ToolSidebar.vue";
+import SettingsSidebar from "./SettingsSidebar.vue";
 import NavTray from "./NavTray.vue";
 
 const route = useRoute();
@@ -78,11 +79,7 @@ onMounted(() => {
         <div class="sidebar-mode-label">{{ modeLabel }}</div>
         <ConversationSidebar v-if="sidebarMode === 'conversations'" />
         <ToolSidebar v-else-if="sidebarMode === 'tools'" />
-        <NScrollbar v-else>
-          <div style="padding: 16px">
-            <NText depth="3">No sidebar content for this view.</NText>
-          </div>
-        </NScrollbar>
+        <SettingsSidebar v-else-if="sidebarMode === 'settings'" />
       </div>
       <NavTray />
     </div>

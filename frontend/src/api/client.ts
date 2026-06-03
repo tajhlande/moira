@@ -110,6 +110,18 @@ export interface CredentialInfo {
   updated_at: string;
 }
 
+export interface ToolMetricsRow {
+  tool_name: string;
+  call_type: string;
+  period_hour: string;
+  call_count: number;
+  success_count: number;
+  error_count: number;
+  aggregate_duration_ms: number;
+  low_duration_ms: number;
+  high_duration_ms: number;
+}
+
 export const api = {
   health: () => request<{ status: string }>("/health"),
 
@@ -137,11 +149,7 @@ export const api = {
       method: "DELETE",
     }),
 
-  startRun: (
-    conversationId: string,
-    content: string,
-    settings?: RunSettings,
-  ) =>
+  startRun: (conversationId: string, content: string, settings?: RunSettings) =>
     request<{ run_id: string; user_message_id: number }>(
       `/conversations/${conversationId}/messages`,
       {
@@ -178,7 +186,11 @@ export const api = {
     return request<{ credentials: CredentialInfo[] }>(`/credentials${params}`);
   },
 
-  createCredential: (name: string, value: Record<string, unknown>, owner?: string) =>
+  createCredential: (
+    name: string,
+    value: Record<string, unknown>,
+    owner?: string,
+  ) =>
     request<CredentialInfo>("/credentials", {
       method: "POST",
       body: JSON.stringify({ name, value, ...(owner ? { owner } : {}) }),
@@ -194,6 +206,16 @@ export const api = {
     return request<{ status: string }>(`/credentials/${name}${params}`, {
       method: "DELETE",
     });
+  },
+
+  getToolMetrics: (start?: string, end?: string) => {
+    const params = new URLSearchParams();
+    if (start) params.set("start", start);
+    if (end) params.set("end", end);
+    const qs = params.toString();
+    return request<{ metrics: ToolMetricsRow[] }>(
+      `/metrics${qs ? `?${qs}` : ""}`,
+    );
   },
 };
 

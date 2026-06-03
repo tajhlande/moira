@@ -40,9 +40,24 @@ const router = createRouter({
     },
     {
       path: "/settings",
-      name: "settings",
       component: () => import("../components/SettingsView.vue"),
       meta: { sidebar: "settings" },
+      children: [
+        {
+          path: "",
+          redirect: { name: "settings-system" },
+        },
+        {
+          path: "system",
+          name: "settings-system",
+          component: () => import("../components/SettingsSystem.vue"),
+        },
+        {
+          path: "analytics",
+          name: "settings-analytics",
+          component: () => import("../components/SettingsAnalytics.vue"),
+        },
+      ],
     },
   ],
 });

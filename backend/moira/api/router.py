@@ -379,3 +379,57 @@ async def delete_credential(name: str, owner: str | None = None):
     if not deleted:
         raise HTTPException(status_code=404, detail="Credential not found")
     return {"status": "deleted"}
+
+
+def _metrics_repo():
+    from moira.tools.metrics import ToolMetricsRepository
+
+    return cast(ToolMetricsRepository, service_provider("tool_metrics_repository"))
+
+
+@router.get("/metrics")
+async def get_metrics(
+    start: str | None = None,
+    end: str | None = None,
+):
+    """Return tool call metrics aggregated by tool name. Returns the top 20
+    tools by aggregate call count over the requested period. start/end are
+    ISO date strings (YYYY-MM-DD) converted to period_hour range."""
+    from collections import defaultdict
+
+    from moira.tools.metrics import ToolMetricsRow
+
+    repo = _metrics_repo()
+
+    period_start = f"{start}T00:00" if start else None
+    period_end = f"{end}T23:59" if end else None
+
+    rows: list[ToolMetricsRow] = await repo.get_metrics(
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    tool_counts: dict[str, int] = defaultdict(int)
+    for r in rows:
+        tool_counts[r.tool_name] += r.call_count
+
+    top_20 = sorted(tool_counts.keys(), key=lambda k: tool_counts[k], reverse=True)[:20]
+
+    filtered = [r for r in rows if r.tool_name in top_20]
+
+    return {
+        "metrics": [
+            {
+                "tool_name": r.tool_name,
+                "call_type": r.call_type,
+                "period_hour": r.period_hour,
+                "call_count": r.call_count,
+                "success_count": r.success_count,
+                "error_count": r.error_count,
+                "aggregate_duration_ms": r.aggregate_duration_ms,
+                "low_duration_ms": r.low_duration_ms,
+                "high_duration_ms": r.high_duration_ms,
+            }
+            for r in filtered
+        ]
+    }
