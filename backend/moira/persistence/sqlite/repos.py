@@ -36,7 +36,7 @@ class SqliteConversationRepository(ConversationRepository):
     # and foreign_keys are set per-connection because PRAGMAs are
     # connection-scoped. If latency becomes an issue, consider aiosqlite.
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path, timeout=10)
+        conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -225,7 +225,7 @@ class SqliteModelPreferencesRepository(ModelPreferencesRepository):
         self._db_path = db_path
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path, timeout=10)
+        conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -278,7 +278,7 @@ class SqliteToolRepository(ToolRepository):
         self._db_path = db_path
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path, timeout=10)
+        conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -389,7 +389,7 @@ class SqliteCredentialRepository(CredentialRepository):
         self._db_path = db_path
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path, timeout=10)
+        conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -489,7 +489,7 @@ class SqliteToolMetricsRepository(ToolMetricsRepository):
         self._db_path = db_path
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path, timeout=10)
+        conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")

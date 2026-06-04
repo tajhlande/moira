@@ -366,7 +366,14 @@ class ActiveRun:
                 # Persist the step to the workflow_steps table. Done
                 # before appending to the in-memory list so the row is
                 # written even if a subsequent error interrupts the run.
-                asyncio.create_task(self._persist_step(dict(self._current_step)))
+                from moira.persistence.write_queue import AsyncWriteQueue
+
+                write_queue = cast(
+                    AsyncWriteQueue,
+                    self._run_manager._get_service("write_queue"),
+                )
+                step_copy = dict(self._current_step)
+                write_queue.enqueue(lambda: self._persist_step(step_copy))
                 self.execution_steps.append(self._current_step)
                 self._current_step = None
             payload["elapsed_ms"] = elapsed_ms

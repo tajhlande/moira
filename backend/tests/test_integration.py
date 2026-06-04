@@ -249,6 +249,12 @@ async def app_with_fake_inference(tmp_dir):
     inf_metrics_repo = SqliteInferenceMetricsRepository(db_path)
     _services["inference_metrics_repository"] = inf_metrics_repo
 
+    from moira.persistence.write_queue import AsyncWriteQueue
+
+    write_queue = AsyncWriteQueue()
+    await write_queue.start()
+    _services["write_queue"] = write_queue
+
     # Start the fake client (creates the httpx client with mock transport)
     await fake_client.start()
 
@@ -317,8 +323,12 @@ async def app_with_fake_inference(tmp_dir):
     ) as client:
         yield client, transport
 
-    # Teardown: MockTransport doesn't need explicit cleanup since it
-    # has no real connections. Just clear the service registry.
+    # Teardown: stop the write queue and clear services.
+    from moira.persistence.write_queue import AsyncWriteQueue
+
+    wq = _services.get("write_queue")
+    if isinstance(wq, AsyncWriteQueue):
+        await wq.stop()
     _services.clear()
 
 

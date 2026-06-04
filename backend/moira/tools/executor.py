@@ -1,8 +1,9 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
+from moira.persistence.write_queue import AsyncWriteQueue
 from moira.tools.base import BaseTool, ToolDefinition, ToolResult
 from moira.tools.metrics import ToolMetricsRepository
 
@@ -155,15 +156,31 @@ class ToolExecutor:
                 pass
         period_hour = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:00")
         try:
-            await self._metrics_repo.record_call(
-                tool_name=tool_name,
-                call_type=call_type,
-                period_hour=period_hour,
-                success=result.success,
-                duration_ms=result.duration_ms,
+            from moira.service_setup import service_provider
+
+            write_queue = cast(AsyncWriteQueue, service_provider("write_queue"))
+            write_queue.enqueue(
+                lambda: self._metrics_repo.record_call( # type: ignore
+                    tool_name=tool_name,
+                    call_type=call_type,
+                    period_hour=period_hour,
+                    success=result.success,
+                    duration_ms=result.duration_ms,
+                )
             )
         except Exception:
-            logger.debug("Failed to record metrics for %s", tool_name, exc_info=True)
+            try:
+                await self._metrics_repo.record_call(
+                    tool_name=tool_name,
+                    call_type=call_type,
+                    period_hour=period_hour,
+                    success=result.success,
+                    duration_ms=result.duration_ms,
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to record metrics for %s", tool_name, exc_info=True
+                )
 
     async def execute_batch(
         self,

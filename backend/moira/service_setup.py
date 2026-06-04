@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 #   "workflow_step_repository"             -> WorkflowStepRepository
 #   "research_graph"                       -> CompiledStateGraph
 #   "config"                               -> MoiraConfig
-#
+#   "write_queue"                          -> AsyncWriteQueue
 # Returns object; callers must cast() to the expected type.
 # Type parameters were rejected due to Pylance/pyright inability to infer
 # from assignment context (TypeVar appears only once in signature).
@@ -75,6 +75,12 @@ async def init_services(
         conversation_repo = conversation_repo or SqliteConversationRepository(db_path)
         prefs_repo = prefs_repo or SqliteModelPreferencesRepository(db_path)
         logger.info("Created SQLite repositories at %s", db_path)
+
+    from moira.persistence.write_queue import AsyncWriteQueue
+
+    write_queue = AsyncWriteQueue()
+    await write_queue.start()
+    _services["write_queue"] = write_queue
 
     _services["conversation_repository"] = conversation_repo
     _services["model_preferences_repository"] = prefs_repo
@@ -234,11 +240,14 @@ async def init_services(
 
 
 async def shutdown_services() -> None:
-    # Only InferenceClient requires explicit async cleanup (closing the httpx
-    # connection pool). SQLite repos use per-call connections that close
-    # automatically via finally blocks. If connection pooling is added later,
-    # repos will need cleanup here as well.
     logger.info("Shutting down services")
+
+    from moira.persistence.write_queue import AsyncWriteQueue
+
+    write_queue = cast(AsyncWriteQueue | None, _services.pop("write_queue", None))
+    if write_queue is not None:
+        await write_queue.stop()
+
     from moira.inference.client import InferenceClient
 
     # Clean up the async aiosqlite connection used by the checkpoint saver.
