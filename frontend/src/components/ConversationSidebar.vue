@@ -85,7 +85,10 @@ function hasMessages(conversationId: string): boolean {
           :key="conversation.id"
           :class="[
             'conv-item',
-            { active: conversation.id === store.currentConversationId },
+            {
+              active: conversation.id === store.currentConversationId,
+              running: store.isConversationRunning(conversation.id),
+            },
           ]"
         >
           <div
@@ -187,6 +190,22 @@ function hasMessages(conversationId: string): boolean {
   background-color: var(--moira-border, #e0e0e0);
 }
 
+.conv-item.running {
+  background-image:
+    linear-gradient(90deg, #36ad6a 50%, transparent 50%),
+    linear-gradient(90deg, #36ad6a 50%, transparent 50%),
+    linear-gradient(0deg, #36ad6a 50%, transparent 50%),
+    linear-gradient(0deg, #36ad6a 50%, transparent 50%);
+  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  background-size: 16px 2px, 16px 2px, 2px 16px, 2px 16px;
+  background-position: 0 0, 100% 100%, 0 100%, 100% 0;
+  animation: border-dance 6s infinite linear;
+}
+
+.conv-item.running.active {
+  background-color: var(--moira-border, #e0e0e0);
+}
+
 .conv-row {
   display: flex;
   align-items: center;
@@ -225,5 +244,16 @@ function hasMessages(conversationId: string): boolean {
 
 .icon-btn-delete:hover {
   color: var(--n-error-color, #d03050);
+}
+</style>
+
+<style>
+@keyframes border-dance {
+  0% {
+    background-position: 0 0, 100% 100%, 0 100%, 100% 0;
+  }
+  100% {
+    background-position: 100% 0, 0 100%, 0 0, 100% 100%;
+  }
 }
 </style>

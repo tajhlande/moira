@@ -60,14 +60,16 @@ function onDragEnd() {
   document.body.style.userSelect = "";
 }
 
-onUnmounted(() => {
-  document.removeEventListener("mousemove", onDragMove);
-  document.removeEventListener("mouseup", onDragEnd);
-});
-
 onMounted(() => {
   store.fetchConversations();
   toolsStore.fetchTools();
+  store.connectGlobalEvents();
+});
+
+onUnmounted(() => {
+  document.removeEventListener("mousemove", onDragMove);
+  document.removeEventListener("mouseup", onDragEnd);
+  store.disconnectGlobalEvents();
 });
 </script>
 

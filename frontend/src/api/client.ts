@@ -174,6 +174,8 @@ export const api = {
   streamUrl: (conversationId: string) =>
     `${API_BASE}/conversations/${conversationId}/stream`,
 
+  eventsUrl: () => `${API_BASE}/events`,
+
   getModels: () => request<ModelsResponse>("/models"),
 
   setModels: (assignments: ModelAssignments) =>

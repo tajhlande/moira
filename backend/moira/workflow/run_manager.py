@@ -584,6 +584,42 @@ class RunManager:
     def __init__(self) -> None:
         self._active_runs: dict[str, ActiveRun] = {}
         self._conversation_runs: dict[str, str] = {}
+        self._global_subscribers: list[asyncio.Queue] = []
+
+    def _broadcast_global(self, event: dict) -> None:
+        """Push an event to all global subscribers (sidebar status listeners)."""
+        for queue in self._global_subscribers:
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                queue.get_nowait()
+                queue.put_nowait(event)
+
+    def active_conversation_ids(self) -> list[str]:
+        """Return conversation IDs that currently have running workflows."""
+        return list(self._conversation_runs.keys())
+
+    async def subscribe_global(self):
+        """Async iterator yielding global run_status events for the sidebar.
+        First replays current active runs, then yields live events."""
+        queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+        self._global_subscribers.append(queue)
+        try:
+            for cid in self.active_conversation_ids():
+                yield {
+                    "event": "run_status",
+                    "data": json.dumps(
+                        {"conversation_id": cid, "status": "running"}
+                    ),
+                }
+            while True:
+                event = await queue.get()
+                if event is _STREAM_END:
+                    break
+                yield event
+        finally:
+            if queue in self._global_subscribers:
+                self._global_subscribers.remove(queue)
 
     async def start_run(
         self,
@@ -628,6 +664,14 @@ class RunManager:
 
         active_run.start_graph(graph, initial_state, graph_config)
         logger.info("Started run %s for conversation %s", run_id, conversation_id)
+        self._broadcast_global(
+            {
+                "event": "run_status",
+                "data": json.dumps(
+                    {"conversation_id": conversation_id, "status": "running"}
+                ),
+            }
+        )
         return run_id
 
     def _get_service(self, name: str) -> object:
@@ -644,7 +688,19 @@ class RunManager:
         return self._active_runs.get(run_id)
 
     def remove_run(self, run_id: str) -> None:
-        """Called by ActiveRun when the graph completes. Cleans up both dicts."""
+        """Called by ActiveRun when the graph completes. Cleans up both dicts
+        and notifies global subscribers that the run is no longer active."""
         active_run = self._active_runs.pop(run_id, None)
         if active_run:
             self._conversation_runs.pop(active_run.conversation_id, None)
+            self._broadcast_global(
+                {
+                    "event": "run_status",
+                    "data": json.dumps(
+                        {
+                            "conversation_id": active_run.conversation_id,
+                            "status": active_run.status,
+                        }
+                    ),
+                }
+            )

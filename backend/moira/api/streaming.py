@@ -136,3 +136,18 @@ async def stream_events(conversation_id: str):
             yield event
 
     return EventSourceResponse(event_source())
+
+
+@streaming_router.get("/events")
+async def global_events():
+    """Global SSE endpoint for sidebar run-status notifications.
+    Yields run_status events when any conversation's run starts or
+    completes. On connect, replays all currently-active runs so a
+    fresh page load immediately shows which conversations are running."""
+    run_mgr = _run_manager()
+
+    async def event_source():
+        async for event in run_mgr.subscribe_global():
+            yield event
+
+    return EventSourceResponse(event_source())

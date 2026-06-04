@@ -48,13 +48,94 @@ export const useChatStore = defineStore("chat", () => {
 
   const runSettings = ref<RunSettings>({ budget: 50 });
 
+  const runningConversations = ref<Set<string>>(new Set());
+
   let streamAbort: AbortController | null = null;
+  let globalEventsAbort: AbortController | null = null;
 
   function cancelStream() {
     if (streamAbort) {
       streamAbort.abort();
       streamAbort = null;
     }
+  }
+
+  function disconnectGlobalEvents() {
+    if (globalEventsAbort) {
+      globalEventsAbort.abort();
+      globalEventsAbort = null;
+    }
+  }
+
+  async function connectGlobalEvents() {
+    disconnectGlobalEvents();
+    const abort = new AbortController();
+    globalEventsAbort = abort;
+
+    const url = api.eventsUrl();
+    let resp: Response;
+    try {
+      resp = await fetch(url, { signal: abort.signal });
+    } catch (e: any) {
+      if (e.name === "AbortError") return;
+      return;
+    }
+
+    if (!resp.ok) return;
+
+    const reader = resp.body?.getReader();
+    if (!reader) return;
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let currentEventType = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("event:")) {
+            currentEventType = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            const dataStr = line.slice(5).trim();
+            if (!dataStr) continue;
+            try {
+              const payload = JSON.parse(dataStr);
+              if (currentEventType === "run_status") {
+                const next = new Set(runningConversations.value);
+                if (payload.status === "running") {
+                  next.add(payload.conversation_id);
+                } else {
+                  next.delete(payload.conversation_id);
+                }
+                runningConversations.value = next;
+              }
+              currentEventType = "";
+            } catch {
+              // non-JSON data, skip
+            }
+          } else if (line.trim() === "") {
+            currentEventType = "";
+          }
+        }
+      }
+    } catch (e: any) {
+      if (e.name === "AbortError") return;
+    } finally {
+      if (globalEventsAbort === abort) {
+        globalEventsAbort = null;
+      }
+    }
+  }
+
+  function isConversationRunning(id: string): boolean {
+    return runningConversations.value.has(id);
   }
 
   async function fetchConversations() {
@@ -454,5 +535,9 @@ export const useChatStore = defineStore("chat", () => {
     generateTitle,
     deleteConversation,
     getRunForMessage,
+    connectGlobalEvents,
+    disconnectGlobalEvents,
+    isConversationRunning,
+    runningConversations,
   };
 });

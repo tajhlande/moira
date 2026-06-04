@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onUnmounted } from "vue";
+import { computed, ref, watch, nextTick, onMounted, onUnmounted } from "vue";
 import {
   NInput,
   NButton,
@@ -37,6 +37,7 @@ const route = useRoute();
 const router = useRouter();
 const inputText = ref("");
 const showSettings = ref(false);
+const messagesScrollbar = ref<InstanceType<typeof NScrollbar> | null>(null);
 
 // Track which steps are expanded
 const expandedSteps = ref<Set<number>>(new Set());
@@ -103,6 +104,17 @@ watch(
     if (id && route.name === "new-conversation") {
       router.replace({ name: "conversation", params: { id } });
     }
+  },
+);
+
+// Scroll to bottom when switching conversations so the most recent
+// content (usually the end) is immediately visible.
+watch(
+  () => store.currentConversationId,
+  () => {
+    nextTick(() => {
+      messagesScrollbar.value?.scrollTo({ top: 999999, behavior: "smooth" });
+    });
   },
 );
 
@@ -195,7 +207,7 @@ async function copyMessage(content: string, index: number) {
       <NText class="chat-title">{{ currentTitle }}</NText>
     </div>
 
-    <NScrollbar class="messages-area">
+    <NScrollbar ref="messagesScrollbar" class="messages-area">
       <template v-for="(msg, i) in store.messages" :key="i">
         <!-- Message bubble -->
         <div :class="['message', msg.role]">
