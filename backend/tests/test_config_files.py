@@ -83,7 +83,8 @@ class TestPromptsFile:
         expected placeholders. Prevents typos in template variable names."""
         template_vars = {
             "planning.system_retry": {"case", "assessment", "guidance"},
-            "planning.system_prior_report": {"prior_report_answer"},
+            "planning.system_earlier_turns": {"earlier_turns"},
+            "planning.system_prior_report": {"prior_question", "prior_report_answer"},
             "tool_selection.user": {"question", "plan", "tool_descriptions"},
             "research_execution.user": {"question", "plan", "tool_descriptions"},
             "draft_synthesis.user": {"question", "plan", "evidence"},

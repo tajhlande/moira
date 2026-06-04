@@ -93,7 +93,22 @@ class InferenceClient:
                 resp.status_code,
                 body,
             )
-            resp.raise_for_status()
+            try:
+                error_data = resp.json()
+                server_message = (
+                    error_data.get("error", {}).get("message", "")
+                    if isinstance(error_data.get("error"), dict)
+                    else str(error_data.get("error", ""))
+                )
+                if not server_message:
+                    server_message = body[:500]
+            except Exception:
+                server_message = body[:500]
+            raise httpx.HTTPStatusError(
+                message=f"{resp.status_code} {resp.reason_phrase}: {server_message}",
+                request=resp.request,
+                response=resp,
+            )
         data = resp.json()
         choice = data["choices"][0]
         message = choice["message"]

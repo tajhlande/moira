@@ -28,7 +28,7 @@ export interface MessageInfo {
 export interface ExecutionStep {
   node: string;
   label: string;
-  status: "running" | "completed" | "error";
+  status: "running" | "completed" | "error" | "stopped";
   cost: number;
   budget_remaining: number;
   elapsed_ms?: number;
@@ -70,7 +70,7 @@ export interface WorkflowRunInfo {
   budget_limit: number;
   budget_consumed: number;
   error: string;
-  status: "running" | "completed" | "error";
+  status: "running" | "completed" | "error" | "stopped";
   started_at: string;
   completed_at: string;
   total_elapsed_ms?: number;
@@ -169,6 +169,18 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ content, settings }),
       },
+    ),
+
+  stopRun: (conversationId: string) =>
+    request<{ status: string }>(
+      `/conversations/${conversationId}/runs/stop`,
+      { method: "POST" },
+    ),
+
+  resumeRun: (conversationId: string) =>
+    request<{ run_id: string; user_message_id: number }>(
+      `/conversations/${conversationId}/runs/resume`,
+      { method: "POST" },
     ),
 
   streamUrl: (conversationId: string) =>

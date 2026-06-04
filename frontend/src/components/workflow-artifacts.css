@@ -31,12 +31,47 @@
   color: var(--n-error-color, #d03050);
 }
 
+.step-row.stopped {
+  color: var(--n-warning-color, #f0a020);
+}
+
 .step-completed-icon {
   color: var(--n-success-color, #18a058);
 }
 
 .step-error-icon {
   color: var(--n-error-color, #d03050);
+}
+
+.step-stopped-icon {
+  color: var(--n-warning-color, #f0a020);
+}
+
+.stop-marker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.stop-marker-label {
+  color: var(--n-warning-color, #f0a020);
+  font-size: 0.9em;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.stop-marker-line {
+  flex: 1;
+  height: 1px;
+  background: var(--n-warning-color, #f0a020);
+  opacity: 0.4;
+}
+
+.resume-button {
+  flex-shrink: 0;
+  margin-bottom: 2px;
+  margin-left: 16px;
 }
 
 .retry-branch-icon {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NButton, NScrollbar, NInput } from "naive-ui";
-import { IconPencil, IconCheck, IconSparkles, IconTrash } from "@tabler/icons-vue";
+import { IconPencil, IconCheck, IconSparkles, IconTrash, IconHandStop } from "@tabler/icons-vue";
 import { useChatStore } from "../stores/chat";
 import { useRouter } from "vue-router";
 import { ref, nextTick } from "vue";
@@ -153,6 +153,19 @@ function hasMessages(conversationId: string): boolean {
                 </template>
               </NButton>
               <NButton
+                v-if="store.isConversationRunning(conversation.id)"
+                quaternary
+                circle
+                size="small"
+                @click.stop="store.stopRun()"
+                class="icon-btn icon-btn-stop"
+              >
+                <template #icon>
+                  <IconHandStop :size="18" />
+                </template>
+              </NButton>
+              <NButton
+                v-else
                 quaternary
                 circle
                 size="small"
@@ -243,6 +256,15 @@ function hasMessages(conversationId: string): boolean {
 }
 
 .icon-btn-delete:hover {
+  color: var(--n-error-color, #d03050);
+}
+
+.icon-btn-stop {
+  color: var(--n-warning-color, #f0a020);
+  opacity: 1;
+}
+
+.icon-btn-stop:hover {
   color: var(--n-error-color, #d03050);
 }
 </style>

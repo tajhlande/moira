@@ -20,6 +20,8 @@ import {
   IconTool,
   IconRestore,
   IconAdjustments,
+  IconPlayerStop,
+  IconHandStop,
 } from "@tabler/icons-vue";
 import { useRoute, useRouter } from "vue-router";
 import { useChatStore } from "../stores/chat";
@@ -130,6 +132,12 @@ function toolCallCount(step: ExecutionStep): number {
   const tr = step.detail?.tool_results;
   if (Array.isArray(tr)) return tr.length;
   return 0;
+}
+
+function needsStopMarker(): boolean {
+  if (!store.runStopped || store.loading) return false;
+  const hasStopped = store.executionSteps.some((s) => s.status === "stopped");
+  return !hasStopped && !store.currentStep;
 }
 
 // A verification step that sent control flow back (outcome=retry_plan or retry_draft)
@@ -247,16 +255,22 @@ async function copyMessage(content: string, index: number) {
           <!-- Live streaming run (steps/report from current or completed stream) -->
           <template v-else-if="i === lastUserMessageIndex && hasLiveData()">
             <!-- Steps -->
-            <div
-              v-if="store.executionSteps.length > 0 || store.currentStep"
-              class="steps-container"
-            >
+            <div class="steps-and-resume-wrapper">
+              <div
+                v-if="store.executionSteps.length > 0 || store.currentStep"
+                class="steps-container"
+              >
               <div v-for="(step, si) in store.executionSteps" :key="'ls-' + si">
                 <div :class="['step-row', step.status]">
                   <IconRestore
                     v-if="isRetryBranch(step)"
                     :size="16"
                     class="retry-branch-icon"
+                  />
+                  <IconHandStop
+                    v-else-if="step.status === 'stopped'"
+                    :size="16"
+                    class="step-stopped-icon"
                   />
                   <IconCircleCheck
                     v-else-if="step.status === 'completed'"
@@ -368,7 +382,25 @@ async function copyMessage(content: string, index: number) {
                 >
                   <StepDetailContent :detail="store.currentStep.detail!" />
                 </div>
+                </div>
+              <div v-if="needsStopMarker()" class="stop-marker-row">
+                <IconHandStop :size="16" class="step-stopped-icon" />
+                <span class="stop-marker-label">Stopped</span>
+                <span class="stop-marker-line" />
               </div>
+              </div>
+              <NButton
+                v-if="store.runStopped && !store.loading"
+                type="primary"
+                ghost
+                class="resume-button"
+                @click="store.resumeRun()"
+              >
+                <template #icon>
+                  <IconRestore :size="16" />
+                </template>
+                Resume
+              </NButton>
             </div>
 
             <!-- Tool executions (shown when old runs lack per-step tool results) -->
@@ -462,9 +494,20 @@ async function copyMessage(content: string, index: number) {
         </template>
       </NButton>
       <NButton
+        v-if="store.loading"
+        type="warning"
+        @click="store.stopRun()"
+      >
+        <template #icon>
+          <IconHandStop :size="16" />
+        </template>
+        Stop
+      </NButton>
+      <NButton
+        v-else
         type="primary"
         @click="send"
-        :disabled="store.loading || !inputText.trim()"
+        :disabled="!inputText.trim()"
       >
         Send
       </NButton>
@@ -593,5 +636,20 @@ async function copyMessage(content: string, index: number) {
   min-width: 28px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.steps-and-resume-wrapper {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.resume-button {
+  flex-shrink: 0;
+  margin-bottom: 2px;
+}
+
+.step-stopped-icon {
+  color: var(--n-warning-color, #f0a020);
 }
 </style>

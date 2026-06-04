@@ -26,6 +26,7 @@ REQUIRED_SECTIONS = [
     "planning.system",
     "planning.system_retry",
     "planning.system_prior_report",
+    "planning.system_earlier_turns",
     "tool_selection.system",
     "tool_selection.user",
     "research_execution.system",

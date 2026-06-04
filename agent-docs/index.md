@@ -21,3 +21,4 @@
 | **draft-retry-routing.md**        | Plan for routing verification failures directly to draft synthesis (bypassing research) for synthesis-specific problems (cases 7-8). |
 | **kagi-web-search-plan.md**      | Plan for the Kagi web search tool — first tool to use the credential store, using the Kagi Search API with Bearer auth. |
 | **tool-metrics-plan.md**         | Plan for tool call metrics — rolling counters with hourly buckets, call_type, latency min/max/sum. Cost computed at query time. |
+| **context-management.md**        | Plan for adaptive context window management — auto-detect limits, proactive tool output capping, evidence truncation, and progressive message trimming. |

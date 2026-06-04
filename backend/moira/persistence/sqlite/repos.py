@@ -204,6 +204,19 @@ class SqliteConversationRepository(ConversationRepository):
         conn = self._connect()
         try:
             # Delete dependents first — foreign keys lack ON DELETE CASCADE.
+            # workflow_steps references workflow_runs, so steps must go first.
+            run_ids = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT id FROM workflow_runs WHERE conversation_id = ?",
+                    (conversation_id,),
+                ).fetchall()
+            ]
+            for run_id in run_ids:
+                conn.execute(
+                    "DELETE FROM workflow_steps WHERE workflow_run_id = ?",
+                    (run_id,),
+                )
             conn.execute(
                 "DELETE FROM workflow_runs WHERE conversation_id = ?",
                 (conversation_id,),

@@ -50,6 +50,8 @@ export const useChatStore = defineStore("chat", () => {
 
   const runningConversations = ref<Set<string>>(new Set());
 
+  const runStopped = ref(false);
+
   let streamAbort: AbortController | null = null;
   let globalEventsAbort: AbortController | null = null;
 
@@ -166,6 +168,7 @@ export const useChatStore = defineStore("chat", () => {
     verificationAttempts.value = 0;
     activeUserMessageId.value = null;
     totalElapsedMs.value = null;
+    runStopped.value = false;
   }
 
   async function selectConversation(id: string) {
@@ -188,7 +191,28 @@ export const useChatStore = defineStore("chat", () => {
       const runningRun = detail.runs.find((r) => r.status === "running");
       if (runningRun) {
         loading.value = true;
+
+        // If this is a resumed run, pre-seed executionSteps from the
+        // previous stopped run so the user sees completed steps while
+        // the resumed stream begins.
+        const stoppedRun = detail.runs.find(
+          (r) =>
+            r.status === "stopped" &&
+            r.user_message_id === runningRun.user_message_id,
+        );
+        if (stoppedRun) {
+          executionSteps.value = [...stoppedRun.execution_steps];
+          budgetRemaining.value = stoppedRun.budget_limit - stoppedRun.budget_consumed;
+          budgetConsumed.value = stoppedRun.budget_consumed;
+        }
+
         connectStream(id, runningRun.user_message_id);
+      }
+
+      const stoppedRun = detail.runs.find((r) => r.status === "stopped");
+      if (stoppedRun && !runningRun) {
+        runStopped.value = true;
+        activeUserMessageId.value = stoppedRun.user_message_id;
       }
     } catch (e: any) {
       error.value = e.message;
@@ -239,6 +263,41 @@ export const useChatStore = defineStore("chat", () => {
     } catch (e: any) {
       error.value = e.message;
     } finally {
+      loading.value = false;
+    }
+  }
+
+  async function stopRun() {
+    if (!currentConversationId.value) return;
+    try {
+      await api.stopRun(currentConversationId.value);
+    } catch (e: any) {
+      error.value = e.message;
+    }
+  }
+
+  async function resumeRun() {
+    if (!currentConversationId.value) return;
+    loading.value = true;
+    error.value = null;
+    runStopped.value = false;
+
+    // Remove the stopped run from the persisted map so the template
+    // switches from RunArtifacts to the live streaming path.
+    if (activeUserMessageId.value) {
+      const newMap = new Map(runs.value);
+      newMap.delete(activeUserMessageId.value);
+      runs.value = newMap;
+    }
+
+    try {
+      const { user_message_id } = await api.resumeRun(
+        currentConversationId.value,
+      );
+      activeUserMessageId.value = user_message_id;
+      await connectStream(currentConversationId.value, user_message_id);
+    } catch (e: any) {
+      error.value = e.message;
       loading.value = false;
     }
   }
@@ -411,10 +470,14 @@ export const useChatStore = defineStore("chat", () => {
           currentReport.value = payload.report;
         }
         totalElapsedMs.value = payload.total_elapsed_ms ?? null;
+        runStopped.value = false;
+        error.value = null;
         finalizeRun(userMessageId);
+        loading.value = false;
         break;
       case "run_error":
         error.value = payload.error;
+        runStopped.value = false;
         if (currentStep.value) {
           currentStep.value.status = "error";
           currentStep.value.error = payload.error;
@@ -423,6 +486,18 @@ export const useChatStore = defineStore("chat", () => {
           currentStep.value = null;
         }
         totalElapsedMs.value = payload.total_elapsed_ms ?? null;
+        finalizeRun(userMessageId);
+        loading.value = false;
+        break;
+      case "run_stopped":
+        if (currentStep.value) {
+          currentStep.value.status = "stopped";
+          currentStep.value.elapsed_ms = payload.elapsed_ms ?? 0;
+          executionSteps.value.push(currentStep.value);
+          currentStep.value = null;
+        }
+        totalElapsedMs.value = payload.total_elapsed_ms ?? null;
+        runStopped.value = true;
         finalizeRun(userMessageId);
         loading.value = false;
         break;
@@ -531,6 +606,8 @@ export const useChatStore = defineStore("chat", () => {
     startNewChat,
     selectConversation,
     sendMessage,
+    stopRun,
+    resumeRun,
     renameConversation,
     generateTitle,
     deleteConversation,
@@ -539,5 +616,6 @@ export const useChatStore = defineStore("chat", () => {
     disconnectGlobalEvents,
     isConversationRunning,
     runningConversations,
+    runStopped,
   };
 });

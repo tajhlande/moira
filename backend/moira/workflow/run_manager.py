@@ -77,6 +77,7 @@ class ActiveRun:
         self._step_started_at: float | None = None
         self._persist_lock = asyncio.Lock()
         self._persist_pending: bool = False
+        self._stop_requested: bool = False
 
     def _replay_events(self) -> list[dict]:
         """Build a list of SSE events representing all state accumulated so
@@ -214,6 +215,28 @@ class ActiveRun:
             name=f"run-{self.run_id[:8]}",
         )
 
+    def start_graph_resume(
+        self,
+        graph: CompiledStateGraph,
+        resume_input,
+        graph_config: dict,
+    ) -> None:
+        """Launch the graph as a background asyncio.Task, resuming from a
+        previous interrupt. ``resume_input`` is a ``Command(resume=...)``."""
+        self._run_started_at = time.monotonic()
+        self._graph_task = asyncio.create_task(
+            self._run_graph_resume(graph, resume_input, graph_config),
+            name=f"run-resume-{self.run_id[:8]}",
+        )
+
+    def stop_run(self) -> None:
+        """Request an immediate stop. Sets a cooperative flag (used by
+        ``_check_stop`` at node boundaries) AND cancels the graph task so
+        the currently-running node is interrupted."""
+        self._stop_requested = True
+        if self._graph_task and not self._graph_task.done():
+            self._graph_task.cancel()
+
     async def _run_graph(
         self,
         graph: CompiledStateGraph,
@@ -223,7 +246,6 @@ class ActiveRun:
         """Iterate graph.astream(), accumulate state, persist incrementally,
         and broadcast events to subscribers."""
         try:
-            # Seed subscribers with initial budget state
             self._broadcast(
                 {
                     "event": "budget_update",
@@ -245,12 +267,22 @@ class ActiveRun:
                 payload = event.get("payload", {})
                 self._handle_event(event_type, payload)
 
-            # Graph completed normally — if no explicit run_complete was
-            # emitted, finalize as completed anyway.
-            if self.status == "running":
+            if self._stop_requested:
+                await self._handle_stop()
+            elif self.status == "running":
                 self.status = "completed"
                 self._finalize_metrics()
                 await self._persist()
+
+        except asyncio.CancelledError:
+            if self._stop_requested:
+                await self._handle_stop()
+            else:
+                logger.warning(
+                    "Graph run cancelled unexpectedly for conversation %s",
+                    self.conversation_id,
+                )
+                raise
 
         except Exception as e:
             current_node = (
@@ -291,7 +323,16 @@ class ActiveRun:
                 }
             )
 
-        # Persist the assistant response message.
+        if self.status == "stopped":
+            self._broadcast(_STREAM_END)
+            self._run_manager.remove_run(self.run_id)
+            logger.info(
+                "Run %s stopped (%d execution_steps)",
+                self.run_id,
+                len(self.execution_steps),
+            )
+            return
+
         if self.report:
             await self._conversation_repo.insert_message(
                 self.conversation_id,
@@ -306,7 +347,6 @@ class ActiveRun:
                 "Unable to generate a research report.",
             )
 
-        # Signal end-of-stream to all subscribers, then remove from RunManager.
         self._broadcast(_STREAM_END)
         self._run_manager.remove_run(self.run_id)
         logger.info(
@@ -314,6 +354,177 @@ class ActiveRun:
             self.run_id,
             self.status,
             len(self.execution_steps),
+        )
+
+    async def _run_graph_resume(
+        self,
+        graph: CompiledStateGraph,
+        resume_input,
+        graph_config: dict,
+    ) -> None:
+        """Resume a previously-interrupted graph run. Structured identically
+        to ``_run_graph`` but invokes ``astream`` with a ``Command`` rather
+        than fresh initial state."""
+        try:
+            self._broadcast(
+                {
+                    "event": "budget_update",
+                    "data": json.dumps(
+                        {
+                            "budget_remaining": self.budget_remaining,
+                            "budget_consumed": self.budget_consumed,
+                        }
+                    ),
+                }
+            )
+
+            async for event in graph.astream(
+                resume_input,
+                config=graph_config,
+                stream_mode="custom",
+            ):
+                event_type = event.get("event", "unknown")
+                payload = event.get("payload", {})
+                self._handle_event(event_type, payload)
+
+            if self._stop_requested:
+                await self._handle_stop()
+            elif self.status == "running":
+                self.status = "completed"
+                self._finalize_metrics()
+                await self._persist()
+
+        except asyncio.CancelledError:
+            if self._stop_requested:
+                await self._handle_stop()
+            else:
+                logger.warning(
+                    "Graph resume cancelled unexpectedly for conversation %s",
+                    self.conversation_id,
+                )
+                raise
+
+        except Exception as e:
+            current_node = (
+                self._current_step.get("node", "unknown") if self._current_step else "unknown"
+            )
+            logger.error(
+                "Graph resume error for conversation %s (node=%s): %s: %s",
+                self.conversation_id,
+                current_node,
+                type(e).__name__,
+                e,
+                exc_info=True,
+            )
+            self.error = f"{type(e).__name__}: {e}"
+            self.status = "error"
+            if self._current_step:
+                self._current_step["status"] = "error"
+                self._current_step["error"] = self.error
+                self._current_step["elapsed_ms"] = (
+                    int((time.monotonic() - self._step_started_at) * 1000)
+                    if self._step_started_at
+                    else 0
+                )
+                self.execution_steps.append(self._current_step)
+                self._current_step = None
+            self._finalize_metrics()
+            await self._persist()
+            self._broadcast(
+                {
+                    "event": "run_error",
+                    "data": json.dumps(
+                        {
+                            "node": "unknown",
+                            "error": self.error,
+                            "conversation_id": self.conversation_id,
+                        }
+                    ),
+                }
+            )
+
+        if self.status == "stopped":
+            self._broadcast(_STREAM_END)
+            self._run_manager.remove_run(self.run_id)
+            logger.info(
+                "Run %s stopped (%d execution_steps)",
+                self.run_id,
+                len(self.execution_steps),
+            )
+            return
+
+        if self.report:
+            await self._conversation_repo.insert_message(
+                self.conversation_id,
+                "assistant_report",
+                json.dumps(self.report),
+            )
+            logger.info("Persisted report for conversation %s", self.conversation_id)
+        else:
+            await self._conversation_repo.insert_message(
+                self.conversation_id,
+                "assistant",
+                "Unable to generate a research report.",
+            )
+
+        self._broadcast(_STREAM_END)
+        self._run_manager.remove_run(self.run_id)
+        logger.info(
+            "Run %s finished (%s, %d execution_steps)",
+            self.run_id,
+            self.status,
+            len(self.execution_steps),
+        )
+
+    async def _handle_stop(self) -> None:
+        """Finalize run state after a user-initiated stop.
+        Marks the current step as stopped, persists the step AND the run
+        (so the stopped step survives page reload), and broadcasts the
+        ``run_stopped`` SSE event.
+
+        Uses ``asyncio.shield`` for persistence because this runs inside
+        a ``CancelledError`` handler — bare awaits would be cancelled
+        immediately."""
+        stopped_node = "unknown"
+        if self._current_step:
+            self._current_step["status"] = "stopped"
+            self._current_step["elapsed_ms"] = (
+                int((time.monotonic() - self._step_started_at) * 1000)
+                if self._step_started_at
+                else 0
+            )
+            stopped_node = self._current_step.get("node", "unknown")
+
+            step_copy = dict(self._current_step)
+            try:
+                await asyncio.shield(self._persist_step(step_copy))
+            except asyncio.CancelledError:
+                pass
+            self.execution_steps.append(self._current_step)
+            self._current_step = None
+
+        self.status = "stopped"
+        self._finalize_metrics()
+        try:
+            await asyncio.shield(self._persist())
+        except asyncio.CancelledError:
+            pass
+
+        self._broadcast(
+            {
+                "event": "run_stopped",
+                "data": json.dumps(
+                    {
+                        "node": stopped_node,
+                        "conversation_id": self.conversation_id,
+                    }
+                ),
+            }
+        )
+        logger.info(
+            "Run %s stopped by user at node %s",
+            self.run_id,
+            stopped_node,
         )
 
     def _handle_event(self, event_type: str, payload: dict) -> None:
@@ -664,6 +875,76 @@ class RunManager:
 
         active_run.start_graph(graph, initial_state, graph_config)
         logger.info("Started run %s for conversation %s", run_id, conversation_id)
+        self._broadcast_global(
+            {
+                "event": "run_status",
+                "data": json.dumps(
+                    {"conversation_id": conversation_id, "status": "running"}
+                ),
+            }
+        )
+        return run_id
+
+    async def resume_run(
+        self,
+        conversation_id: str,
+        config: MoiraConfig,
+        conversation_repo: ConversationRepository,
+    ) -> str:
+        """Resume a previously stopped run. Loads the thread_id from the
+        persisted WorkflowRun, creates a new ActiveRun, and starts the
+        graph from the checkpoint using ``Command(resume=True)``.
+        Returns the new run_id."""
+        from langgraph.graph.state import CompiledStateGraph
+        from langgraph.types import Command
+
+        runs = await conversation_repo.get_workflow_runs(conversation_id)
+        stopped_run = None
+        for run in reversed(runs):
+            if run.status == "stopped":
+                stopped_run = run
+                break
+        if stopped_run is None:
+            raise ValueError(f"No stopped run found for conversation {conversation_id}")
+
+        graph = cast(CompiledStateGraph, self._get_service("research_graph"))
+
+        run_id = str(uuid.uuid4())
+        started_at = datetime.now(timezone.utc).isoformat()
+
+        active_run = ActiveRun(
+            run_id=run_id,
+            conversation_id=conversation_id,
+            user_message_id=stopped_run.user_message_id,
+            thread_id=stopped_run.thread_id,
+            started_at=started_at,
+            budget_limit=float(stopped_run.budget_limit),
+            conversation_repo=conversation_repo,
+            run_manager=self,
+        )
+        active_run.budget_remaining = stopped_run.budget_limit - stopped_run.budget_consumed
+        active_run.budget_consumed = stopped_run.budget_consumed
+
+        self._active_runs[run_id] = active_run
+        self._conversation_runs[conversation_id] = run_id
+
+        graph_config = {
+            "configurable": {
+                "thread_id": stopped_run.thread_id,
+                "run_id": run_id,
+                "moira_config": config,
+            },
+        }
+
+        await active_run._persist()
+
+        active_run.start_graph_resume(graph, Command(resume=True), graph_config)
+        logger.info(
+            "Resumed run %s for conversation %s (thread %s)",
+            run_id,
+            conversation_id,
+            stopped_run.thread_id,
+        )
         self._broadcast_global(
             {
                 "event": "run_status",

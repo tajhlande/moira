@@ -20,10 +20,21 @@ Given a research question, produce a concise plan for how to answer it. Consider
 
 Previous attempt was rejected by verification. Case {case}: {assessment}. Guidance: {guidance}. Pursue a different approach based on this feedback.
 
+## planning.system_earlier_turns
+
+Earlier conversation history (question-answer pairs from previous turns):
+{earlier_turns}
+
+This is provided for context only. The most recent prior report is provided separately in more detail.
+
 ## planning.system_prior_report
 
-Prior research report:
+Previous question: {prior_question}
+
+Prior research report (answering the previous question):
 {prior_report_answer}
+
+Important: Downstream nodes (research, synthesis) will NOT have access to this prior report or previous question — your plan is their only window into previous work. When relevant to the new question, you MUST include key findings, conclusions, and established facts from the prior report directly in your plan text. Clearly label this content as "from previous research" so downstream nodes understand it is established context, not new instructions.
 
 ## tool_selection.system
 

@@ -3,6 +3,7 @@ from typing import cast
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
+from langgraph.types import interrupt
 
 from moira.config import MoiraConfig
 from moira.inference.metrics import TokenCounts
@@ -14,6 +15,35 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_TOOL_ROUNDS = 3
 DEFAULT_MAX_PARSE_RETRIES = 2
+
+
+def _check_stop(node: str, config: RunnableConfig) -> None:
+    """Cooperative stop check for user-initiated run cancellation.
+
+    Checks the ActiveRun's ``_stop_requested`` flag via the RunManager.
+    If set, emits ``node_start`` so the UI shows which step was active,
+    then calls ``interrupt("user_stop")`` to pause the graph and save
+    the checkpoint.  LangGraph re-executes the interrupted node from
+    scratch on resume, so any partial work in this node is discarded.
+
+    Must be called at the *start* of every node function, before any
+    model calls or tool execution."""
+    run_id = config.get("configurable", {}).get("run_id")
+    if not run_id:
+        return
+
+    from moira.service_setup import service_provider
+    from moira.workflow.run_manager import RunManager
+
+    run_mgr = cast(RunManager, service_provider("run_manager"))
+    active_run = run_mgr._active_runs.get(run_id)
+    if active_run is None or not active_run._stop_requested:
+        return
+
+    writer = get_stream_writer()
+    writer({"event": "node_start", "payload": {"node": node, "timestamp": _now()}})
+    logger.info("Stop requested at node %s, calling interrupt()", node)
+    interrupt("user_stop")
 
 _PARSE_CORRECTION_PROMPT = (
     "Your previous response did not contain a valid JSON array of tool calls. "
@@ -305,6 +335,7 @@ async def _run_tool_loop(
 async def planning(state: ResearchState, config: RunnableConfig) -> dict:
     """Planning node: analyzes the question and produces a research plan.
     Uses the intelligence model. Cost weight: 2."""
+    _check_stop("planning", config)
     moira_config = _get_config(config)
     budget = state.get("budget_remaining", 0.0)
     node = "planning"
@@ -322,8 +353,10 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
     question = state.get("question", "")
     verification_history = state.get("verification_history", [])
     prior_report = config.get("configurable", {}).get("prior_report")
+    prior_question = config.get("configurable", {}).get("prior_question")
+    prior_turns = config.get("configurable", {}).get("prior_turns")
 
-    messages = _build_planning_messages(question, verification_history, prior_report)
+    messages = _build_planning_messages(question, verification_history, prior_report, prior_question, prior_turns)
     _log_prompts(node, messages)
     resolved = await registry.resolve("intelligence")
     raw = await resolved.client.chat_completion(
@@ -354,6 +387,7 @@ async def tool_discovery(state: ResearchState, config: RunnableConfig) -> dict:
     """Tool Discovery node: embeds the plan and searches LanceDB for
     relevant tools. Default tools are always included. No model call.
     Cost weight: 1."""
+    _check_stop("tool_discovery", config)
     moira_config = _get_config(config)
     budget = state.get("budget_remaining", 0.0)
     node = "tool_discovery"
@@ -409,6 +443,7 @@ async def tool_discovery(state: ResearchState, config: RunnableConfig) -> dict:
 async def tool_selection(state: ResearchState, config: RunnableConfig) -> dict:
     """Tool Selection node: intelligence model selects the best tools from
     the discovered candidates. Cost weight: 2."""
+    _check_stop("tool_selection", config)
     moira_config = _get_config(config)
     budget = state.get("budget_remaining", 0.0)
     node = "tool_selection"
@@ -484,6 +519,7 @@ async def tool_selection(state: ResearchState, config: RunnableConfig) -> dict:
 async def research_execution(state: ResearchState, config: RunnableConfig) -> dict:
     """Research Execution node: intelligence model uses selected tools to
     gather evidence. Supports multi-round tool use. Cost weight: 5."""
+    _check_stop("research_execution", config)
     moira_config = _get_config(config)
     budget = state.get("budget_remaining", 0.0)
     node = "research_execution"
@@ -569,6 +605,7 @@ async def research_execution(state: ResearchState, config: RunnableConfig) -> di
 async def compression(state: ResearchState, config: RunnableConfig) -> dict:
     """Compression node: task model compresses and deduplicates findings.
     Cost weight: 1."""
+    _check_stop("compression", config)
     moira_config = _get_config(config)
     budget = state.get("budget_remaining", 0.0)
     node = "compression"
@@ -636,6 +673,7 @@ async def draft_synthesis(state: ResearchState, config: RunnableConfig) -> dict:
     """Draft Synthesis node: intelligence model produces a draft answer.
     Cost weight: 3. On draft retry, includes verification feedback so the
     synthesizer can address specific issues."""
+    _check_stop("draft_synthesis", config)
     moira_config = _get_config(config)
     budget = state.get("budget_remaining", 0.0)
     node = "draft_synthesis"
@@ -720,6 +758,7 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
     fact-checking. Uses the same active tools as research_execution for
     independent claim verification. Cost weight: 4. Produces a
     VerificationReport and may route back to Planning if budget permits."""
+    _check_stop("verification", config)
     moira_config = _get_config(config)
     budget = state.get("budget_remaining", 0.0)
     node = "verification"
@@ -1003,6 +1042,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     """Report Generation node: terminal node that always runs (budget-exempt).
     Produces a structured ResearchReport. Robust to partial state from
     earlier node failures. Cost weight: 3 (accounting only)."""
+    _check_stop("report_generation", config)
     moira_config = _get_config(config)
     budget = state.get("budget_remaining", 0.0)
     node = "report_generation"
@@ -1165,6 +1205,8 @@ def _build_planning_messages(
     question: str,
     verification_history: list[VerificationReport],
     prior_report: dict | None,
+    prior_question: str | None = None,
+    prior_turns: list[dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
     system = get_prompt("planning.system")
     if verification_history:
@@ -1177,12 +1219,29 @@ def _build_planning_messages(
 
     messages = [{"role": "system", "content": system}]
 
+    if prior_turns and len(prior_turns) > 1:
+        earlier = prior_turns[:-1]
+        history_lines = []
+        for i, turn in enumerate(earlier, 1):
+            history_lines.append(f"Turn {i} question: {turn['question']}")
+            answer_preview = turn.get("answer", "")[:500]
+            history_lines.append(f"Turn {i} answer: {answer_preview}")
+        messages.append(
+            {
+                "role": "system",
+                "content": get_prompt("planning.system_earlier_turns").format(
+                    earlier_turns="\n\n".join(history_lines)
+                ),
+            }
+        )
+
     if prior_report:
         messages.append(
             {
                 "role": "system",
                 "content": get_prompt("planning.system_prior_report").format(
-                    prior_report_answer=prior_report.get("answer", "")
+                    prior_question=prior_question or "(not available)",
+                    prior_report_answer=prior_report.get("answer", ""),
                 ),
             }
         )
