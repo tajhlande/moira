@@ -48,6 +48,15 @@ export const useChatStore = defineStore("chat", () => {
 
   const runSettings = ref<RunSettings>({ budget: 50 });
 
+  let streamAbort: AbortController | null = null;
+
+  function cancelStream() {
+    if (streamAbort) {
+      streamAbort.abort();
+      streamAbort = null;
+    }
+  }
+
   async function fetchConversations() {
     try {
       conversations.value = await api.listConversations();
@@ -57,6 +66,7 @@ export const useChatStore = defineStore("chat", () => {
   }
 
   function startNewChat() {
+    cancelStream();
     currentConversationId.value = null;
     isNewChat.value = true;
     messages.value = [];
@@ -78,6 +88,7 @@ export const useChatStore = defineStore("chat", () => {
   }
 
   async function selectConversation(id: string) {
+    cancelStream();
     currentConversationId.value = id;
     isNewChat.value = false;
     resetWorkflowState();
@@ -155,8 +166,18 @@ export const useChatStore = defineStore("chat", () => {
     conversationId: string,
     userMessageId: number,
   ): Promise<void> {
+    cancelStream();
+    const abort = new AbortController();
+    streamAbort = abort;
+
     const url = api.streamUrl(conversationId);
-    const resp = await fetch(url);
+    let resp: Response;
+    try {
+      resp = await fetch(url, { signal: abort.signal });
+    } catch (e: any) {
+      if (e.name === "AbortError") return;
+      throw e;
+    }
 
     if (!resp.ok) {
       // 404 means the run already completed between POST and GET.
@@ -212,11 +233,16 @@ export const useChatStore = defineStore("chat", () => {
         }
       }
     } catch (e: any) {
+      if (e.name === "AbortError") return;
       // "Error in input stream" is expected when the server closes the SSE
       // connection after the run completes. The run_complete event was already
       // processed, so this is just the stream teardown — safe to ignore.
       if (!e.message?.includes("input stream")) {
         throw e;
+      }
+    } finally {
+      if (streamAbort === abort) {
+        streamAbort = null;
       }
     }
   }
@@ -272,14 +298,13 @@ export const useChatStore = defineStore("chat", () => {
         {
           const toolEntry = {
             tool: payload.tool,
+            args: payload.args,
             result: payload.result ?? payload.output,
             duration_ms: payload.duration_ms,
             success: payload.success,
           };
           toolExecutions.value.push(toolEntry);
 
-          // Attach to the current running step's detail so tool results
-          // appear inline under the step that produced them.
           if (currentStep.value) {
             if (!currentStep.value.detail) {
               currentStep.value.detail = {};
@@ -384,6 +409,7 @@ export const useChatStore = defineStore("chat", () => {
       await api.deleteConversation(id);
       conversations.value = conversations.value.filter((c) => c.id !== id);
       if (currentConversationId.value === id) {
+        cancelStream();
         currentConversationId.value = null;
         messages.value = [];
         runs.value.clear();

@@ -171,13 +171,14 @@ async def _execute_tool_round(
         return []
 
     results = await executor.execute_batch(valid_calls, allowed_tools=allowed_names)
-    for result in results:
+    for result, (name, args) in zip(results, valid_calls):
         writer(
             {
                 "event": "tool_result",
                 "payload": {
                     "node": node,
                     "tool": result.tool_name,
+                    "args": args,
                     "output": result.output[:500],
                     "duration_ms": result.duration_ms,
                     "success": result.success,
@@ -543,9 +544,6 @@ async def research_execution(state: ResearchState, config: RunnableConfig) -> di
         response,
         thinking,
         messages=messages,
-        structured_output={
-            "tool_calls": [{"tool": tr["tool"], "args": tr["args"]} for tr in all_tool_results],
-        },
     )
 
     _emit_node_end(
@@ -947,10 +945,7 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
             }
             for tr in all_tool_results
         ]
-        detail["structured_output"] = {
-            **structured,
-            "tool_calls": [{"tool": tr["tool"], "args": tr["args"]} for tr in all_tool_results],
-        }
+        detail["structured_output"] = structured
     else:
         detail["structured_output"] = structured
 

@@ -34,12 +34,7 @@ function stepHasDetail(step: ExecutionStep): boolean {
 
 function toolCallCount(step: ExecutionStep): number {
   const tr = step.detail?.tool_results;
-  if (Array.isArray(tr) && tr.length > 0) return tr.length;
-  const tc = step.detail?.structured_output as
-    | Record<string, unknown>
-    | undefined;
-  const calls = tc?.tool_calls;
-  if (Array.isArray(calls)) return calls.length;
+  if (Array.isArray(tr)) return tr.length;
   return 0;
 }
 

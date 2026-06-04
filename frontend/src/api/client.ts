@@ -39,6 +39,7 @@ export interface ExecutionStep {
 
 export interface ToolExecution {
   tool: string;
+  args?: Record<string, unknown>;
   result: string;
   duration_ms: number;
   success: boolean;

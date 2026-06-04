@@ -10,11 +10,6 @@ interface PromptMessage {
   content: string;
 }
 
-interface ToolCallEntry {
-  tool: string;
-  args: Record<string, unknown>;
-}
-
 const props = defineProps<{ detail: Record<string, unknown> }>();
 const toolsStore = useToolsStore();
 
@@ -42,11 +37,6 @@ const so = computed<Record<string, unknown> | null>(() => {
 const toolResults = computed<ToolExecution[]>(() => {
   if (!props.detail.tool_results) return [];
   return props.detail.tool_results as ToolExecution[];
-});
-
-const toolCallsFromOutput = computed<ToolCallEntry[]>(() => {
-  if (!so.value?.tool_calls) return [];
-  return so.value.tool_calls as ToolCallEntry[];
 });
 
 const toolListKeys = computed<string[]>(() => {
@@ -223,40 +213,15 @@ function claimList(key: string): unknown[] {
       </NCollapseItem>
     </NCollapse>
 
-    <!-- Tool calls (from structured_output) -->
-    <NCollapse
-      v-if="toolCallsFromOutput.length > 0"
-      :default-expanded-names="['tool-calls']"
-      class="detail-section"
-    >
-      <NCollapseItem
-        :title="'Tool Calls (' + toolCallsFromOutput.length + ')'"
-        name="tool-calls"
-      >
-        <div class="tool-results-scroll">
-          <div
-            v-for="(tc, tci) in toolCallsFromOutput"
-            :key="tci"
-            class="step-tool-result"
-          >
-            <span class="tool-name success">{{ tc.tool }}</span>
-            <pre class="tool-output-full">{{
-              JSON.stringify(tc.args, null, 2)
-            }}</pre>
-          </div>
-        </div>
-      </NCollapseItem>
-    </NCollapse>
-
-    <!-- Tool results (from run_manager attachment) -->
+    <!-- Tool executions -->
     <NCollapse
       v-if="toolResults.length > 0"
-      :default-expanded-names="['tool-results']"
+      :default-expanded-names="[]"
       class="detail-section"
     >
       <NCollapseItem
         :title="'Tool Executions (' + toolResults.length + ')'"
-        name="tool-results"
+        name="tool-executions"
       >
         <div class="tool-results-scroll">
           <div
@@ -268,6 +233,10 @@ function claimList(key: string): unknown[] {
               tr.tool
             }}</span>
             <span class="tool-duration">{{ tr.duration_ms }}ms</span>
+            <pre
+              v-if="tr.args && Object.keys(tr.args).length > 0"
+              class="tool-output-full"
+            >{{ JSON.stringify(tr.args, null, 2) }}</pre>
             <pre class="tool-output-full">{{ tr.result }}</pre>
           </div>
         </div>

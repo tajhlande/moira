@@ -97,7 +97,9 @@ class ActiveRun:
             }
         )
 
-        # Completed execution steps
+        # Completed execution steps.  Tool results are embedded in each
+        # step's detail.tool_results, so node_end carries them without
+        # needing separate tool_result events.
         for step in self.execution_steps:
             payload = {
                 "node": step["node"],
@@ -111,29 +113,32 @@ class ActiveRun:
                 end_payload["detail"] = step["detail"]
             events.append({"event": "node_end", "data": json.dumps(end_payload)})
 
-        # Currently running step (started but not yet ended)
+        # Currently running step (started but not yet ended). Emit
+        # node_start, then replay any tool_results that arrived during
+        # this step so the frontend can attach them to the live step.
         if self._current_step:
             payload = {
                 "node": self._current_step["node"],
                 "started_at": self._current_step.get("started_at", ""),
             }
             events.append({"event": "node_start", "data": json.dumps(payload)})
-
-        # Tool executions
-        for tool in self.tool_executions:
-            events.append(
-                {
-                    "event": "tool_result",
-                    "data": json.dumps(
-                        {
-                            "tool": tool["tool"],
-                            "result": tool["result"],
-                            "duration_ms": tool["duration_ms"],
-                            "success": tool["success"],
-                        }
-                    ),
-                }
-            )
+            for tr in self._current_step.get("detail", {}).get(
+                "tool_results", []
+            ):
+                events.append(
+                    {
+                        "event": "tool_result",
+                        "data": json.dumps(
+                            {
+                                "tool": tr["tool"],
+                                "args": tr.get("args"),
+                                "result": tr.get("result", ""),
+                                "duration_ms": tr.get("duration_ms", 0),
+                                "success": tr.get("success", False),
+                            }
+                        ),
+                    }
+                )
 
         # Verification attempts
         # Verification attempts reconstructed from verification steps'
@@ -383,6 +388,7 @@ class ActiveRun:
         elif event_type == "tool_result":
             tool_entry = {
                 "tool": payload.get("tool", ""),
+                "args": payload.get("args"),
                 "result": payload.get("output", ""),
                 "duration_ms": payload.get("duration_ms", 0),
                 "success": payload.get("success", False),
