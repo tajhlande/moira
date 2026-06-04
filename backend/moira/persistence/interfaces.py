@@ -38,9 +38,7 @@ class WorkflowRun:
     conversation_id: str
     user_message_id: int
     thread_id: str
-    execution_steps: list = field(default_factory=list)
     tool_executions: list = field(default_factory=list)
-    verification_attempts: list = field(default_factory=list)
     report: dict | None = None
     budget_limit: float = 0.0
     budget_consumed: float = 0.0
@@ -49,6 +47,42 @@ class WorkflowRun:
     started_at: str = ""
     completed_at: str = ""
     total_elapsed_ms: int = 0
+
+
+@dataclass
+class WorkflowStep:
+    """One row per graph node invocation. Carries execution metadata
+    (node name, status, budget, timing) and inference metadata (model,
+    purpose, token counts, provider timing) when the node called the
+    inference provider."""
+
+    id: int | None
+    workflow_run_id: str
+    node_name: str
+    label: str
+    status: str
+    cost: float
+    budget_remaining: float
+    started_at: str
+    elapsed_ms: int
+    purpose: str | None = None
+    model: str | None = None
+    call_count: int | None = None
+    input_tokens: int | None = None
+    thinking_tokens: int | None = None
+    output_tokens: int | None = None
+    prompt_time_ms: float | None = None
+    gen_time_ms: float | None = None
+    error: str = ""
+    detail: dict | None = None
+
+
+class WorkflowStepRepository(ABC):
+    @abstractmethod
+    async def save_step(self, step: WorkflowStep) -> int: ...
+
+    @abstractmethod
+    async def get_steps_for_run(self, workflow_run_id: str) -> list[WorkflowStep]: ...
 
 
 @dataclass

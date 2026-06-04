@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 #   "tool_executor"                        -> ToolExecutor
 #   "tool_metrics_repository"              -> ToolMetricsRepository
 #   "tool_embedding_repo"                  -> ToolEmbeddingRepository
+#   "workflow_step_repository"             -> WorkflowStepRepository
 #   "research_graph"                       -> CompiledStateGraph
 #   "config"                               -> MoiraConfig
 #
@@ -188,6 +189,16 @@ async def init_services(
 
     metrics_repo = SqliteToolMetricsRepository(db_path)
     _services["tool_metrics_repository"] = metrics_repo
+
+    from moira.persistence.sqlite.repos import SqliteWorkflowStepRepository
+
+    step_repo = SqliteWorkflowStepRepository(db_path)
+    _services["workflow_step_repository"] = step_repo
+
+    from moira.persistence.sqlite.repos import SqliteInferenceMetricsRepository
+
+    inference_metrics_repo = SqliteInferenceMetricsRepository(db_path)
+    _services["inference_metrics_repository"] = inference_metrics_repo
 
     executor = ToolExecutor(metrics_repo=metrics_repo)
     executor.register_tools(catalog.get_all())

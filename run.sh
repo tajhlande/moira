@@ -75,7 +75,8 @@ cmd_dev_backend() {
     check_config
     check_data_dir
     cd "$REPO_ROOT/backend"
-    MOIRA_CONFIG_FILE="$CONFIG_FILE" MOIRA_DATA_DIR="$DATA_DIR" \
+    source "$REPO_ROOT/.env"
+    MOIRA_CONFIG_FILE="$CONFIG_FILE" MOIRA_DATA_DIR="$DATA_DIR" MOIRA_SECRETS_KEY="$MOIRA_SECRETS_KEY" \
         uv run python -m uvicorn moira.main:app --reload --port 8000
 }
 

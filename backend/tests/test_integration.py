@@ -229,7 +229,9 @@ async def app_with_fake_inference(tmp_dir):
     # is the only inference client in the system.
     from moira.persistence.sqlite.repos import (
         SqliteConversationRepository,
+        SqliteInferenceMetricsRepository,
         SqliteModelPreferencesRepository,
+        SqliteWorkflowStepRepository,
     )
     from moira.persistence.sqlite.schema import run_migrations
 
@@ -238,9 +240,14 @@ async def app_with_fake_inference(tmp_dir):
 
     conversation_repo = SqliteConversationRepository(db_path)
     prefs_repo = SqliteModelPreferencesRepository(db_path)
+    step_repo = SqliteWorkflowStepRepository(db_path)
 
     _services["conversation_repository"] = conversation_repo
     _services["model_preferences_repository"] = prefs_repo
+    _services["workflow_step_repository"] = step_repo
+
+    inf_metrics_repo = SqliteInferenceMetricsRepository(db_path)
+    _services["inference_metrics_repository"] = inf_metrics_repo
 
     # Start the fake client (creates the httpx client with mock transport)
     await fake_client.start()

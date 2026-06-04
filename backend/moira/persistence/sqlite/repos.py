@@ -3,6 +3,10 @@ import logging
 import sqlite3
 from datetime import datetime, timezone
 
+from moira.inference.metrics import (
+    InferenceMetricsRepository,
+    InferenceMetricsRow,
+)
 from moira.persistence.interfaces import (
     Conversation,
     ConversationRepository,
@@ -13,6 +17,8 @@ from moira.persistence.interfaces import (
     ModelPreferencesRepository,
     ToolRepository,
     WorkflowRun,
+    WorkflowStep,
+    WorkflowStepRepository,
 )
 from moira.tools.base import ToolDefinition
 from moira.tools.metrics import ToolMetricsRepository, ToolMetricsRow
@@ -30,7 +36,7 @@ class SqliteConversationRepository(ConversationRepository):
     # and foreign_keys are set per-connection because PRAGMAs are
     # connection-scoped. If latency becomes an issue, consider aiosqlite.
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path)
+        conn = sqlite3.connect(self._db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -138,14 +144,11 @@ class SqliteConversationRepository(ConversationRepository):
             conn.execute(
                 "INSERT INTO workflow_runs "
                 "(id, conversation_id, user_message_id, thread_id, "
-                "execution_steps, tool_executions, verification_attempts, "
-                "report, budget_limit, budget_consumed, "
+                "tool_executions, report, budget_limit, budget_consumed, "
                 "error, status, started_at, completed_at, total_elapsed_ms) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
-                "execution_steps = excluded.execution_steps, "
                 "tool_executions = excluded.tool_executions, "
-                "verification_attempts = excluded.verification_attempts, "
                 "report = excluded.report, "
                 "budget_consumed = excluded.budget_consumed, "
                 "error = excluded.error, "
@@ -157,9 +160,7 @@ class SqliteConversationRepository(ConversationRepository):
                     run.conversation_id,
                     run.user_message_id,
                     run.thread_id,
-                    json.dumps(run.execution_steps),
                     json.dumps(run.tool_executions),
-                    json.dumps(run.verification_attempts),
                     json.dumps(run.report) if run.report else None,
                     run.budget_limit,
                     run.budget_consumed,
@@ -179,8 +180,7 @@ class SqliteConversationRepository(ConversationRepository):
         try:
             rows = conn.execute(
                 "SELECT id, conversation_id, user_message_id, thread_id, "
-                "execution_steps, tool_executions, verification_attempts, "
-                "report, budget_limit, budget_consumed, "
+                "tool_executions, report, budget_limit, budget_consumed, "
                 "error, status, started_at, completed_at, total_elapsed_ms "
                 "FROM workflow_runs WHERE conversation_id = ? ORDER BY started_at ASC",
                 (conversation_id,),
@@ -188,9 +188,10 @@ class SqliteConversationRepository(ConversationRepository):
             result = []
             for r in rows:
                 d = dict(r)
-                d["execution_steps"] = json.loads(d["execution_steps"])
-                d["tool_executions"] = json.loads(d["tool_executions"])
-                d["verification_attempts"] = json.loads(d["verification_attempts"])
+                te = d["tool_executions"]
+                d["tool_executions"] = (
+                    json.loads(te) if te else []
+                )
                 d["report"] = json.loads(d["report"]) if d["report"] else None
                 d["total_elapsed_ms"] = d["total_elapsed_ms"] or 0
                 result.append(WorkflowRun(**d))
@@ -224,7 +225,7 @@ class SqliteModelPreferencesRepository(ModelPreferencesRepository):
         self._db_path = db_path
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path)
+        conn = sqlite3.connect(self._db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -277,7 +278,7 @@ class SqliteToolRepository(ToolRepository):
         self._db_path = db_path
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path)
+        conn = sqlite3.connect(self._db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -388,7 +389,7 @@ class SqliteCredentialRepository(CredentialRepository):
         self._db_path = db_path
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path)
+        conn = sqlite3.connect(self._db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -488,7 +489,7 @@ class SqliteToolMetricsRepository(ToolMetricsRepository):
         self._db_path = db_path
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path)
+        conn = sqlite3.connect(self._db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -558,5 +559,168 @@ class SqliteToolMetricsRepository(ToolMetricsRepository):
                 params,
             ).fetchall()
             return [ToolMetricsRow(**dict(r)) for r in rows]
+        finally:
+            conn.close()
+
+
+class SqliteWorkflowStepRepository(WorkflowStepRepository):
+    def __init__(self, db_path: str):
+        self._db_path = db_path
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    async def save_step(self, step: WorkflowStep) -> int:
+        conn = self._connect()
+        try:
+            cursor = conn.execute(
+                "INSERT INTO workflow_steps "
+                "(workflow_run_id, node_name, label, status, cost, "
+                "budget_remaining, started_at, elapsed_ms, "
+                "purpose, model, call_count, "
+                "input_tokens, thinking_tokens, output_tokens, "
+                "prompt_time_ms, gen_time_ms, "
+                "error, detail) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    step.workflow_run_id,
+                    step.node_name,
+                    step.label,
+                    step.status,
+                    step.cost,
+                    step.budget_remaining,
+                    step.started_at,
+                    step.elapsed_ms,
+                    step.purpose,
+                    step.model,
+                    step.call_count,
+                    step.input_tokens,
+                    step.thinking_tokens,
+                    step.output_tokens,
+                    step.prompt_time_ms,
+                    step.gen_time_ms,
+                    step.error,
+                    json.dumps(step.detail) if step.detail else None,
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+
+    async def get_steps_for_run(self, workflow_run_id: str) -> list[WorkflowStep]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT id, workflow_run_id, node_name, label, status, cost, "
+                "budget_remaining, started_at, elapsed_ms, "
+                "purpose, model, call_count, "
+                "input_tokens, thinking_tokens, output_tokens, "
+                "prompt_time_ms, gen_time_ms, "
+                "error, detail "
+                "FROM workflow_steps WHERE workflow_run_id = ? ORDER BY id",
+                (workflow_run_id,),
+            ).fetchall()
+            result = []
+            for r in rows:
+                d = dict(r)
+                d["detail"] = json.loads(d["detail"]) if d["detail"] else None
+                result.append(WorkflowStep(**d))
+            return result
+        finally:
+            conn.close()
+
+
+class SqliteInferenceMetricsRepository(InferenceMetricsRepository):
+    def __init__(self, db_path: str):
+        self._db_path = db_path
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    async def record_step(
+        self,
+        model: str,
+        purpose: str,
+        period_hour: str,
+        call_count: int,
+        input_tokens: int,
+        output_tokens: int,
+        thinking_tokens: int,
+        prompt_time_ms: float,
+        gen_time_ms: float,
+    ) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                "INSERT INTO inference_metrics "
+                "(model, purpose, period_hour, call_count, "
+                "input_tokens, output_tokens, thinking_tokens, "
+                "prompt_time_ms, gen_time_ms) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(model, purpose, period_hour) DO UPDATE SET "
+                "call_count = call_count + excluded.call_count, "
+                "input_tokens = input_tokens + excluded.input_tokens, "
+                "output_tokens = output_tokens + excluded.output_tokens, "
+                "thinking_tokens = thinking_tokens + excluded.thinking_tokens, "
+                "prompt_time_ms = prompt_time_ms + excluded.prompt_time_ms, "
+                "gen_time_ms = gen_time_ms + excluded.gen_time_ms",
+                (
+                    model,
+                    purpose,
+                    period_hour,
+                    call_count,
+                    input_tokens,
+                    output_tokens,
+                    thinking_tokens,
+                    prompt_time_ms,
+                    gen_time_ms,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    async def get_metrics(
+        self,
+        model: str | None = None,
+        purpose: str | None = None,
+        period_start: str | None = None,
+        period_end: str | None = None,
+    ) -> list[InferenceMetricsRow]:
+        conn = self._connect()
+        try:
+            clauses: list[str] = []
+            params: list[str] = []
+            if model is not None:
+                clauses.append("model = ?")
+                params.append(model)
+            if purpose is not None:
+                clauses.append("purpose = ?")
+                params.append(purpose)
+            if period_start is not None:
+                clauses.append("period_hour >= ?")
+                params.append(period_start)
+            if period_end is not None:
+                clauses.append("period_hour <= ?")
+                params.append(period_end)
+            where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+            rows = conn.execute(
+                "SELECT model, purpose, period_hour, call_count, "
+                "input_tokens, output_tokens, thinking_tokens, "
+                "prompt_time_ms, gen_time_ms "
+                f"FROM inference_metrics{where} "
+                "ORDER BY period_hour DESC, model, purpose",
+                params,
+            ).fetchall()
+            return [InferenceMetricsRow(**dict(r)) for r in rows]
         finally:
             conn.close()

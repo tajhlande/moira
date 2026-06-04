@@ -122,6 +122,18 @@ export interface ToolMetricsRow {
   high_duration_ms: number;
 }
 
+export interface InferenceMetricsRow {
+  model: string;
+  purpose: string;
+  period_hour: string;
+  call_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  thinking_tokens: number;
+  prompt_time_ms: number;
+  gen_time_ms: number;
+}
+
 export const api = {
   health: () => request<{ status: string }>("/health"),
 
@@ -215,6 +227,16 @@ export const api = {
     const qs = params.toString();
     return request<{ metrics: ToolMetricsRow[] }>(
       `/metrics${qs ? `?${qs}` : ""}`,
+    );
+  },
+
+  getInferenceMetrics: (start?: string, end?: string) => {
+    const params = new URLSearchParams();
+    if (start) params.set("start", start);
+    if (end) params.set("end", end);
+    const qs = params.toString();
+    return request<{ metrics: InferenceMetricsRow[] }>(
+      `/metrics/inference${qs ? `?${qs}` : ""}`,
     );
   },
 };

@@ -3,7 +3,7 @@ import { NDatePicker, NText, NSpin } from "naive-ui";
 import { IconChartLine } from "@tabler/icons-vue";
 import { ref, computed, onMounted, watch, nextTick } from "vue";
 import { useChart } from "../composables/useChart";
-import { api, type ToolMetricsRow } from "../api/client";
+import { api, type ToolMetricsRow, type InferenceMetricsRow } from "../api/client";
 import {
   Chart as ChartJS,
   LineController,
@@ -43,10 +43,7 @@ const PALETTE = [
   "#64748b",
 ];
 
-const canvasRef = ref<HTMLCanvasElement>();
-const loading = ref(false);
-const error = ref<string | null>(null);
-const rows = ref<ToolMetricsRow[]>([]);
+// --- Shared date range ---
 
 const now = new Date();
 const thirtyDaysAgo = startOfDay(subDays(now, 30));
@@ -62,15 +59,40 @@ const endDate = computed(() =>
   format(new Date(dateRange.value[1]), "yyyy-MM-dd"),
 );
 
+const shortcuts = {
+  "Last 7 days": () => {
+    const end = new Date();
+    const start = startOfDay(subDays(end, 7));
+    return [start.getTime(), end.getTime()] as [number, number];
+  },
+  "Last 30 days": () => {
+    const end = new Date();
+    const start = startOfDay(subDays(end, 30));
+    return [start.getTime(), end.getTime()] as [number, number];
+  },
+  "Last 90 days": () => {
+    const end = new Date();
+    const start = startOfDay(subDays(end, 90));
+    return [start.getTime(), end.getTime()] as [number, number];
+  },
+};
+
+// --- Tool metrics chart ---
+
+const toolCanvasRef = ref<HTMLCanvasElement>();
+const toolLoading = ref(false);
+const toolError = ref<string | null>(null);
+const toolRows = ref<ToolMetricsRow[]>([]);
+
 interface DayBucket {
   date: string;
   count: number;
 }
 
-const chartDataByTool = computed(() => {
+const toolChartData = computed(() => {
   const byTool = new Map<string, Map<string, number>>();
 
-  for (const r of rows.value) {
+  for (const r of toolRows.value) {
     const day = r.period_hour.substring(0, 10);
     if (!byTool.has(r.tool_name)) byTool.set(r.tool_name, new Map());
     const dayMap = byTool.get(r.tool_name)!;
@@ -109,8 +131,8 @@ const chartDataByTool = computed(() => {
   return { toolDatasets, totalBuckets, sortedDays };
 });
 
-function buildDatasets(): ChartDataset<"line">[] {
-  const { toolDatasets, totalBuckets } = chartDataByTool.value;
+function buildToolDatasets(): ChartDataset<"line">[] {
+  const { toolDatasets, totalBuckets } = toolChartData.value;
   const datasets: ChartDataset<"line">[] = [];
 
   datasets.push({
@@ -142,31 +164,19 @@ function buildDatasets(): ChartDataset<"line">[] {
   return datasets;
 }
 
-const { create } = useChart<"line">(canvasRef, () => ({
+const { create: createToolChart } = useChart<"line">(toolCanvasRef, () => ({
   type: "line",
-  data: {
-    datasets: buildDatasets(),
-  },
+  data: { datasets: buildToolDatasets() },
   options: {
     responsive: true,
     maintainAspectRatio: false,
-    interaction: {
-      mode: "index",
-      intersect: false,
-    },
+    interaction: { mode: "index", intersect: false },
     plugins: {
       legend: {
         position: "bottom",
-        labels: {
-          usePointStyle: true,
-          pointStyle: "circle",
-          padding: 16,
-        },
+        labels: { usePointStyle: true, pointStyle: "circle", padding: 16 },
       },
-      tooltip: {
-        mode: "index",
-        intersect: false,
-      },
+      tooltip: { mode: "index", intersect: false },
     },
     scales: {
       x: {
@@ -176,55 +186,169 @@ const { create } = useChart<"line">(canvasRef, () => ({
         time: {
           unit: "day",
           tooltipFormat: "yyyy-MM-dd",
-          displayFormats: {
-            day: "MMM d",
-          },
+          displayFormats: { day: "MMM d" },
         },
-        grid: {
-          display: true,
-        },
-        ticks: {
-          maxTicksLimit: 15,
-          autoSkip: true,
-        },
-        title: {
-          display: true,
-          text: "Date",
-        },
+        grid: { display: true },
+        ticks: { maxTicksLimit: 15, autoSkip: true },
+        title: { display: true, text: "Date" },
       },
       y: {
         beginAtZero: true,
-        grid: {
-          display: true,
-        },
-        ticks: {
-          precision: 0,
-        },
-        title: {
-          display: true,
-          text: "Calls",
-        },
+        grid: { display: true },
+        ticks: { precision: 0 },
+        title: { display: true, text: "Calls" },
       },
     },
   },
 }));
 
+// --- Inference metrics chart ---
+
+const infCanvasRef = ref<HTMLCanvasElement>();
+const infLoading = ref(false);
+const infError = ref<string | null>(null);
+const infRows = ref<InferenceMetricsRow[]>([]);
+
+interface TokenDayBucket {
+  date: string;
+  input_tokens: number;
+  output_tokens: number;
+  thinking_tokens: number;
+}
+
+const infChartData = computed(() => {
+  const byDay = new Map<string, { input: number; output: number; thinking: number }>();
+
+  for (const r of infRows.value) {
+    const day = r.period_hour.substring(0, 10);
+    const acc = byDay.get(day) || { input: 0, output: 0, thinking: 0 };
+    acc.input += r.input_tokens;
+    acc.output += r.output_tokens;
+    acc.thinking += r.thinking_tokens;
+    byDay.set(day, acc);
+  }
+
+  const sortedDays = [...byDay.keys()].sort();
+
+  const inputBuckets: DayBucket[] = [];
+  const outputBuckets: DayBucket[] = [];
+  const thinkingBuckets: DayBucket[] = [];
+
+  for (const d of sortedDays) {
+    const acc = byDay.get(d)!;
+    inputBuckets.push({ date: d, count: acc.input });
+    outputBuckets.push({ date: d, count: acc.output });
+    thinkingBuckets.push({ date: d, count: acc.thinking });
+  }
+
+  return { inputBuckets, outputBuckets, thinkingBuckets, sortedDays };
+});
+
+function buildInfDatasets(): ChartDataset<"line">[] {
+  const { inputBuckets, outputBuckets, thinkingBuckets } = infChartData.value;
+  return [
+    {
+      label: "Input Tokens",
+      data: inputBuckets.map((b) => ({ x: b.date, y: b.count })),
+      borderColor: PALETTE[0],
+      backgroundColor: PALETTE[0] + "33",
+      borderWidth: 2,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      tension: 0.3,
+      fill: true,
+    },
+    {
+      label: "Output Tokens",
+      data: outputBuckets.map((b) => ({ x: b.date, y: b.count })),
+      borderColor: PALETTE[1],
+      backgroundColor: PALETTE[1] + "33",
+      borderWidth: 2,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      tension: 0.3,
+      fill: true,
+    },
+    {
+      label: "Thinking Tokens",
+      data: thinkingBuckets.map((b) => ({ x: b.date, y: b.count })),
+      borderColor: PALETTE[2],
+      backgroundColor: PALETTE[2] + "33",
+      borderWidth: 2,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      tension: 0.3,
+      fill: true,
+    },
+  ];
+}
+
+const { create: createInfChart } = useChart<"line">(infCanvasRef, () => ({
+  type: "line",
+  data: { datasets: buildInfDatasets() },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: {
+        position: "bottom",
+        labels: { usePointStyle: true, pointStyle: "circle", padding: 16 },
+      },
+      tooltip: { mode: "index", intersect: false },
+    },
+    scales: {
+      x: {
+        type: "time",
+        min: startDate.value,
+        max: endDate.value,
+        time: {
+          unit: "day",
+          tooltipFormat: "yyyy-MM-dd",
+          displayFormats: { day: "MMM d" },
+        },
+        grid: { display: true },
+        ticks: { maxTicksLimit: 15, autoSkip: true },
+        title: { display: true, text: "Date" },
+      },
+      y: {
+        beginAtZero: true,
+        grid: { display: true },
+        ticks: { precision: 0 },
+        title: { display: true, text: "Tokens" },
+      },
+    },
+  },
+}));
+
+// --- Data fetching ---
+
 async function fetchMetrics() {
-  loading.value = true;
-  error.value = null;
+  toolLoading.value = true;
+  toolError.value = null;
+  infLoading.value = true;
+  infError.value = null;
+
   try {
-    console.log("[analytics] fetching", startDate.value, endDate.value);
     const result = await api.getToolMetrics(startDate.value, endDate.value);
-    console.log("[analytics] got", result.metrics.length, "rows", result.metrics);
-    rows.value = result.metrics;
-    loading.value = false;
-    console.log("[analytics] datasets:", JSON.stringify(buildDatasets().map((d) => ({ label: d.label, points: d.data?.length }))));
+    toolRows.value = result.metrics;
+    toolLoading.value = false;
     await nextTick();
-    create();
+    createToolChart();
   } catch (e: any) {
-    console.error("[analytics] fetch error:", e);
-    error.value = e.message || "Failed to load metrics";
-    loading.value = false;
+    toolError.value = e.message || "Failed to load tool metrics";
+    toolLoading.value = false;
+  }
+
+  try {
+    const result = await api.getInferenceMetrics(startDate.value, endDate.value);
+    infRows.value = result.metrics;
+    infLoading.value = false;
+    await nextTick();
+    createInfChart();
+  } catch (e: any) {
+    infError.value = e.message || "Failed to load inference metrics";
+    infLoading.value = false;
   }
 }
 
@@ -233,24 +357,6 @@ watch(dateRange, () => {
 });
 
 onMounted(fetchMetrics);
-
-const shortcuts = {
-  "Last 7 days": () => {
-    const end = new Date();
-    const start = startOfDay(subDays(end, 7));
-    return [start.getTime(), end.getTime()] as [number, number];
-  },
-  "Last 30 days": () => {
-    const end = new Date();
-    const start = startOfDay(subDays(end, 30));
-    return [start.getTime(), end.getTime()] as [number, number];
-  },
-  "Last 90 days": () => {
-    const end = new Date();
-    const start = startOfDay(subDays(end, 90));
-    return [start.getTime(), end.getTime()] as [number, number];
-  },
-};
 </script>
 
 <template>
@@ -260,32 +366,51 @@ const shortcuts = {
       <NText class="section-title">Analytics</NText>
     </div>
 
+    <div class="controls">
+      <NDatePicker
+        v-model:value="dateRange"
+        type="daterange"
+        clearable
+        :shortcuts="shortcuts"
+        start-placeholder="Start date"
+        end-placeholder="End date"
+        style="width: 360px"
+      />
+    </div>
+
     <div class="chart-panel">
       <div class="chart-panel-header">
         <NText strong>Tool Calls</NText>
       </div>
-      <div class="controls">
-        <NDatePicker
-          v-model:value="dateRange"
-          type="daterange"
-          clearable
-          :shortcuts="shortcuts"
-          start-placeholder="Start date"
-          end-placeholder="End date"
-          style="width: 360px"
-        />
-      </div>
-      <div v-if="loading" class="chart-loading">
+      <div v-if="toolLoading" class="chart-loading">
         <NSpin size="medium" />
       </div>
-      <div v-else-if="error" class="chart-error">
-        <NText type="error">{{ error }}</NText>
+      <div v-else-if="toolError" class="chart-error">
+        <NText type="error">{{ toolError }}</NText>
       </div>
-      <div v-else-if="rows.length === 0" class="chart-empty">
-        <NText depth="3">No metrics data available for this period.</NText>
+      <div v-else-if="toolRows.length === 0" class="chart-empty">
+        <NText depth="3">No tool metrics data available for this period.</NText>
       </div>
       <div v-else class="chart-container">
-        <canvas ref="canvasRef"></canvas>
+        <canvas ref="toolCanvasRef"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-panel" style="margin-top: 16px">
+      <div class="chart-panel-header">
+        <NText strong>Token Usage</NText>
+      </div>
+      <div v-if="infLoading" class="chart-loading">
+        <NSpin size="medium" />
+      </div>
+      <div v-else-if="infError" class="chart-error">
+        <NText type="error">{{ infError }}</NText>
+      </div>
+      <div v-else-if="infRows.length === 0" class="chart-empty">
+        <NText depth="3">No inference metrics data available for this period.</NText>
+      </div>
+      <div v-else class="chart-container">
+        <canvas ref="infCanvasRef"></canvas>
       </div>
     </div>
   </div>

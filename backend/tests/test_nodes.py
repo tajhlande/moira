@@ -78,8 +78,8 @@ class TestPlanning:
     ):
         mock_model[
             "client"
-        ].chat_completion.return_value = (
-            "1. Look up the speed of light\n2. Verify with multiple sources"
+        ].chat_completion.return_value = ChatResponse(
+            content="1. Look up the speed of light\n2. Verify with multiple sources"
         )
         _inject_services(config, mock_model)
 
@@ -229,7 +229,9 @@ class TestToolSelection:
     async def test_selects_tools_from_model_response(
         self, config, mock_writer, mock_model, base_state
     ):
-        mock_model["client"].chat_completion.return_value = '["web_search"]'
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content='["web_search"]'
+        )
         _inject_services(config, mock_model)
         base_state["active_tools"] = [
             ToolDefinition(name="web_search", description="Search the web"),
@@ -247,7 +249,9 @@ class TestToolSelection:
     async def test_fallback_to_all_tools_if_model_returns_empty(
         self, config, mock_writer, mock_model, base_state
     ):
-        mock_model["client"].chat_completion.return_value = "I cannot parse this"
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content="I cannot parse this"
+        )
         _inject_services(config, mock_model)
         base_state["active_tools"] = [
             ToolDefinition(name="web_search", description="Search"),
@@ -277,7 +281,11 @@ class TestResearchExecution:
     ):
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
-            json.dumps([{"tool": "web_search", "args": {"query": "speed of light"}}]),
+            ChatResponse(
+                content=json.dumps(
+                    [{"tool": "web_search", "args": {"query": "speed of light"}}]
+                )
+            ),
             ChatResponse(content="Research complete."),
         ]
 
@@ -311,7 +319,9 @@ class TestResearchExecution:
     async def test_emits_tool_result_events(self, config, mock_writer, mock_model, base_state):
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
-            json.dumps([{"tool": "web_search", "args": {"query": "test"}}]),
+            ChatResponse(
+                content=json.dumps([{"tool": "web_search", "args": {"query": "test"}}])
+            ),
             ChatResponse(content="Done."),
         ]
         mock_executor = AsyncMock()
@@ -348,9 +358,24 @@ class TestResearchExecution:
     async def test_multi_round_tool_loop(self, config, mock_writer, mock_model, base_state):
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
-            json.dumps([{"tool": "web_search", "args": {"query": "speed of light"}}]),
-            json.dumps([{"tool": "url_content", "args": {"url": "https://example.com/physics"}}]),
-            ChatResponse(content="Research complete. The speed of light is 299,792,458 m/s."),
+            ChatResponse(
+                content=json.dumps(
+                    [{"tool": "web_search", "args": {"query": "speed of light"}}]
+                )
+            ),
+            ChatResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "tool": "url_content",
+                            "args": {"url": "https://example.com/physics"},
+                        }
+                    ]
+                )
+            ),
+            ChatResponse(
+                content="Research complete. The speed of light is 299,792,458 m/s."
+            ),
         ]
 
         mock_executor = AsyncMock()
@@ -399,7 +424,9 @@ class TestCompression:
     ):
         mock_model[
             "client"
-        ].chat_completion.return_value = "Key findings: speed of light is ~3e8 m/s"
+        ].chat_completion.return_value = ChatResponse(
+            content="Key findings: speed of light is ~3e8 m/s"
+        )
         _inject_services(config, mock_model)
         base_state["findings"] = [
             Finding(
@@ -440,8 +467,8 @@ class TestDraftSynthesis:
     async def test_produces_draft_from_evidence(self, config, mock_writer, mock_model, base_state):
         mock_model[
             "client"
-        ].chat_completion.return_value = (
-            "The speed of light is approximately 3 x 10^8 m/s [web_search]."
+        ].chat_completion.return_value = ChatResponse(
+            content="The speed of light is approximately 3 x 10^8 m/s [web_search]."
         )
         _inject_services(config, mock_model)
         base_state["plan"] = "Search for speed of light"
@@ -612,7 +639,16 @@ class TestVerification:
         # Phase 1 (fact-check): returns tool call, then no more calls.
         # Phase 2 (verdict): returns structured JSON.
         mock_model["client"].chat_completion.side_effect = [
-            json.dumps([{"tool": "web_search", "args": {"query": "speed of light exact value"}}]),
+            ChatResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "tool": "web_search",
+                            "args": {"query": "speed of light exact value"},
+                        }
+                    ]
+                )
+            ),
             ChatResponse(content="Fact-checking complete."),
             ChatResponse(
                 content=json.dumps(
@@ -666,7 +702,11 @@ class TestVerification:
         _services["tool_executor"] = mock_executor
 
         mock_model["client"].chat_completion.side_effect = [
-            json.dumps([{"tool": "web_search", "args": {"query": "speed of light"}}]),
+            ChatResponse(
+                content=json.dumps(
+                    [{"tool": "web_search", "args": {"query": "speed of light"}}]
+                )
+            ),
             ChatResponse(content="Found contradiction."),
             ChatResponse(
                 content=json.dumps(
@@ -729,14 +769,16 @@ class TestVerification:
 
 class TestReportGeneration:
     async def test_verified_path(self, config, mock_writer, mock_model, base_state):
-        mock_model["client"].chat_completion.return_value = json.dumps(
-            {
-                "answer": "The speed of light is 299,792,458 m/s.",
-                "citations": [{"source": "web_search"}],
-                "support": [],
-                "critiques": ["Limited to vacuum measurement"],
-                "unverified_claims": [],
-            }
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps(
+                {
+                    "answer": "The speed of light is 299,792,458 m/s.",
+                    "citations": [{"source": "web_search"}],
+                    "support": [],
+                    "critiques": ["Limited to vacuum measurement"],
+                    "unverified_claims": [],
+                }
+            )
         )
         _inject_services(config, mock_model)
         base_state["draft"] = "Draft about speed of light"
@@ -754,14 +796,16 @@ class TestReportGeneration:
         assert report["budget_consumed"] == 43.0
 
     async def test_budget_exhausted_path(self, config, mock_writer, mock_model, base_state):
-        mock_model["client"].chat_completion.return_value = json.dumps(
-            {
-                "answer": "Partial answer.",
-                "citations": [],
-                "support": [],
-                "critiques": ["Incomplete verification"],
-                "unverified_claims": ["claim X not verified"],
-            }
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps(
+                {
+                    "answer": "Partial answer.",
+                    "citations": [],
+                    "support": [],
+                    "critiques": ["Incomplete verification"],
+                    "unverified_claims": ["claim X not verified"],
+                }
+            )
         )
         _inject_services(config, mock_model)
         base_state["draft"] = "Some draft"
@@ -777,14 +821,16 @@ class TestReportGeneration:
         assert "claim X not verified" in report["unverified_claims"]
 
     async def test_error_path(self, config, mock_writer, mock_model, base_state):
-        mock_model["client"].chat_completion.return_value = json.dumps(
-            {
-                "answer": "Partial answer from interrupted workflow.",
-                "citations": [],
-                "support": [],
-                "critiques": [],
-                "unverified_claims": [],
-            }
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps(
+                {
+                    "answer": "Partial answer from interrupted workflow.",
+                    "citations": [],
+                    "support": [],
+                    "critiques": [],
+                    "unverified_claims": [],
+                }
+            )
         )
         _inject_services(config, mock_model)
         base_state["error"] = "Model timeout during research"
@@ -801,14 +847,16 @@ class TestReportGeneration:
     async def test_always_runs_regardless_of_budget(
         self, config, mock_writer, mock_model, base_state
     ):
-        mock_model["client"].chat_completion.return_value = json.dumps(
-            {
-                "answer": "Emergency answer.",
-                "citations": [],
-                "support": [],
-                "critiques": [],
-                "unverified_claims": [],
-            }
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps(
+                {
+                    "answer": "Emergency answer.",
+                    "citations": [],
+                    "support": [],
+                    "critiques": [],
+                    "unverified_claims": [],
+                }
+            )
         )
         _inject_services(config, mock_model)
         base_state["budget_remaining"] = 0.0
@@ -822,14 +870,16 @@ class TestReportGeneration:
         assert result["report"]["answer"] == "Emergency answer."
 
     async def test_robust_to_missing_state_fields(self, config, mock_writer, mock_model):
-        mock_model["client"].chat_completion.return_value = json.dumps(
-            {
-                "answer": "Best effort answer.",
-                "citations": [],
-                "support": [],
-                "critiques": [],
-                "unverified_claims": [],
-            }
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps(
+                {
+                    "answer": "Best effort answer.",
+                    "citations": [],
+                    "support": [],
+                    "critiques": [],
+                    "unverified_claims": [],
+                }
+            )
         )
         _inject_services(config, mock_model)
         # Minimal state as if failure happened at planning

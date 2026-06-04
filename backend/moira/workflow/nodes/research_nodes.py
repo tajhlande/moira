@@ -5,6 +5,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
 from moira.config import MoiraConfig
+from moira.inference.metrics import TokenCounts
 from moira.models.state import ResearchState, VerificationReport
 from moira.prompts import get_prompt
 from moira.workflow.budget import can_execute, deduct_cost, full_cycle_cost
@@ -90,11 +91,36 @@ def _emit_node_end(
     node: str,
     budget_remaining: float,
     detail: dict | None = None,
+    *,
+    purpose: str | None = None,
+    model: str | None = None,
+    call_count: int | None = None,
+    input_tokens: int | None = None,
+    thinking_tokens: int | None = None,
+    output_tokens: int | None = None,
+    prompt_time_ms: float | None = None,
+    gen_time_ms: float | None = None,
 ) -> None:
     """Emit a node_end event with optional detail dict."""
     payload: dict = {"node": node, "timestamp": _now(), "budget_remaining": budget_remaining}
     if detail:
         payload["detail"] = detail
+    if purpose is not None:
+        payload["purpose"] = purpose
+    if model is not None:
+        payload["model"] = model
+    if call_count is not None:
+        payload["call_count"] = call_count
+    if input_tokens is not None:
+        payload["input_tokens"] = input_tokens
+    if thinking_tokens is not None:
+        payload["thinking_tokens"] = thinking_tokens
+    if output_tokens is not None:
+        payload["output_tokens"] = output_tokens
+    if prompt_time_ms is not None:
+        payload["prompt_time_ms"] = prompt_time_ms
+    if gen_time_ms is not None:
+        payload["gen_time_ms"] = gen_time_ms
     writer({"event": "node_end", "payload": payload})
 
 
@@ -172,7 +198,7 @@ async def _run_tool_loop(
     max_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
     temperature: float = 0.5,
     max_parse_retries: int = DEFAULT_MAX_PARSE_RETRIES,
-) -> tuple[str, str | None, list[dict]]:
+) -> tuple[str, str | None, list[dict], TokenCounts, int]:
     """Run a multi-round tool-use loop. The model produces tool calls, they
     are executed, and results are fed back as assistant/user messages. The
     loop continues until the model stops producing tool calls or max_rounds
@@ -183,12 +209,14 @@ async def _run_tool_loop(
     retried up to max_parse_retries times before treating the round as
     a no-call (loop stops).
 
-    Returns (final_response, thinking, all_tool_results) where
+    Returns (final_response, thinking, all_tool_results, token_counts, call_count) where
     all_tool_results is a flat list of dicts with 'tool', 'args', 'output',
     'success', 'duration_ms' keys for every tool call across all rounds."""
     all_tool_results: list[dict] = []
     response = ""
     thinking = None
+    token_counts = TokenCounts()
+    call_count = 0
 
     for round_num in range(max_rounds):
         _log_prompts(node, messages)
@@ -196,6 +224,8 @@ async def _run_tool_loop(
         raw = await resolved.client.chat_completion(
             model=resolved.model_id, messages=messages, temperature=temperature
         )
+        token_counts.accumulate(raw)
+        call_count += 1
         response, thinking = _extract(node, raw)
 
         # If the response can't be parsed as tool calls and isn't a
@@ -227,6 +257,8 @@ async def _run_tool_loop(
                     messages=messages,
                     temperature=max(temperature - 0.2, 0.1),
                 )
+                token_counts.accumulate(raw)
+                call_count += 1
                 response, thinking = _extract(node, raw)
                 parsed = _parse_tool_calls(response)
                 if parsed or response.strip() in ("[]", "[]\n"):
@@ -266,7 +298,7 @@ async def _run_tool_loop(
             len(round_results),
         )
 
-    return response, thinking, all_tool_results
+    return response, thinking, all_tool_results, token_counts, call_count
 
 
 async def planning(state: ResearchState, config: RunnableConfig) -> dict:
@@ -303,6 +335,14 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
         node,
         new_budget,
         detail=_build_detail(plan, thinking, messages=messages),
+        purpose="intelligence",
+        model=raw.model or resolved.model_id,
+        call_count=1,
+        input_tokens=raw.input_tokens,
+        thinking_tokens=raw.thinking_tokens,
+        output_tokens=raw.output_tokens,
+        prompt_time_ms=raw.prompt_time_ms,
+        gen_time_ms=raw.gen_time_ms,
     )
 
     logger.info("PLANNING complete, plan length=%d", len(plan))
@@ -426,6 +466,14 @@ async def tool_selection(state: ResearchState, config: RunnableConfig) -> dict:
             messages=messages,
             structured_output={"selected_tools": [t.name for t in selected_tools]},
         ),
+        purpose="intelligence",
+        model=raw.model or resolved.model_id,
+        call_count=1,
+        input_tokens=raw.input_tokens,
+        thinking_tokens=raw.thinking_tokens,
+        output_tokens=raw.output_tokens,
+        prompt_time_ms=raw.prompt_time_ms,
+        gen_time_ms=raw.gen_time_ms,
     )
     logger.info("Tool selection chose %d tools", len(selected_tools))
     logger.debug("TOOL SELECTION Complete")
@@ -474,7 +522,8 @@ async def research_execution(state: ResearchState, config: RunnableConfig) -> di
         },
     ]
 
-    response, thinking, all_tool_results = await _run_tool_loop(
+    resolved_model_id = (await registry.resolve("intelligence")).model_id
+    response, thinking, all_tool_results, tokens, loop_call_count = await _run_tool_loop(
         node, messages, active_tools, executor, registry, "intelligence", writer
     )
 
@@ -499,7 +548,20 @@ async def research_execution(state: ResearchState, config: RunnableConfig) -> di
         },
     )
 
-    _emit_node_end(writer, node, new_budget, detail=detail)
+    _emit_node_end(
+        writer,
+        node,
+        new_budget,
+        detail=detail,
+        purpose="intelligence",
+        model=resolved_model_id,
+        call_count=loop_call_count,
+        input_tokens=tokens.input_tokens or None,
+        thinking_tokens=tokens.thinking_tokens or None,
+        output_tokens=tokens.output_tokens or None,
+        prompt_time_ms=tokens.prompt_time_ms or None,
+        gen_time_ms=tokens.gen_time_ms or None,
+    )
 
     logger.info("Research execution produced %d findings", len(findings))
     logger.debug("RESEARCH EXECUTION Complete")
@@ -554,6 +616,14 @@ async def compression(state: ResearchState, config: RunnableConfig) -> dict:
         node,
         new_budget,
         detail=_build_detail(compressed_text, thinking, messages=messages),
+        purpose="task",
+        model=raw.model or resolved.model_id,
+        call_count=1,
+        input_tokens=raw.input_tokens,
+        thinking_tokens=raw.thinking_tokens,
+        output_tokens=raw.output_tokens,
+        prompt_time_ms=raw.prompt_time_ms,
+        gen_time_ms=raw.gen_time_ms,
     )
 
     logger.info("Compression complete, output length=%d", len(compressed_text))
@@ -632,6 +702,14 @@ async def draft_synthesis(state: ResearchState, config: RunnableConfig) -> dict:
         node,
         new_budget,
         detail=_build_detail(draft, thinking, messages=messages),
+        purpose="intelligence",
+        model=raw.model or resolved.model_id,
+        call_count=1,
+        input_tokens=raw.input_tokens,
+        thinking_tokens=raw.thinking_tokens,
+        output_tokens=raw.output_tokens,
+        prompt_time_ms=raw.prompt_time_ms,
+        gen_time_ms=raw.gen_time_ms,
     )
 
     logger.info("Draft synthesis complete, length=%d", len(draft))
@@ -668,6 +746,8 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
     fact_check_messages: list[dict[str, str]] = []
     final_response = ""
     final_thinking: str | None = None
+    fc_tokens = TokenCounts()
+    fc_call_count = 0
 
     if active_tools:
         executor = _get_executor(config)
@@ -687,7 +767,13 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
             },
         ]
 
-        fc_response, fc_thinking, all_tool_results = await _run_tool_loop(
+        (
+            fc_response,
+            fc_thinking,
+            all_tool_results,
+            fc_tokens,
+            fc_call_count,
+        ) = await _run_tool_loop(
             node,
             fact_check_messages,
             active_tools,
@@ -868,7 +954,38 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
     else:
         detail["structured_output"] = structured
 
-    _emit_node_end(writer, node, new_budget, detail=detail)
+    total_tokens = TokenCounts()
+    total_tokens.input_tokens = fc_tokens.input_tokens
+    total_tokens.output_tokens = fc_tokens.output_tokens
+    total_tokens.thinking_tokens = fc_tokens.thinking_tokens
+    total_tokens.prompt_time_ms = fc_tokens.prompt_time_ms
+    total_tokens.gen_time_ms = fc_tokens.gen_time_ms
+    if raw.input_tokens:
+        total_tokens.input_tokens += raw.input_tokens
+    if raw.output_tokens:
+        total_tokens.output_tokens += raw.output_tokens
+    if raw.thinking_tokens:
+        total_tokens.thinking_tokens += raw.thinking_tokens
+    if raw.prompt_time_ms:
+        total_tokens.prompt_time_ms += raw.prompt_time_ms
+    if raw.gen_time_ms:
+        total_tokens.gen_time_ms += raw.gen_time_ms
+    total_call_count = fc_call_count + 1
+
+    _emit_node_end(
+        writer,
+        node,
+        new_budget,
+        detail=detail,
+        purpose="intelligence",
+        model=raw.model or resolved.model_id,
+        call_count=total_call_count,
+        input_tokens=total_tokens.input_tokens or None,
+        thinking_tokens=total_tokens.thinking_tokens or None,
+        output_tokens=total_tokens.output_tokens or None,
+        prompt_time_ms=total_tokens.prompt_time_ms or None,
+        gen_time_ms=total_tokens.gen_time_ms or None,
+    )
 
     logger.info(
         "Verification complete: outcome=%s, case=%d, assessment=%s",
@@ -944,6 +1061,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     registry = _get_registry(config)
     thinking: str | None = None
     response_text = ""
+    raw = None
     try:
         resolved = await registry.resolve("intelligence")
         _log_prompts(node, messages)
@@ -981,17 +1099,34 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     if is_error_path:
         report["critiques"] = report.get("critiques", []) + [f"Workflow interrupted: {error}"]
 
-    _emit_node_end(
-        writer,
-        node,
-        new_budget,
-        detail=_build_detail(
-            response_text,
-            thinking,
-            messages=messages,
-            structured_output=report,
-        ),
+    detail = _build_detail(
+        response_text,
+        thinking,
+        messages=messages,
+        structured_output=report,
     )
+    if raw is not None:
+        _emit_node_end(
+            writer,
+            node,
+            new_budget,
+            detail=detail,
+            purpose="intelligence",
+            model=raw.model or resolved.model_id,
+            call_count=1,
+            input_tokens=raw.input_tokens,
+            thinking_tokens=raw.thinking_tokens,
+            output_tokens=raw.output_tokens,
+            prompt_time_ms=raw.prompt_time_ms,
+            gen_time_ms=raw.gen_time_ms,
+        )
+    else:
+        _emit_node_end(
+            writer,
+            node,
+            new_budget,
+            detail=detail,
+        )
     writer(
         {
             "event": "run_complete",

@@ -74,6 +74,56 @@ async def get_conversation(
         raise HTTPException(status_code=404, detail="Conversation not found")
     messages = await conversations.get_messages(conversation_id)
     runs = await conversations.get_workflow_runs(conversation_id)
+
+    from typing import cast
+
+    from moira.persistence.interfaces import WorkflowStepRepository
+
+    step_repo = cast(
+        WorkflowStepRepository,
+        service_provider("workflow_step_repository"),
+    )
+
+    run_responses = []
+    for r in runs:
+        steps = await step_repo.get_steps_for_run(r.id)
+        run_responses.append(
+            {
+                "id": r.id,
+                "user_message_id": r.user_message_id,
+                "execution_steps": [
+                    {
+                        "node": s.node_name,
+                        "label": s.label,
+                        "status": s.status,
+                        "cost": s.cost,
+                        "budget_remaining": s.budget_remaining,
+                        "elapsed_ms": s.elapsed_ms,
+                        "started_at": s.started_at,
+                        "error": s.error if s.error else None,
+                        "detail": s.detail,
+                    }
+                    for s in steps
+                ],
+                "tool_executions": r.tool_executions,
+                "verification_attempts": [
+                    s.detail.get("structured_output", {})
+                    for s in steps
+                    if s.node_name == "verification"
+                    and s.detail
+                    and s.detail.get("structured_output")
+                ],
+                "report": r.report,
+                "budget_limit": r.budget_limit,
+                "budget_consumed": r.budget_consumed,
+                "error": r.error,
+                "status": r.status,
+                "started_at": r.started_at,
+                "completed_at": r.completed_at,
+                "total_elapsed_ms": r.total_elapsed_ms,
+            }
+        )
+
     return {
         "id": conversation.id,
         "title": conversation.title,
@@ -88,24 +138,7 @@ async def get_conversation(
             for m in messages
             if m.role in ("user", "assistant")
         ],
-        "runs": [
-            {
-                "id": r.id,
-                "user_message_id": r.user_message_id,
-                "execution_steps": r.execution_steps,
-                "tool_executions": r.tool_executions,
-                "verification_attempts": r.verification_attempts,
-                "report": r.report,
-                "budget_limit": r.budget_limit,
-                "budget_consumed": r.budget_consumed,
-                "error": r.error,
-                "status": r.status,
-                "started_at": r.started_at,
-                "completed_at": r.completed_at,
-                "total_elapsed_ms": r.total_elapsed_ms,
-            }
-            for r in runs
-        ],
+        "runs": run_responses,
     }
 
 
@@ -431,5 +464,45 @@ async def get_metrics(
                 "high_duration_ms": r.high_duration_ms,
             }
             for r in filtered
+        ]
+    }
+
+
+@router.get("/metrics/inference")
+async def get_inference_metrics(
+    start: str | None = None,
+    end: str | None = None,
+):
+    """Return inference metrics aggregated by model and purpose. start/end
+    are ISO date strings (YYYY-MM-DD) converted to period_hour range."""
+    from moira.inference.metrics import InferenceMetricsRepository
+
+    repo = cast(
+        InferenceMetricsRepository,
+        service_provider("inference_metrics_repository"),
+    )
+
+    period_start = f"{start}T00:00" if start else None
+    period_end = f"{end}T23:59" if end else None
+
+    rows = await repo.get_metrics(
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    return {
+        "metrics": [
+            {
+                "model": r.model,
+                "purpose": r.purpose,
+                "period_hour": r.period_hour,
+                "call_count": r.call_count,
+                "input_tokens": r.input_tokens,
+                "output_tokens": r.output_tokens,
+                "thinking_tokens": r.thinking_tokens,
+                "prompt_time_ms": r.prompt_time_ms,
+                "gen_time_ms": r.gen_time_ms,
+            }
+            for r in rows
         ]
     }

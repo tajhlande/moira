@@ -25,6 +25,11 @@ class ChatResponse:
     thinking: str = ""
     model: str = ""
     finish_reason: str = ""
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    thinking_tokens: int | None = None
+    prompt_time_ms: float | None = None
+    gen_time_ms: float | None = None
 
 
 class InferenceClient:
@@ -95,9 +100,17 @@ class InferenceClient:
         thinking = message.get("reasoning_content", "")
         if thinking:
             logger.debug("Model thinking (reasoning_content): %s", thinking[:2000])
+        usage = data.get("usage") or {}
+        completion_details = usage.get("completion_tokens_details") or {}
+        timings = data.get("timings") or {}
         return ChatResponse(
             content=message.get("content", ""),
             thinking=thinking,
             model=data.get("model", model),
             finish_reason=choice.get("finish_reason", ""),
+            input_tokens=usage.get("prompt_tokens"),
+            output_tokens=usage.get("completion_tokens"),
+            thinking_tokens=completion_details.get("reasoning_tokens"),
+            prompt_time_ms=timings.get("prompt_ms"),
+            gen_time_ms=timings.get("predicted_ms"),
         )

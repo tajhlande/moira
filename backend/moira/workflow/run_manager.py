@@ -4,7 +4,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from langgraph.graph.state import CompiledStateGraph
 
@@ -61,7 +61,6 @@ class ActiveRun:
         # Accumulated state mirrors WorkflowRun fields
         self.execution_steps: list[dict] = []
         self.tool_executions: list[dict] = []
-        self.verification_attempts: list[dict] = []
         self.report: dict | None = None
         self.error: str = ""
         self.status: str = "running"
@@ -137,13 +136,29 @@ class ActiveRun:
             )
 
         # Verification attempts
-        for attempt in self.verification_attempts:
-            events.append(
-                {
-                    "event": "verification_report",
-                    "data": json.dumps(attempt),
-                }
-            )
+        # Verification attempts reconstructed from verification steps'
+        # detail.structured_output for SSE replay compatibility.
+        for step in self.execution_steps:
+            if step.get("node") == "verification" and step.get("detail", {}).get(
+                "structured_output"
+            ):
+                step_idx = self.execution_steps.index(step) + 1
+                attempt_num = sum(
+                    1
+                    for s in self.execution_steps[:step_idx]
+                    if s.get("node") == "verification"
+                )
+                events.append(
+                    {
+                        "event": "verification_report",
+                        "data": json.dumps(
+                            {
+                                "report": step["detail"]["structured_output"],
+                                "attempt": attempt_num,
+                            }
+                        ),
+                    }
+                )
 
         # Report (if run already completed)
         if self.report:
@@ -335,6 +350,23 @@ class ActiveRun:
                     if "detail" not in self._current_step:
                         self._current_step["detail"] = {}
                     self._current_step["detail"].update(payload["detail"])
+                # Merge inference metadata from the node_end payload.
+                for key in (
+                    "purpose",
+                    "model",
+                    "call_count",
+                    "input_tokens",
+                    "thinking_tokens",
+                    "output_tokens",
+                    "prompt_time_ms",
+                    "gen_time_ms",
+                ):
+                    if key in payload:
+                        self._current_step[key] = payload[key]
+                # Persist the step to the workflow_steps table. Done
+                # before appending to the in-memory list so the row is
+                # written even if a subsequent error interrupts the run.
+                asyncio.create_task(self._persist_step(dict(self._current_step)))
                 self.execution_steps.append(self._current_step)
                 self._current_step = None
             payload["elapsed_ms"] = elapsed_ms
@@ -365,12 +397,10 @@ class ActiveRun:
             persist = True
 
         elif event_type == "verification_report":
-            self.verification_attempts.append(
-                {
-                    "report": payload.get("report", {}),
-                    "attempt": payload.get("attempt", 0),
-                }
-            )
+            # Verification reports are now embedded in the verification
+            # step's detail.structured_output via node_end. We still
+            # broadcast the SSE event and persist run metadata, but no
+            # longer maintain a separate verification_attempts list.
             persist = True
 
         elif event_type == "run_complete":
@@ -415,9 +445,11 @@ class ActiveRun:
         self.budget_consumed = self.budget_limit - self.budget_remaining
 
     async def _persist(self) -> None:
-        """Upsert the current accumulated state as a WorkflowRun.
-        Serialized via an asyncio.Lock so concurrent create_task calls
-        don't collide on SQLite. Uses retry with backoff for resilience."""
+        """Upsert run-level metadata as a WorkflowRun. Steps are persisted
+        individually via _persist_step() on node_end, so this only writes
+        status, budget, error, and other run-level fields. Serialized via
+        an asyncio.Lock so concurrent create_task calls don't collide on
+        SQLite."""
         import sqlite3
 
         async with self._persist_lock:
@@ -426,9 +458,7 @@ class ActiveRun:
                 conversation_id=self.conversation_id,
                 user_message_id=self.user_message_id,
                 thread_id=self.thread_id,
-                execution_steps=self.execution_steps,
                 tool_executions=self.tool_executions,
-                verification_attempts=self.verification_attempts,
                 report=self.report,
                 budget_limit=float(self.budget_limit),
                 budget_consumed=self.budget_consumed,
@@ -453,6 +483,73 @@ class ActiveRun:
                         await asyncio.sleep(0.1 * (attempt + 1))
                         continue
                     raise
+
+    async def _persist_step(self, step_dict: dict) -> None:
+        """Write a completed step to the workflow_steps table and upsert
+        aggregated metrics into inference_metrics. Swallows exceptions so
+        step persistence failures never break graph execution."""
+        try:
+            from moira.persistence.interfaces import WorkflowStep
+
+            step_repo = cast(
+                type,
+                self._run_manager._get_service("workflow_step_repository"),
+            )
+            detail = step_dict.get("detail")
+            wf_step = WorkflowStep(
+                id=None,
+                workflow_run_id=self.run_id,
+                node_name=step_dict.get("node", ""),
+                label=step_dict.get("label", ""),
+                status=step_dict.get("status", "completed"),
+                cost=step_dict.get("cost", 0),
+                budget_remaining=step_dict.get("budget_remaining", 0),
+                started_at=step_dict.get("started_at", ""),
+                elapsed_ms=step_dict.get("elapsed_ms", 0),
+                purpose=step_dict.get("purpose"),
+                model=step_dict.get("model"),
+                call_count=step_dict.get("call_count"),
+                input_tokens=step_dict.get("input_tokens"),
+                thinking_tokens=step_dict.get("thinking_tokens"),
+                output_tokens=step_dict.get("output_tokens"),
+                prompt_time_ms=step_dict.get("prompt_time_ms"),
+                gen_time_ms=step_dict.get("gen_time_ms"),
+                error=step_dict.get("error", ""),
+                detail=detail if isinstance(detail, dict) else None,
+            )
+            await step_repo.save_step(wf_step)
+
+            model = step_dict.get("model")
+            purpose = step_dict.get("purpose")
+            if model and purpose:
+                from datetime import datetime as dt
+                from datetime import timezone
+
+                started_at = step_dict.get("started_at", "")
+                if len(started_at) >= 13:
+                    period_hour = started_at[:13] + ":00"
+                else:
+                    period_hour = dt.now(timezone.utc).strftime(
+                        "%Y-%m-%dT%H:00"
+                    )
+
+                inference_repo = cast(
+                    type,
+                    self._run_manager._get_service("inference_metrics_repository"),
+                )
+                await inference_repo.record_step(
+                    model=model,
+                    purpose=purpose,
+                    period_hour=period_hour,
+                    call_count=step_dict.get("call_count") or 1,
+                    input_tokens=step_dict.get("input_tokens") or 0,
+                    output_tokens=step_dict.get("output_tokens") or 0,
+                    thinking_tokens=step_dict.get("thinking_tokens") or 0,
+                    prompt_time_ms=step_dict.get("prompt_time_ms") or 0.0,
+                    gen_time_ms=step_dict.get("gen_time_ms") or 0.0,
+                )
+        except Exception:
+            logger.debug("Failed to persist step for run %s", self.run_id, exc_info=True)
 
     def _broadcast(self, event: Any) -> None:
         """Put an event into all subscriber queues. Drops the oldest event
@@ -506,12 +603,24 @@ class RunManager:
         self._active_runs[run_id] = active_run
         self._conversation_runs[conversation_id] = run_id
 
+        # Inject run_id into the graph config so nodes can identify
+        # which run they belong to.
+        graph_config = dict(graph_config)
+        configurable = dict(graph_config.get("configurable", {}))
+        configurable["run_id"] = run_id
+        graph_config["configurable"] = configurable
+
         # Persist initial state so the run is visible immediately
         await active_run._persist()
 
         active_run.start_graph(graph, initial_state, graph_config)
         logger.info("Started run %s for conversation %s", run_id, conversation_id)
         return run_id
+
+    def _get_service(self, name: str) -> object:
+        from moira.service_setup import service_provider
+
+        return service_provider(name)
 
     def get_active_run(self, conversation_id: str) -> ActiveRun | None:
         """Look up the active run for a conversation. Returns None if no
