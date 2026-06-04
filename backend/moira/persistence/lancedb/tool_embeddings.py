@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from pathlib import Path
 
@@ -13,7 +14,12 @@ class ToolEmbeddingRepository:
     """LanceDB-backed storage for tool description embeddings. Supports
     upsert (for startup ingestion) and similarity search (for Tool
     Discovery). This is the vector store counterpart to the SQLite tool
-    metadata."""
+    metadata.
+
+    All LanceDB I/O is synchronous, so every public method offloads
+    work to a thread executor to keep the asyncio event loop
+    responsive during tool discovery streaming.
+    """
 
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -21,8 +27,11 @@ class ToolEmbeddingRepository:
         self._table_name = "tool_embeddings"
 
     async def start(self) -> None:
-        Path(self._db_path).mkdir(parents=True, exist_ok=True)
-        self._db = lancedb.connect(self._db_path)
+        def _open():
+            Path(self._db_path).mkdir(parents=True, exist_ok=True)
+            self._db = lancedb.connect(self._db_path)
+
+        await asyncio.to_thread(_open)
         logger.info("LanceDB opened at %s", self._db_path)
 
     async def upsert(
@@ -49,28 +58,32 @@ class ToolEmbeddingRepository:
             }
             data.append(entry)
 
-        try:
-            table = self._db.open_table(self._table_name)
-            existing = table.to_pandas()
-            existing_names = set(existing["name"].tolist())
-            new_data = [d for d in data if d["name"] not in existing_names]
-            update_names = [d["name"] for d in data if d["name"] in existing_names]
+        db = self._db
+        table_name = self._table_name
 
-            if update_names:
-                # Delete old entries for updated tools, then add them back
-                for name in update_names:
-                    table.delete(f'name = "{name}"')
-                update_data = [d for d in data if d["name"] in update_names]
-                table.add(update_data)
-                logger.debug("Updated %d existing tool embeddings", len(update_names))
+        def _upsert():
+            try:
+                table = db.open_table(table_name)
+                existing = table.to_pandas()
+                existing_names = set(existing["name"].tolist())
+                new_data = [d for d in data if d["name"] not in existing_names]
+                update_names = [d["name"] for d in data if d["name"] in existing_names]
 
-            if new_data:
-                table.add(new_data)
-                logger.debug("Added %d new tool embeddings", len(new_data))
-        except (FileNotFoundError, ValueError):
-            # First time: table doesn't exist yet, create it
-            self._db.create_table(self._table_name, data)
-            logger.info("Created tool_embeddings table with %d entries", len(data))
+                if update_names:
+                    for name in update_names:
+                        table.delete(f'name = "{name}"')
+                    update_data = [d for d in data if d["name"] in update_names]
+                    table.add(update_data)
+                    logger.debug("Updated %d existing tool embeddings", len(update_names))
+
+                if new_data:
+                    table.add(new_data)
+                    logger.debug("Added %d new tool embeddings", len(new_data))
+            except (FileNotFoundError, ValueError):
+                db.create_table(table_name, data)
+                logger.info("Created tool_embeddings table with %d entries", len(data))
+
+        await asyncio.to_thread(_upsert)
 
     async def search(
         self,
@@ -80,36 +93,48 @@ class ToolEmbeddingRepository:
         """Search for tools by embedding similarity. Returns ToolDefinition
         objects with name, description, and placeholder fields."""
         assert self._db is not None
-        try:
-            table = self._db.open_table(self._table_name)
-        except (FileNotFoundError, ValueError, Exception) as e:
-            logger.info("tool_embeddings table not available (%s), returning empty", e)
-            return []
+        db = self._db
+        table_name = self._table_name
 
-        query_array = np.array(query_embedding, dtype=np.float32)
-        results = (
-            table.search(query_array)
-            .where("enabled = true", prefilter=True)
-            .limit(top_k)
-            .to_list()
-        )
+        def _search():
+            try:
+                table = db.open_table(table_name)
+            except (FileNotFoundError, ValueError, Exception) as e:
+                logger.info("tool_embeddings table not available (%s), returning empty", e)
+                return []
 
-        definitions = []
-        for row in results:
-            definitions.append(
-                ToolDefinition(
-                    name=row["name"],
-                    description=row["description"],
-                )
+            query_array = np.array(query_embedding, dtype=np.float32)
+            results = (
+                table.search(query_array)
+                .where("enabled = true", prefilter=True)
+                .limit(top_k)
+                .to_list()
             )
-        return definitions
+
+            definitions = []
+            for row in results:
+                definitions.append(
+                    ToolDefinition(
+                        name=row["name"],
+                        description=row["description"],
+                    )
+                )
+            return definitions
+
+        return await asyncio.to_thread(_search)
 
     async def delete(self, name: str) -> None:
         """Remove a tool from the index by name."""
         assert self._db is not None
-        try:
-            table = self._db.open_table(self._table_name)
-            table.delete(f'name = "{name}"')
-            logger.debug("Deleted tool '%s' from vector index", name)
-        except (FileNotFoundError, ValueError, Exception):
-            pass
+        db = self._db
+        table_name = self._table_name
+
+        def _delete():
+            try:
+                table = db.open_table(table_name)
+                table.delete(f'name = "{name}"')
+                logger.debug("Deleted tool '%s' from vector index", name)
+            except (FileNotFoundError, ValueError, Exception):
+                pass
+
+        await asyncio.to_thread(_delete)
