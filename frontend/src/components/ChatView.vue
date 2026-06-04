@@ -51,6 +51,12 @@ function toggleStep(index: number) {
   expandedSteps.value = next;
 }
 
+const runningStepExpanded = ref(false);
+
+function toggleRunningStep() {
+  runningStepExpanded.value = !runningStepExpanded.value;
+}
+
 function stepHasDetail(step: ExecutionStep): boolean {
   return !!step.detail && Object.keys(step.detail).length > 0;
 }
@@ -302,37 +308,59 @@ async function copyMessage(content: string, index: number) {
                   <StepDetailContent :detail="step.detail!" />
                 </div>
               </div>
-              <div v-if="store.currentStep" class="step-row running">
-                <IconLoader :size="16" class="spinning" />
-                <span class="step-label">{{
-                  store.currentStep.label
-                }}</span>
-                <span
-                  v-if="toolCallCount(store.currentStep) > 0"
-                  class="step-tool-indicators"
-                >
-                  <template v-if="toolCallCount(store.currentStep) <= 10">
-                    <IconTool
-                      v-for="ti in toolCallCount(store.currentStep)"
-                      :key="ti"
-                      :size="13"
-                      class="tool-indicator-icon"
+              <div v-if="store.currentStep">
+                <div class="step-row running">
+                  <IconLoader :size="16" class="spinning" />
+                  <span class="step-label">{{
+                    store.currentStep.label
+                  }}</span>
+                  <span
+                    v-if="toolCallCount(store.currentStep) > 0"
+                    class="step-tool-indicators"
+                  >
+                    <template v-if="toolCallCount(store.currentStep) <= 10">
+                      <IconTool
+                        v-for="ti in toolCallCount(store.currentStep)"
+                        :key="ti"
+                        :size="13"
+                        class="tool-indicator-icon"
+                      />
+                    </template>
+                    <template v-else>
+                      <IconTool :size="13" class="tool-indicator-icon" />
+                      <span class="tool-indicator-count"
+                        >&times;{{ toolCallCount(store.currentStep) }}</span
+                      >
+                    </template>
+                  </span>
+                  <span class="step-elapsed">{{
+                    formatElapsed(liveElapsedMs(store.currentStep))
+                  }}</span>
+                  <span class="step-budget"
+                    >{{ store.currentStep.budget_remaining }} remaining</span
+                  >
+                  <button
+                    v-if="stepHasDetail(store.currentStep)"
+                    class="step-toggle"
+                    @click="toggleRunningStep"
+                  >
+                    <IconChevronDown
+                      v-if="runningStepExpanded"
+                      :size="14"
                     />
-                  </template>
-                  <template v-else>
-                    <IconTool :size="13" class="tool-indicator-icon" />
-                    <span class="tool-indicator-count"
-                      >&times;{{ toolCallCount(store.currentStep) }}</span
-                    >
-                  </template>
-                </span>
-                <span class="step-elapsed">{{
-                  formatElapsed(liveElapsedMs(store.currentStep))
-                }}</span>
-                <span class="step-budget"
-                  >{{ store.currentStep.budget_remaining }} remaining</span
+                    <IconChevronRight v-else :size="14" />
+                  </button>
+                  <span v-else class="step-toggle-placeholder" />
+                </div>
+                <div
+                  v-if="
+                    runningStepExpanded &&
+                    stepHasDetail(store.currentStep)
+                  "
+                  class="step-detail"
                 >
-                <span class="step-toggle-placeholder" />
+                  <StepDetailContent :detail="store.currentStep.detail!" />
+                </div>
               </div>
             </div>
 
@@ -342,7 +370,10 @@ async function copyMessage(content: string, index: number) {
                 store.toolExecutions.length > 0 &&
                 !store.executionSteps.some(
                   (s) => s.detail?.tool_results?.length,
-                )
+                ) &&
+                !(
+                  store.currentStep?.detail?.tool_results as unknown[]
+                )?.length
               "
               class="tool-calls-panel"
             >
