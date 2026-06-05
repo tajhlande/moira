@@ -96,6 +96,7 @@ The system must prioritize:
 The [agent-docs](agent-docs) directory contains specific guidance for architecture, design, 
 user experience, and critique notes. 
 See [agent-docs/index.md](agent-docs/index.md) for a list of documents and what they contain. 
+See [agent-docs/core/](agent-docs/core/) for the core application architecture and description docs.
 
 
 

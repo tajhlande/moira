@@ -42,6 +42,7 @@ have not been fully completed yet.
 | Document | Description |
 |---|---|
 | **conversation-state.md** | Conceptual data model of a conversation (Section 0) and complete inventory of every data element across all implementation layers. |
+| **state-management-cleanup.md** | Migration plan to unify frontend/backend run state around a canonical snapshot model and remove live-vs-persisted UI duplication. |
 | **agent-craft.md** | Running notes on prompt tuning, model behavior observations, and the non-structural factors that make the agent trustworthy. |
 | **two-pass-discovery.md** | Plan for restructuring tool discovery to run before and after planning so plans are tool-aware. |
 | **tool-secrets-and-spec.md** | Plan for encrypted secrets storage on tools and spec-from-implementation (config/secret schemas from tool classes, not DB). |

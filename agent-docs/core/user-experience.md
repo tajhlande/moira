@@ -32,13 +32,9 @@ After receiving a research report, the user can ask follow-up questions within t
 
 When the user sends a follow-up message:
 
-1. **Prior report is carried forward** — the planning node receives the answer from the previous research report as context. This allows the agent to build on its prior work rather than starting from scratch.
+1. **Prior questions and reports are carried forward** — the planning node receives the answer from the previous research report as context. This allows the agent to build on its prior work rather than starting from scratch.
 2. **A new research cycle runs** — the full workflow executes again (planning through report generation) with the new question informed by the prior report.
 3. **A new report is produced** — the follow-up report appears in the conversation, building on the prior findings.
 
-The conversation sidebar shows the full history of messages and reports. Each report is a self-contained research result, but the agent has enough context from the prior report to do coherent follow-on work.
+The conversation sidebar shows the full history of conversations that each contain messages and reports. Each report is a self-contained research result, but the agent has enough context from the prior report to do coherent follow-on work.
 
-### Current limitations
-
-- Only the prior report's answer text is passed to planning. Citations, critiques, and unverified claims from the prior report are not currently included.
-- The full chat transcript is not included in context by default. The architecture specifies a future `conversation_history` tool that the agent could use to retrieve individual messages on demand, but this has not been built yet.
