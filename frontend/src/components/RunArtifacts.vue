@@ -133,7 +133,7 @@ function formatElapsed(ms: number | undefined): string {
         </div>
       </div>
       <NButton
-        v-if="run.status === 'stopped'"
+        v-if="run.status === 'stopped' || run.status === 'error'"
         type="primary"
         ghost
         size="small"
@@ -143,7 +143,7 @@ function formatElapsed(ms: number | undefined): string {
         <template #icon>
           <IconRestore :size="16" />
         </template>
-        Resume
+        {{ run.status === 'error' ? 'Retry' : 'Resume' }}
       </NButton>
     </div>
 

@@ -390,7 +390,7 @@ async function copyMessage(content: string, index: number) {
               </div>
               </div>
               <NButton
-                v-if="store.runStopped && !store.loading"
+                v-if="(store.runStopped || store.runErrored) && !store.loading"
                 type="primary"
                 ghost
                 class="resume-button"
@@ -399,7 +399,7 @@ async function copyMessage(content: string, index: number) {
                 <template #icon>
                   <IconRestore :size="16" />
                 </template>
-                Resume
+                {{ store.runErrored ? 'Retry' : 'Resume' }}
               </NButton>
             </div>
 

@@ -51,6 +51,7 @@ export const useChatStore = defineStore("chat", () => {
   const runningConversations = ref<Set<string>>(new Set());
 
   const runStopped = ref(false);
+  const runErrored = ref(false);
 
   let streamAbort: AbortController | null = null;
   let globalEventsAbort: AbortController | null = null;
@@ -169,6 +170,7 @@ export const useChatStore = defineStore("chat", () => {
     activeUserMessageId.value = null;
     totalElapsedMs.value = null;
     runStopped.value = false;
+    runErrored.value = false;
   }
 
   async function selectConversation(id: string) {
@@ -195,15 +197,15 @@ export const useChatStore = defineStore("chat", () => {
         // If this is a resumed run, pre-seed executionSteps from the
         // previous stopped run so the user sees completed steps while
         // the resumed stream begins.
-        const stoppedRun = detail.runs.find(
+        const priorRun = detail.runs.find(
           (r) =>
-            r.status === "stopped" &&
+            (r.status === "stopped" || r.status === "error") &&
             r.user_message_id === runningRun.user_message_id,
         );
-        if (stoppedRun) {
-          executionSteps.value = [...stoppedRun.execution_steps];
-          budgetRemaining.value = stoppedRun.budget_limit - stoppedRun.budget_consumed;
-          budgetConsumed.value = stoppedRun.budget_consumed;
+        if (priorRun) {
+          executionSteps.value = [...priorRun.execution_steps];
+          budgetRemaining.value = priorRun.budget_limit - priorRun.budget_consumed;
+          budgetConsumed.value = priorRun.budget_consumed;
         }
 
         connectStream(id, runningRun.user_message_id);
@@ -213,6 +215,14 @@ export const useChatStore = defineStore("chat", () => {
       if (stoppedRun && !runningRun) {
         runStopped.value = true;
         activeUserMessageId.value = stoppedRun.user_message_id;
+      }
+
+      const erroredRun = detail.runs.find(
+        (r) => r.status === "error" && !r.report,
+      );
+      if (erroredRun && !runningRun && !stoppedRun) {
+        runErrored.value = true;
+        activeUserMessageId.value = erroredRun.user_message_id;
       }
     } catch (e: any) {
       error.value = e.message;
@@ -281,8 +291,24 @@ export const useChatStore = defineStore("chat", () => {
     loading.value = true;
     error.value = null;
     runStopped.value = false;
+    runErrored.value = false;
 
-    // Remove the stopped run from the persisted map so the template
+    // Pre-seed execution steps from the prior run's completed steps
+    // (excluding the stopped/error step) so they remain visible while
+    // the resumed stream begins.
+    const priorRun = activeUserMessageId.value
+      ? runs.value.get(activeUserMessageId.value)
+      : null;
+    if (priorRun) {
+      const completedSteps = priorRun.execution_steps.filter(
+        (s) => s.status === "completed",
+      );
+      executionSteps.value = completedSteps;
+      budgetConsumed.value = priorRun.budget_consumed;
+      budgetRemaining.value = priorRun.budget_limit - priorRun.budget_consumed;
+    }
+
+    // Remove the resumable run from the persisted map so the template
     // switches from RunArtifacts to the live streaming path.
     if (activeUserMessageId.value) {
       const newMap = new Map(runs.value);
@@ -478,6 +504,7 @@ export const useChatStore = defineStore("chat", () => {
       case "run_error":
         error.value = payload.error;
         runStopped.value = false;
+        runErrored.value = true;
         if (currentStep.value) {
           currentStep.value.status = "error";
           currentStep.value.error = payload.error;
@@ -617,5 +644,6 @@ export const useChatStore = defineStore("chat", () => {
     isConversationRunning,
     runningConversations,
     runStopped,
+    runErrored,
   };
 });

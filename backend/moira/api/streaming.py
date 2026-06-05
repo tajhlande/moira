@@ -188,9 +188,10 @@ async def stop_run(conversation_id: str):
 
 @streaming_router.post("/conversations/{conversation_id}/runs/resume")
 async def resume_run(conversation_id: str):
-    """Resume a previously stopped run. Loads the thread_id from the
-    persisted run, creates a new ActiveRun, and starts the graph from
-    the checkpoint."""
+    """Resume a previously stopped or errored run. Loads the thread_id
+    from the persisted run, creates a new ActiveRun, and starts the
+    graph from the checkpoint. This re-executes the node that was
+    running when the stop/error occurred."""
     run_mgr = _run_manager()
     if run_mgr.get_active_run(conversation_id) is not None:
         raise HTTPException(
@@ -200,15 +201,15 @@ async def resume_run(conversation_id: str):
 
     conversations = _conversations()
     runs = await conversations.get_workflow_runs(conversation_id)
-    stopped_run = None
+    resumable_run = None
     for run in reversed(runs):
-        if run.status == "stopped":
-            stopped_run = run
+        if run.status in ("stopped", "error"):
+            resumable_run = run
             break
-    if stopped_run is None:
+    if resumable_run is None:
         raise HTTPException(
             status_code=404,
-            detail="No stopped run found for this conversation",
+            detail="No stopped or errored run found for this conversation",
         )
 
     config = _config()
@@ -217,4 +218,4 @@ async def resume_run(conversation_id: str):
         config=config,
         conversation_repo=conversations,
     )
-    return {"run_id": run_id, "user_message_id": stopped_run.user_message_id}
+    return {"run_id": run_id, "user_message_id": resumable_run.user_message_id}

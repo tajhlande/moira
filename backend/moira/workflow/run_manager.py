@@ -333,6 +333,21 @@ class ActiveRun:
             )
             return
 
+        if self.status == "error":
+            await self._conversation_repo.insert_message(
+                self.conversation_id,
+                "assistant",
+                "The research run encountered an error and could not generate a report.",
+            )
+            self._broadcast(_STREAM_END)
+            self._run_manager.remove_run(self.run_id)
+            logger.info(
+                "Run %s errored (%d execution_steps)",
+                self.run_id,
+                len(self.execution_steps),
+            )
+            return
+
         if self.report:
             await self._conversation_repo.insert_message(
                 self.conversation_id,
@@ -340,12 +355,6 @@ class ActiveRun:
                 json.dumps(self.report),
             )
             logger.info("Persisted report for conversation %s", self.conversation_id)
-        else:
-            await self._conversation_repo.insert_message(
-                self.conversation_id,
-                "assistant",
-                "Unable to generate a research report.",
-            )
 
         self._broadcast(_STREAM_END)
         self._run_manager.remove_run(self.run_id)
@@ -453,6 +462,21 @@ class ActiveRun:
             )
             return
 
+        if self.status == "error":
+            await self._conversation_repo.insert_message(
+                self.conversation_id,
+                "assistant",
+                "The research run encountered an error and could not generate a report.",
+            )
+            self._broadcast(_STREAM_END)
+            self._run_manager.remove_run(self.run_id)
+            logger.info(
+                "Run %s errored (%d execution_steps)",
+                self.run_id,
+                len(self.execution_steps),
+            )
+            return
+
         if self.report:
             await self._conversation_repo.insert_message(
                 self.conversation_id,
@@ -460,12 +484,6 @@ class ActiveRun:
                 json.dumps(self.report),
             )
             logger.info("Persisted report for conversation %s", self.conversation_id)
-        else:
-            await self._conversation_repo.insert_message(
-                self.conversation_id,
-                "assistant",
-                "Unable to generate a research report.",
-            )
 
         self._broadcast(_STREAM_END)
         self._run_manager.remove_run(self.run_id)
@@ -891,21 +909,21 @@ class RunManager:
         config: MoiraConfig,
         conversation_repo: ConversationRepository,
     ) -> str:
-        """Resume a previously stopped run. Loads the thread_id from the
-        persisted WorkflowRun, creates a new ActiveRun, and starts the
-        graph from the checkpoint using ``Command(resume=True)``.
+        """Resume a previously stopped or errored run. Loads the thread_id
+        from the persisted WorkflowRun, creates a new ActiveRun, and starts
+        the graph from the checkpoint using ``Command(resume=True)``.
         Returns the new run_id."""
         from langgraph.graph.state import CompiledStateGraph
         from langgraph.types import Command
 
         runs = await conversation_repo.get_workflow_runs(conversation_id)
-        stopped_run = None
+        resumable_run = None
         for run in reversed(runs):
-            if run.status == "stopped":
-                stopped_run = run
+            if run.status in ("stopped", "error"):
+                resumable_run = run
                 break
-        if stopped_run is None:
-            raise ValueError(f"No stopped run found for conversation {conversation_id}")
+        if resumable_run is None:
+            raise ValueError(f"No stopped or errored run found for conversation {conversation_id}")
 
         graph = cast(CompiledStateGraph, self._get_service("research_graph"))
 
@@ -915,22 +933,22 @@ class RunManager:
         active_run = ActiveRun(
             run_id=run_id,
             conversation_id=conversation_id,
-            user_message_id=stopped_run.user_message_id,
-            thread_id=stopped_run.thread_id,
+            user_message_id=resumable_run.user_message_id,
+            thread_id=resumable_run.thread_id,
             started_at=started_at,
-            budget_limit=float(stopped_run.budget_limit),
+            budget_limit=float(resumable_run.budget_limit),
             conversation_repo=conversation_repo,
             run_manager=self,
         )
-        active_run.budget_remaining = stopped_run.budget_limit - stopped_run.budget_consumed
-        active_run.budget_consumed = stopped_run.budget_consumed
+        active_run.budget_remaining = resumable_run.budget_limit - resumable_run.budget_consumed
+        active_run.budget_consumed = resumable_run.budget_consumed
 
         self._active_runs[run_id] = active_run
         self._conversation_runs[conversation_id] = run_id
 
         graph_config = {
             "configurable": {
-                "thread_id": stopped_run.thread_id,
+                "thread_id": resumable_run.thread_id,
                 "run_id": run_id,
                 "moira_config": config,
             },
@@ -940,10 +958,11 @@ class RunManager:
 
         active_run.start_graph_resume(graph, Command(resume=True), graph_config)
         logger.info(
-            "Resumed run %s for conversation %s (thread %s)",
+            "Resumed run %s for conversation %s (thread %s, previous status=%s)",
             run_id,
             conversation_id,
-            stopped_run.thread_id,
+            resumable_run.thread_id,
+            resumable_run.status,
         )
         self._broadcast_global(
             {
