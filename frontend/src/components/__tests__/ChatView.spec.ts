@@ -109,40 +109,77 @@ function mockStartRunAndStream(events: { event: string; data: string }[]) {
   mockFetch.mockResolvedValueOnce(createSSEResponse(events));
 }
 
+function runSnapshot(
+  partial: Partial<Record<string, unknown>>,
+): { event: string; data: string } {
+  return {
+    event: "run_snapshot",
+    data: JSON.stringify({
+      id: "run-1",
+      conversation_id: "conv-1",
+      user_message_id: 1,
+      status: "running",
+      budget_limit: 50,
+      budget_consumed: 0,
+      error: "",
+      report: null,
+      execution_steps: [],
+      state_version: 1,
+      started_at: new Date().toISOString(),
+      completed_at: "",
+      updated_at: new Date().toISOString(),
+      ...partial,
+    }),
+  };
+}
+
 describe("ChatView", () => {
   it("renders chat messages using mocked SSE streaming", async () => {
     mockStartRunAndStream([
-      {
-        event: "node_start",
-        data: JSON.stringify({
-          node: "planning",
-          timestamp: "t1",
-          started_at: new Date().toISOString(),
-        }),
-      },
-      {
-        event: "node_end",
-        data: JSON.stringify({
-          node: "planning",
-          timestamp: "t2",
-          budget_remaining: 48,
-          elapsed_ms: 1200,
-        }),
-      },
-      {
-        event: "run_complete",
-        data: JSON.stringify({
-          report: {
-            answer: "Mocked SSE response",
-            citations: [],
-            support: [],
-            critiques: [],
-            unverified_claims: [],
-            budget_consumed: 21,
+      runSnapshot({
+        state_version: 2,
+        execution_steps: [
+          {
+            id: "1",
+            node: "planning",
+            label: "Planning",
+            status: "running",
+            cost: 0,
+            budget_remaining: 50,
+            tool_call_count: 0,
+            step_version: 1,
+            has_detail: false,
           },
-          total_elapsed_ms: 5000,
-        }),
-      },
+        ],
+      }),
+      runSnapshot({
+        state_version: 3,
+        status: "completed",
+        budget_consumed: 21,
+        total_elapsed_ms: 5000,
+        report: {
+          answer: "Mocked SSE response",
+          citations: [],
+          support: [],
+          critiques: [],
+          unverified_claims: [],
+          budget_consumed: 21,
+        },
+        execution_steps: [
+          {
+            id: "1",
+            node: "planning",
+            label: "Planning",
+            status: "completed",
+            cost: 2,
+            budget_remaining: 48,
+            elapsed_ms: 1200,
+            tool_call_count: 0,
+            step_version: 2,
+            has_detail: false,
+          },
+        ],
+      }),
     ]);
 
     const pinia = createPinia();
@@ -161,35 +198,50 @@ describe("ChatView", () => {
 
   it("finalizes run with steps and timing after stream completes", async () => {
     mockStartRunAndStream([
-      {
-        event: "node_start",
-        data: JSON.stringify({
-          node: "planning",
-          started_at: new Date().toISOString(),
-        }),
-      },
-      {
-        event: "node_end",
-        data: JSON.stringify({
-          node: "planning",
-          budget_remaining: 48,
-          elapsed_ms: 1200,
-        }),
-      },
-      {
-        event: "run_complete",
-        data: JSON.stringify({
-          report: {
-            answer: "Done",
-            citations: [],
-            support: [],
-            critiques: [],
-            unverified_claims: [],
-            budget_consumed: 2,
+      runSnapshot({
+        state_version: 2,
+        execution_steps: [
+          {
+            id: "1",
+            node: "planning",
+            label: "Planning",
+            status: "running",
+            cost: 0,
+            budget_remaining: 50,
+            tool_call_count: 0,
+            step_version: 1,
+            has_detail: false,
           },
-          total_elapsed_ms: 5000,
-        }),
-      },
+        ],
+      }),
+      runSnapshot({
+        state_version: 3,
+        status: "completed",
+        budget_consumed: 2,
+        total_elapsed_ms: 5000,
+        report: {
+          answer: "Done",
+          citations: [],
+          support: [],
+          critiques: [],
+          unverified_claims: [],
+          budget_consumed: 2,
+        },
+        execution_steps: [
+          {
+            id: "1",
+            node: "planning",
+            label: "Planning",
+            status: "completed",
+            cost: 2,
+            budget_remaining: 48,
+            elapsed_ms: 1200,
+            tool_call_count: 0,
+            step_version: 2,
+            has_detail: false,
+          },
+        ],
+      }),
     ]);
 
     const pinia = createPinia();
@@ -205,8 +257,8 @@ describe("ChatView", () => {
 
     // Live state should still be present (not cleared)
     expect(store.executionSteps.length).toBe(1);
-    expect(store.executionSteps[0].label).toBe("Planning");
-    expect(store.executionSteps[0].elapsed_ms).toBe(1200);
+    expect(store.executionSteps[0]!.label).toBe("Planning");
+    expect(store.executionSteps[0]!.elapsed_ms).toBe(1200);
 
     // The run should also be in the runs map
     const userMsg = store.messages.find((m) => m.role === "user");
@@ -219,63 +271,102 @@ describe("ChatView", () => {
     expect(run!.total_elapsed_ms).toBe(5000);
   });
 
-  it("shows steps when run_complete arrives before final node_end (backend event order)", async () => {
-    // The backend report_generation node emits run_complete BEFORE node_end.
-    // This test reproduces that exact event ordering to verify steps don't disappear.
+  it("ignores stale out-of-order run snapshots by state_version", async () => {
     mockStartRunAndStream([
-      {
-        event: "node_start",
-        data: JSON.stringify({
-          node: "planning",
-          started_at: new Date().toISOString(),
-        }),
-      },
-      {
-        event: "node_end",
-        data: JSON.stringify({
-          node: "planning",
-          budget_remaining: 48,
-          elapsed_ms: 1000,
-        }),
-      },
-      {
-        event: "node_start",
-        data: JSON.stringify({
-          node: "report_generation",
-          started_at: new Date().toISOString(),
-        }),
-      },
-      // run_complete fires BEFORE report_generation's node_end
-      {
-        event: "run_complete",
-        data: JSON.stringify({
-          report: {
-            answer: "Final answer",
-            citations: [],
-            support: [],
-            critiques: [],
-            unverified_claims: [],
-            budget_consumed: 10,
+      runSnapshot({
+        state_version: 2,
+        execution_steps: [
+          {
+            id: "1",
+            node: "planning",
+            label: "Planning",
+            status: "completed",
+            cost: 2,
+            budget_remaining: 48,
+            elapsed_ms: 1000,
+            tool_call_count: 0,
+            step_version: 2,
+            has_detail: false,
           },
-          total_elapsed_ms: 8000,
-        }),
-      },
-      // node_end for report_generation arrives AFTER run_complete
-      {
-        event: "node_end",
-        data: JSON.stringify({
-          node: "report_generation",
-          budget_remaining: 40,
-          elapsed_ms: 2000,
-        }),
-      },
+        ],
+      }),
+      runSnapshot({
+        state_version: 4,
+        status: "completed",
+        budget_consumed: 10,
+        total_elapsed_ms: 8000,
+        report: {
+          answer: "Final answer",
+          citations: [],
+          support: [],
+          critiques: [],
+          unverified_claims: [],
+          budget_consumed: 10,
+        },
+        execution_steps: [
+          {
+            id: "1",
+            node: "planning",
+            label: "Planning",
+            status: "completed",
+            cost: 2,
+            budget_remaining: 48,
+            elapsed_ms: 1000,
+            tool_call_count: 0,
+            step_version: 2,
+            has_detail: false,
+          },
+          {
+            id: "2",
+            node: "report_generation",
+            label: "Generating Report",
+            status: "completed",
+            cost: 3,
+            budget_remaining: 40,
+            elapsed_ms: 2000,
+            tool_call_count: 0,
+            step_version: 2,
+            has_detail: false,
+          },
+        ],
+      }),
+      // stale snapshot should be ignored
+      runSnapshot({
+        state_version: 3,
+        status: "running",
+        execution_steps: [
+          {
+            id: "1",
+            node: "planning",
+            label: "Planning",
+            status: "completed",
+            cost: 2,
+            budget_remaining: 48,
+            elapsed_ms: 1000,
+            tool_call_count: 0,
+            step_version: 2,
+            has_detail: false,
+          },
+          {
+            id: "2",
+            node: "report_generation",
+            label: "Generating Report",
+            status: "running",
+            cost: 0,
+            budget_remaining: 40,
+            tool_call_count: 0,
+            step_version: 1,
+            has_detail: false,
+          },
+        ],
+      }),
     ]);
 
     const pinia = createPinia();
     setActivePinia(pinia);
     const store = useChatStore();
 
-    await store.sendMessage("test ordering");
+    await store.sendMessage("state version ordering");
     await flushUi();
 
     // Both steps must be in the finalized run
@@ -283,8 +374,9 @@ describe("ChatView", () => {
     const run = store.getRunForMessage(userMsg!.id);
     expect(run).not.toBeNull();
     expect(run!.execution_steps.length).toBe(2);
-    expect(run!.execution_steps[0].label).toBe("Planning");
-    expect(run!.execution_steps[1].label).toBe("Generating Report");
+    expect(run!.execution_steps[0]!.label).toBe("Planning");
+    expect(run!.execution_steps[1]!.label).toBe("Generating Report");
+    expect(run!.status).toBe("completed");
     expect(run!.report).not.toBeNull();
     expect(run!.report!.answer).toBe("Final answer");
   });
@@ -294,50 +386,74 @@ describe("ChatView", () => {
     // The bug symptom: steps disappear when finalizeRun switches rendering from
     // live template to RunArtifacts component.
     mockStartRunAndStream([
-      {
-        event: "node_start",
-        data: JSON.stringify({
-          node: "planning",
-          started_at: new Date().toISOString(),
-        }),
-      },
-      {
-        event: "node_end",
-        data: JSON.stringify({
-          node: "planning",
-          budget_remaining: 48,
-          elapsed_ms: 1000,
-        }),
-      },
-      {
-        event: "node_start",
-        data: JSON.stringify({
-          node: "report_generation",
-          started_at: new Date().toISOString(),
-        }),
-      },
-      {
-        event: "run_complete",
-        data: JSON.stringify({
-          report: {
-            answer: "Rendered answer",
-            citations: [],
-            support: [],
-            critiques: [],
-            unverified_claims: [],
-            budget_consumed: 10,
+      runSnapshot({
+        state_version: 2,
+        execution_steps: [
+          {
+            id: "1",
+            node: "planning",
+            label: "Planning",
+            status: "completed",
+            cost: 2,
+            budget_remaining: 48,
+            elapsed_ms: 1000,
+            tool_call_count: 0,
+            step_version: 2,
+            has_detail: false,
           },
-          total_elapsed_ms: 8000,
-        }),
-      },
-      {
-        event: "node_end",
-        data: JSON.stringify({
-          node: "report_generation",
-          budget_remaining: 40,
-          elapsed_ms: 2000,
-        }),
-      },
+          {
+            id: "2",
+            node: "report_generation",
+            label: "Generating Report",
+            status: "running",
+            cost: 0,
+            budget_remaining: 48,
+            tool_call_count: 0,
+            step_version: 1,
+            has_detail: false,
+          },
+        ],
+      }),
+      runSnapshot({
+        state_version: 3,
+        status: "completed",
+        budget_consumed: 10,
+        total_elapsed_ms: 8000,
+        report: {
+          answer: "Rendered answer",
+          citations: [],
+          support: [],
+          critiques: [],
+          unverified_claims: [],
+          budget_consumed: 10,
+        },
+        execution_steps: [
+          {
+            id: "1",
+            node: "planning",
+            label: "Planning",
+            status: "completed",
+            cost: 2,
+            budget_remaining: 48,
+            elapsed_ms: 1000,
+            tool_call_count: 0,
+            step_version: 2,
+            has_detail: false,
+          },
+          {
+            id: "2",
+            node: "report_generation",
+            label: "Generating Report",
+            status: "completed",
+            cost: 3,
+            budget_remaining: 40,
+            elapsed_ms: 2000,
+            tool_call_count: 0,
+            step_version: 2,
+            has_detail: false,
+          },
+        ],
+      }),
     ]);
 
     const pinia = createPinia();
@@ -369,35 +485,34 @@ describe("ChatView", () => {
     // After streamMessage returns, sendMessage pushes an assistant message.
     // This changes the messages array and re-renders. Steps must survive this.
     mockStartRunAndStream([
-      {
-        event: "node_start",
-        data: JSON.stringify({
-          node: "planning",
-          started_at: new Date().toISOString(),
-        }),
-      },
-      {
-        event: "node_end",
-        data: JSON.stringify({
-          node: "planning",
-          budget_remaining: 48,
-          elapsed_ms: 1000,
-        }),
-      },
-      {
-        event: "run_complete",
-        data: JSON.stringify({
-          report: {
-            answer: "Persisted answer",
-            citations: [],
-            support: [],
-            critiques: [],
-            unverified_claims: [],
-            budget_consumed: 5,
+      runSnapshot({
+        state_version: 2,
+        status: "completed",
+        budget_consumed: 5,
+        total_elapsed_ms: 3000,
+        report: {
+          answer: "Persisted answer",
+          citations: [],
+          support: [],
+          critiques: [],
+          unverified_claims: [],
+          budget_consumed: 5,
+        },
+        execution_steps: [
+          {
+            id: "1",
+            node: "planning",
+            label: "Planning",
+            status: "completed",
+            cost: 2,
+            budget_remaining: 48,
+            elapsed_ms: 1000,
+            tool_call_count: 0,
+            step_version: 2,
+            has_detail: false,
           },
-          total_elapsed_ms: 3000,
-        }),
-      },
+        ],
+      }),
     ]);
 
     const pinia = createPinia();
@@ -433,20 +548,27 @@ describe("ChatView", () => {
 
   it("stores stopped run status and zero-remaining budget limit correctly", async () => {
     mockStartRunAndStream([
-      {
-        event: "budget_update",
-        data: JSON.stringify({
-          budget_remaining: 0,
-          budget_consumed: 35,
-        }),
-      },
-      {
-        event: "run_stopped",
-        data: JSON.stringify({
-          node: "verification",
-          total_elapsed_ms: 2500,
-        }),
-      },
+      runSnapshot({
+        state_version: 2,
+        status: "stopped",
+        budget_limit: 35,
+        budget_consumed: 35,
+        total_elapsed_ms: 2500,
+        execution_steps: [
+          {
+            id: "1",
+            node: "verification",
+            label: "Verifying",
+            status: "stopped",
+            cost: 0,
+            budget_remaining: 0,
+            elapsed_ms: 1500,
+            tool_call_count: 0,
+            step_version: 2,
+            has_detail: false,
+          },
+        ],
+      }),
     ]);
 
     const pinia = createPinia();

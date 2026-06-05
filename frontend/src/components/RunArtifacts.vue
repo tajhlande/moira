@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { NCollapse, NCollapseItem, NButton } from "naive-ui";
+import { NButton } from "naive-ui";
 import {
   IconCircleCheck,
   IconCircleX,
@@ -147,31 +147,6 @@ function formatElapsed(ms: number | undefined): string {
         {{ run.status === 'error' ? 'Retry' : 'Resume' }}
       </NButton>
     </div>
-
-    <NCollapse
-      v-if="
-        run.tool_executions.length > 0 &&
-        !run.execution_steps.some((s) => s.detail?.tool_results?.length)
-      "
-      class="tool-calls-panel"
-    >
-      <NCollapse-item
-        :title="'Tool Executions (' + run.tool_executions.length + ')'"
-        name="tools"
-      >
-        <div
-          v-for="(tc, tci) in run.tool_executions"
-          :key="tci"
-          class="tool-call"
-        >
-          <span :class="['tool-name', tc.success ? 'success' : 'error']">
-            {{ tc.tool }}
-          </span>
-          <span class="tool-duration">{{ tc.duration_ms }}ms</span>
-          <pre class="tool-output">{{ tc.result?.slice(0, 200) }}</pre>
-        </div>
-      </NCollapse-item>
-    </NCollapse>
 
     <ReportPanel v-if="run.report" :report="run.report" />
 

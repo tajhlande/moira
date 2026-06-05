@@ -1,16 +1,14 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import {
   api,
-  type ConversationInfo,
   type ConversationDetail,
-  type MessageInfo,
-  type WorkflowRunInfo,
+  type ConversationInfo,
   type ExecutionStep,
-  type ResearchReport,
-  type ToolExecution,
-  type VerificationAttempt,
+  type ExecutionStepDetailResponse,
+  type MessageInfo,
   type RunSettings,
+  type WorkflowRunInfo,
 } from "../api/client";
 
 const STAGE_LABELS: Record<string, string> = {
@@ -24,6 +22,15 @@ const STAGE_LABELS: Record<string, string> = {
   report_generation: "Generating Report",
 };
 
+type RunSnapshotInput = Partial<WorkflowRunInfo> &
+  Record<string, unknown> & {
+    execution_steps?: Array<Record<string, unknown>>;
+  };
+
+function detailKey(runId: string, stepId: string, stepVersion: number): string {
+  return `${runId}:${stepId}:${stepVersion}`;
+}
+
 export const useChatStore = defineStore("chat", () => {
   const conversations = ref<ConversationInfo[]>([]);
   const currentConversationId = ref<string | null>(null);
@@ -32,30 +39,72 @@ export const useChatStore = defineStore("chat", () => {
   const loading = ref(false);
   const error = ref<string | null>(null);
 
+  // Canonical per-message run snapshots for the selected conversation.
   const runs = ref<Map<number, WorkflowRunInfo>>(new Map());
 
-  // Live streaming state for the current in-progress run
-  const executionSteps = ref<ExecutionStep[]>([]);
-  const currentStep = ref<ExecutionStep | null>(null);
-  const toolExecutions = ref<ToolExecution[]>([]);
-  const verificationAttemptData = ref<VerificationAttempt[]>([]);
-  const currentReport = ref<ResearchReport | null>(null);
-  const budgetRemaining = ref<number | null>(null);
-  const budgetConsumed = ref<number>(0);
-  const verificationAttempts = ref(0);
-  const activeUserMessageId = ref<number | null>(null);
-  const totalElapsedMs = ref<number | null>(null);
+  const stepDetails = ref<Map<string, ExecutionStepDetailResponse>>(new Map());
+  const loadingStepDetails = ref<Set<string>>(new Set());
+  const stepDetailInflight = new Map<string, Promise<ExecutionStepDetailResponse>>();
 
   const runSettings = ref<RunSettings>({ budget: 50 });
-
   const runningConversations = ref<Set<string>>(new Set());
 
-  const runStopped = ref(false);
-  const runErrored = ref(false);
+  // Message id of the run currently being streamed for this conversation.
+  const activeUserMessageId = ref<number | null>(null);
 
   let streamAbort: AbortController | null = null;
   let globalEventsAbort: AbortController | null = null;
   let selectConversationRequestId = 0;
+
+  const activeRun = computed<WorkflowRunInfo | null>(() => {
+    const messageId = activeUserMessageId.value;
+    if (!messageId) return null;
+    return runs.value.get(messageId) || null;
+  });
+
+  const executionSteps = computed<ExecutionStep[]>(() => {
+    const run = activeRun.value;
+    if (!run) return [];
+    return run.execution_steps.filter((s) => s.status !== "running");
+  });
+
+  const currentStep = computed<ExecutionStep | null>(() => {
+    const run = activeRun.value;
+    if (!run) return null;
+    return run.execution_steps.find((s) => s.status === "running") || null;
+  });
+
+  const toolExecutions = computed(() => activeRun.value?.tool_executions ?? []);
+
+  const verificationAttemptData = computed(
+    () => activeRun.value?.verification_attempts ?? [],
+  );
+
+  const currentReport = computed(() => activeRun.value?.report ?? null);
+
+  const budgetConsumed = computed(() => activeRun.value?.budget_consumed ?? 0);
+
+  const budgetRemaining = computed<number | null>(() => {
+    const run = activeRun.value;
+    if (!run) return null;
+    const runningStep = run.execution_steps.find((s) => s.status === "running");
+    if (runningStep && typeof runningStep.budget_remaining === "number") {
+      return runningStep.budget_remaining;
+    }
+    return run.budget_limit - run.budget_consumed;
+  });
+
+  const verificationAttempts = computed(
+    () => verificationAttemptData.value.length,
+  );
+
+  const totalElapsedMs = computed(() => activeRun.value?.total_elapsed_ms ?? null);
+
+  const runStopped = computed(() => activeRun.value?.status === "stopped");
+
+  const runErrored = computed(
+    () => activeRun.value?.status === "error" && !activeRun.value?.report,
+  );
 
   function cancelStream() {
     if (streamAbort) {
@@ -69,6 +118,243 @@ export const useChatStore = defineStore("chat", () => {
       globalEventsAbort.abort();
       globalEventsAbort = null;
     }
+  }
+
+  function normalizeStep(step: Record<string, unknown>): ExecutionStep {
+    const node = String(step.node ?? "");
+    const label = String(step.label ?? STAGE_LABELS[node] ?? node);
+    const statusRaw = String(step.status ?? "completed");
+    const status: ExecutionStep["status"] =
+      statusRaw === "running" ||
+      statusRaw === "completed" ||
+      statusRaw === "error" ||
+      statusRaw === "stopped"
+        ? statusRaw
+        : "completed";
+
+    const detail =
+      step.detail && typeof step.detail === "object"
+        ? (step.detail as Record<string, unknown>)
+        : undefined;
+
+    return {
+      id: step.id ? String(step.id) : undefined,
+      node,
+      label,
+      status,
+      cost: typeof step.cost === "number" ? step.cost : 0,
+      budget_remaining:
+        typeof step.budget_remaining === "number" ? step.budget_remaining : 0,
+      elapsed_ms: typeof step.elapsed_ms === "number" ? step.elapsed_ms : undefined,
+      started_at:
+        typeof step.started_at === "string" ? step.started_at : undefined,
+      error: typeof step.error === "string" ? step.error : undefined,
+      tool_call_count:
+        typeof step.tool_call_count === "number" ? step.tool_call_count : undefined,
+      step_version:
+        typeof step.step_version === "number" ? step.step_version : undefined,
+      has_detail:
+        typeof step.has_detail === "boolean" ? step.has_detail : undefined,
+      detail,
+    };
+  }
+
+  function normalizeRunSnapshot(
+    snapshot: RunSnapshotInput,
+    fallbackUserMessageId?: number,
+  ): WorkflowRunInfo | null {
+    const userMessageId =
+      typeof snapshot.user_message_id === "number"
+        ? snapshot.user_message_id
+        : fallbackUserMessageId;
+    if (!userMessageId) return null;
+
+    const existing = runs.value.get(userMessageId);
+    const rawStatus = String(snapshot.status ?? existing?.status ?? "running");
+    const status: WorkflowRunInfo["status"] =
+      rawStatus === "running" ||
+      rawStatus === "completed" ||
+      rawStatus === "error" ||
+      rawStatus === "stopped"
+        ? rawStatus
+        : "running";
+
+    const executionStepsRaw = Array.isArray(snapshot.execution_steps)
+      ? snapshot.execution_steps
+      : existing?.execution_steps ?? [];
+    const executionSteps = executionStepsRaw.map((step) =>
+      normalizeStep(step as Record<string, unknown>),
+    );
+
+    return {
+      id: typeof snapshot.id === "string" ? snapshot.id : existing?.id ?? "",
+      conversation_id:
+        typeof snapshot.conversation_id === "string"
+          ? snapshot.conversation_id
+          : existing?.conversation_id,
+      user_message_id: userMessageId,
+      execution_steps: executionSteps,
+      tool_executions: Array.isArray(snapshot.tool_executions)
+        ? snapshot.tool_executions
+        : existing?.tool_executions ?? [],
+      verification_attempts: Array.isArray(snapshot.verification_attempts)
+        ? snapshot.verification_attempts
+        : existing?.verification_attempts ?? [],
+      report:
+        snapshot.report !== undefined
+          ? (snapshot.report as WorkflowRunInfo["report"])
+          : existing?.report ?? null,
+      budget_limit:
+        typeof snapshot.budget_limit === "number"
+          ? snapshot.budget_limit
+          : existing?.budget_limit ?? 0,
+      budget_consumed:
+        typeof snapshot.budget_consumed === "number"
+          ? snapshot.budget_consumed
+          : existing?.budget_consumed ?? 0,
+      error:
+        typeof snapshot.error === "string" ? snapshot.error : existing?.error ?? "",
+      status,
+      state_version:
+        typeof snapshot.state_version === "number"
+          ? snapshot.state_version
+          : existing?.state_version,
+      started_at:
+        typeof snapshot.started_at === "string"
+          ? snapshot.started_at
+          : existing?.started_at ?? new Date().toISOString(),
+      completed_at:
+        typeof snapshot.completed_at === "string"
+          ? snapshot.completed_at
+          : existing?.completed_at ?? "",
+      updated_at:
+        typeof snapshot.updated_at === "string"
+          ? snapshot.updated_at
+          : existing?.updated_at,
+      total_elapsed_ms:
+        typeof snapshot.total_elapsed_ms === "number"
+          ? snapshot.total_elapsed_ms
+          : existing?.total_elapsed_ms,
+    };
+  }
+
+  function pruneStepDetailsForRun(run: WorkflowRunInfo) {
+    if (!run.id) return;
+
+    const currentKeys = new Set<string>();
+    for (const step of run.execution_steps) {
+      if (!step.id || typeof step.step_version !== "number") continue;
+      currentKeys.add(detailKey(run.id, step.id, step.step_version));
+    }
+
+    if (currentKeys.size === 0) return;
+
+    const nextDetails = new Map(stepDetails.value);
+    for (const key of nextDetails.keys()) {
+      if (!key.startsWith(`${run.id}:`)) continue;
+      const split = key.split(":");
+      if (split.length < 3) continue;
+      const stepId = split[1] || "";
+      const version = split[2] || "";
+      const exact = `${run.id}:${stepId}:${version}`;
+      if (!currentKeys.has(exact)) {
+        nextDetails.delete(key);
+      }
+    }
+    stepDetails.value = nextDetails;
+  }
+
+  function upsertRunSnapshot(
+    snapshot: RunSnapshotInput,
+    fallbackUserMessageId?: number,
+  ): WorkflowRunInfo | null {
+    const normalized = normalizeRunSnapshot(snapshot, fallbackUserMessageId);
+    if (!normalized) return null;
+
+    const current = runs.value.get(normalized.user_message_id);
+    const incomingVersion =
+      typeof normalized.state_version === "number" ? normalized.state_version : null;
+    const currentVersion =
+      typeof current?.state_version === "number" ? current.state_version : null;
+
+    if (
+      incomingVersion !== null &&
+      currentVersion !== null &&
+      incomingVersion <= currentVersion
+    ) {
+      return current || null;
+    }
+
+    const nextRuns = new Map(runs.value);
+    nextRuns.set(normalized.user_message_id, normalized);
+    runs.value = nextRuns;
+
+    if (normalized.status === "running") {
+      activeUserMessageId.value = normalized.user_message_id;
+      loading.value = true;
+    } else if (activeUserMessageId.value === normalized.user_message_id) {
+      loading.value = false;
+    }
+
+    const conversationId =
+      normalized.conversation_id ?? currentConversationId.value ?? undefined;
+    if (conversationId) {
+      const nextRunning = new Set(runningConversations.value);
+      if (normalized.status === "running") {
+        nextRunning.add(conversationId);
+      } else {
+        nextRunning.delete(conversationId);
+      }
+      runningConversations.value = nextRunning;
+    }
+
+    if (normalized.status === "error" && normalized.error) {
+      error.value = normalized.error;
+    }
+
+    pruneStepDetailsForRun(normalized);
+    return normalized;
+  }
+
+  function clearRunViewState() {
+    activeUserMessageId.value = null;
+    stepDetails.value = new Map();
+    loadingStepDetails.value = new Set();
+    stepDetailInflight.clear();
+  }
+
+  function applyConversationDetail(detail: ConversationDetail) {
+    messages.value = detail.messages;
+
+    const nextRuns = new Map<number, WorkflowRunInfo>();
+    for (const rawRun of detail.runs) {
+      const normalized = normalizeRunSnapshot(rawRun as RunSnapshotInput);
+      if (!normalized) continue;
+      nextRuns.set(normalized.user_message_id, normalized);
+    }
+    runs.value = nextRuns;
+    stepDetails.value = new Map();
+    loadingStepDetails.value = new Set();
+    stepDetailInflight.clear();
+
+    let activeMessageId: number | null = null;
+    const runningRun = [...nextRuns.values()].find((r) => r.status === "running");
+    if (runningRun) {
+      activeMessageId = runningRun.user_message_id;
+      loading.value = true;
+    } else {
+      loading.value = false;
+    }
+
+    const nextRunningConversations = new Set(runningConversations.value);
+    if (runningRun) {
+      nextRunningConversations.add(detail.id);
+    } else {
+      nextRunningConversations.delete(detail.id);
+    }
+    runningConversations.value = nextRunningConversations;
+
+    activeUserMessageId.value = activeMessageId;
   }
 
   async function connectGlobalEvents() {
@@ -156,23 +442,10 @@ export const useChatStore = defineStore("chat", () => {
     currentConversationId.value = null;
     isNewChat.value = true;
     messages.value = [];
+    runs.value = new Map();
     error.value = null;
-    resetWorkflowState();
-  }
-
-  function resetWorkflowState() {
-    executionSteps.value = [];
-    currentStep.value = null;
-    toolExecutions.value = [];
-    verificationAttemptData.value = [];
-    currentReport.value = null;
-    budgetRemaining.value = null;
-    budgetConsumed.value = 0;
-    verificationAttempts.value = 0;
-    activeUserMessageId.value = null;
-    totalElapsedMs.value = null;
-    runStopped.value = false;
-    runErrored.value = false;
+    loading.value = false;
+    clearRunViewState();
   }
 
   async function selectConversation(id: string) {
@@ -180,7 +453,8 @@ export const useChatStore = defineStore("chat", () => {
     const requestId = ++selectConversationRequestId;
     currentConversationId.value = id;
     isNewChat.value = false;
-    resetWorkflowState();
+    clearRunViewState();
+    loading.value = false;
     try {
       const detail = await api.getConversation(id);
       if (
@@ -189,49 +463,13 @@ export const useChatStore = defineStore("chat", () => {
       ) {
         return;
       }
-      messages.value = detail.messages;
-      const runMap = new Map<number, WorkflowRunInfo>();
-      for (const run of detail.runs) {
-        runMap.set(run.user_message_id, run);
-      }
-      runs.value = runMap;
 
-      // Reconnect to any in-flight run. Don't seed live workflow state here —
-      // the SSE replay will populate it from scratch. The loading spinner
-      // provides feedback until the first event arrives.
+      applyConversationDetail(detail);
       const runningRun = detail.runs.find((r) => r.status === "running");
       if (runningRun) {
+        activeUserMessageId.value = runningRun.user_message_id;
         loading.value = true;
-
-        // If this is a resumed run, pre-seed executionSteps from the
-        // previous stopped run so the user sees completed steps while
-        // the resumed stream begins.
-        const priorRun = detail.runs.find(
-          (r) =>
-            (r.status === "stopped" || r.status === "error") &&
-            r.user_message_id === runningRun.user_message_id,
-        );
-        if (priorRun) {
-          executionSteps.value = [...priorRun.execution_steps];
-          budgetRemaining.value = priorRun.budget_limit - priorRun.budget_consumed;
-          budgetConsumed.value = priorRun.budget_consumed;
-        }
-
-        connectStream(id, runningRun.user_message_id);
-      }
-
-      const stoppedRun = detail.runs.find((r) => r.status === "stopped");
-      if (stoppedRun && !runningRun) {
-        runStopped.value = true;
-        activeUserMessageId.value = stoppedRun.user_message_id;
-      }
-
-      const erroredRun = detail.runs.find(
-        (r) => r.status === "error" && !r.report,
-      );
-      if (erroredRun && !runningRun && !stoppedRun) {
-        runErrored.value = true;
-        activeUserMessageId.value = erroredRun.user_message_id;
+        void connectStream(id, runningRun.user_message_id);
       }
     } catch (e: any) {
       if (
@@ -247,7 +485,7 @@ export const useChatStore = defineStore("chat", () => {
   async function sendMessage(content: string) {
     loading.value = true;
     error.value = null;
-    resetWorkflowState();
+    clearRunViewState();
 
     try {
       let createdNewConversation = false;
@@ -259,35 +497,48 @@ export const useChatStore = defineStore("chat", () => {
         createdNewConversation = true;
       }
 
-      // POST to start the run (returns JSON with run_id + user_message_id).
-      // This also persists the user message, so fire title generation after.
-      const { user_message_id } = await api.startRun(
+      const { run_id, user_message_id } = await api.startRun(
         currentConversationId.value,
         content,
         runSettings.value,
       );
 
-      // Fire title generation after the user message is persisted — don't
-      // wait for the workflow to complete. The task model generates a title
-      // from the user's message content. Only runs for new conversations.
       if (createdNewConversation) {
         generateTitle(currentConversationId.value);
       }
 
-      // Push the real user message (server-assigned ID)
       messages.value.push({
         id: user_message_id,
         role: "user",
         content,
         created_at: new Date().toISOString(),
       });
-      activeUserMessageId.value = user_message_id;
 
-      // Connect to the SSE stream for live events
+      activeUserMessageId.value = user_message_id;
+      upsertRunSnapshot(
+        {
+          id: run_id,
+          conversation_id: currentConversationId.value,
+          user_message_id,
+          execution_steps: [],
+          tool_executions: [],
+          verification_attempts: [],
+          report: null,
+          budget_limit: runSettings.value.budget ?? 50,
+          budget_consumed: 0,
+          error: "",
+          status: "running",
+          state_version: 0,
+          started_at: new Date().toISOString(),
+          completed_at: "",
+          updated_at: new Date().toISOString(),
+        },
+        user_message_id,
+      );
+
       await connectStream(currentConversationId.value, user_message_id);
     } catch (e: any) {
       error.value = e.message;
-    } finally {
       loading.value = false;
     }
   }
@@ -305,41 +556,48 @@ export const useChatStore = defineStore("chat", () => {
     if (!currentConversationId.value) return;
     loading.value = true;
     error.value = null;
-    runStopped.value = false;
-    runErrored.value = false;
 
-    // Pre-seed execution steps from the prior run's completed steps
-    // (excluding the stopped/error step) so they remain visible while
-    // the resumed stream begins.
-    const priorRun = activeUserMessageId.value
-      ? runs.value.get(activeUserMessageId.value)
-      : null;
-    if (priorRun) {
-      const completedSteps = priorRun.execution_steps.filter(
-        (s) => s.status === "completed",
+    let targetMessageId = activeUserMessageId.value;
+    if (!targetMessageId) {
+      const candidates = [...runs.value.values()].filter(
+        (r) => r.status === "stopped" || r.status === "error",
       );
-      executionSteps.value = completedSteps;
-      budgetConsumed.value = priorRun.budget_consumed;
-      budgetRemaining.value = priorRun.budget_limit - priorRun.budget_consumed;
-    }
-
-    // Remove the resumable run from the persisted map so the template
-    // switches from RunArtifacts to the live streaming path.
-    if (activeUserMessageId.value) {
-      const newMap = new Map(runs.value);
-      newMap.delete(activeUserMessageId.value);
-      runs.value = newMap;
+      const last = candidates.length > 0 ? candidates[candidates.length - 1] : null;
+      targetMessageId = last?.user_message_id ?? null;
     }
 
     try {
-      const { user_message_id } = await api.resumeRun(
+      const { run_id, user_message_id } = await api.resumeRun(
         currentConversationId.value,
       );
       activeUserMessageId.value = user_message_id;
+
+      const existing = runs.value.get(user_message_id);
+      if (existing) {
+        upsertRunSnapshot(
+          {
+            ...existing,
+            id: run_id,
+            status: "running",
+            error: "",
+            completed_at: "",
+            updated_at: new Date().toISOString(),
+            state_version:
+              typeof existing.state_version === "number"
+                ? existing.state_version + 1
+                : undefined,
+          },
+          user_message_id,
+        );
+      }
+
       await connectStream(currentConversationId.value, user_message_id);
     } catch (e: any) {
       error.value = e.message;
       loading.value = false;
+      if (targetMessageId) {
+        activeUserMessageId.value = targetMessageId;
+      }
     }
   }
 
@@ -361,18 +619,10 @@ export const useChatStore = defineStore("chat", () => {
     }
 
     if (!resp.ok) {
-      // 404 means the run already completed between POST and GET.
-      // Re-fetch conversation state to get the persisted run.
       if (resp.status === 404) {
         const detail = await api.getConversation(conversationId);
-        const run = detail.runs.find(
-          (r) => r.user_message_id === userMessageId,
-        );
-        if (run) {
-          const newMap = new Map(runs.value);
-          newMap.set(userMessageId, run);
-          runs.value = newMap;
-        }
+        applyConversationDetail(detail);
+        loading.value = false;
         return;
       }
       const body = await resp.json().catch(() => ({}));
@@ -415,9 +665,6 @@ export const useChatStore = defineStore("chat", () => {
       }
     } catch (e: any) {
       if (e.name === "AbortError") return;
-      // "Error in input stream" is expected when the server closes the SSE
-      // connection after the run completes. The run_complete event was already
-      // processed, so this is just the stream teardown — safe to ignore.
       if (!e.message?.includes("input stream")) {
         throw e;
       }
@@ -428,163 +675,76 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
-  function handleEvent(
-    eventType: string,
-    payload: any,
-    userMessageId?: number,
-  ) {
-    switch (eventType) {
-      case "node_start":
-        if (currentStep.value) {
-          currentStep.value.status = "completed";
-          executionSteps.value.push(currentStep.value);
-        }
-        currentStep.value = {
-          node: payload.node,
-          label: STAGE_LABELS[payload.node] || payload.node,
-          status: "running",
-          cost: 0,
-          budget_remaining: budgetRemaining.value ?? 0,
-          started_at: payload.started_at || new Date().toISOString(),
-          elapsed_ms: 0,
-        };
-        break;
-      case "node_end":
-        if (payload.budget_remaining !== undefined) {
-          budgetRemaining.value = payload.budget_remaining;
-        }
-        if (currentStep.value) {
-          const prevBudget = currentStep.value.budget_remaining;
-          currentStep.value.budget_remaining =
-            payload.budget_remaining ?? prevBudget;
-          currentStep.value.cost =
-            prevBudget - (payload.budget_remaining ?? prevBudget);
-          currentStep.value.status = "completed";
-          currentStep.value.elapsed_ms = payload.elapsed_ms ?? 0;
-          if (payload.detail) {
-            if (!currentStep.value.detail) {
-              currentStep.value.detail = {};
-            }
-            Object.assign(currentStep.value.detail, payload.detail);
-          }
-          executionSteps.value.push(currentStep.value);
-          currentStep.value = null;
-        }
-        break;
-      case "budget_update":
-        budgetRemaining.value = payload.budget_remaining;
-        budgetConsumed.value = payload.budget_consumed;
-        break;
-      case "tool_result":
-        {
-          const toolEntry = {
-            tool: payload.tool,
-            args: payload.args,
-            result: payload.result ?? payload.output,
-            duration_ms: payload.duration_ms,
-            success: payload.success,
-          };
-          toolExecutions.value.push(toolEntry);
+  function handleEvent(eventType: string, payload: any, userMessageId?: number) {
+    if (eventType === "run_snapshot") {
+      const run = upsertRunSnapshot(payload as RunSnapshotInput, userMessageId);
+      if (run && run.status !== "running") {
+        loading.value = false;
+      }
+      return;
+    }
 
-          if (currentStep.value) {
-            if (!currentStep.value.detail) {
-              currentStep.value.detail = {};
-            }
-            if (!currentStep.value.detail.tool_results) {
-              currentStep.value.detail.tool_results = [];
-            }
-            (
-              currentStep.value.detail.tool_results as Array<typeof toolEntry>
-            ).push(toolEntry);
-          }
-        }
-        break;
-      case "verification_report":
-        verificationAttempts.value = payload.attempt;
-        verificationAttemptData.value.push({
-          report: payload.report,
-          attempt: payload.attempt,
-        });
-        break;
-      case "run_complete":
-        if (payload.report) {
-          currentReport.value = payload.report;
-        }
-        totalElapsedMs.value = payload.total_elapsed_ms ?? null;
-        runStopped.value = false;
-        error.value = null;
-        finalizeRun(userMessageId, "completed");
-        loading.value = false;
-        break;
-      case "run_error":
-        error.value = payload.error;
-        runStopped.value = false;
-        runErrored.value = true;
-        if (currentStep.value) {
-          currentStep.value.status = "error";
-          currentStep.value.error = payload.error;
-          currentStep.value.elapsed_ms = payload.elapsed_ms ?? 0;
-          executionSteps.value.push(currentStep.value);
-          currentStep.value = null;
-        }
-        totalElapsedMs.value = payload.total_elapsed_ms ?? null;
-        finalizeRun(userMessageId, "error");
-        loading.value = false;
-        break;
-      case "run_stopped":
-        if (currentStep.value) {
-          currentStep.value.status = "stopped";
-          currentStep.value.elapsed_ms = payload.elapsed_ms ?? 0;
-          executionSteps.value.push(currentStep.value);
-          currentStep.value = null;
-        }
-        totalElapsedMs.value = payload.total_elapsed_ms ?? null;
-        runStopped.value = true;
-        finalizeRun(userMessageId, "stopped");
-        loading.value = false;
-        break;
+    if (eventType === "run_error" && payload?.error) {
+      error.value = String(payload.error);
+      loading.value = false;
     }
   }
 
-  function finalizeRun(
-    userMessageId?: number,
-    runStatus?: WorkflowRunInfo["status"],
-  ) {
-    const msgId = userMessageId ?? activeUserMessageId.value;
-    if (!msgId) return;
+  async function loadStepDetail(
+    runId: string,
+    stepId: string,
+    stepVersion: number,
+  ): Promise<ExecutionStepDetailResponse> {
+    const key = detailKey(runId, stepId, stepVersion);
+    const cached = stepDetails.value.get(key);
+    if (cached) return cached;
 
-    const allSteps = [...executionSteps.value];
-    if (currentStep.value) {
-      allSteps.push({ ...currentStep.value });
+    const inflight = stepDetailInflight.get(key);
+    if (inflight) return inflight;
+
+    const loadingSet = new Set(loadingStepDetails.value);
+    loadingSet.add(key);
+    loadingStepDetails.value = loadingSet;
+
+    const request = (async () => {
+      const detail = await api.getRunStepDetail(runId, Number(stepId));
+      const version =
+        typeof detail.step_version === "number"
+          ? detail.step_version
+          : stepVersion;
+      const resolvedKey = detailKey(runId, stepId, version);
+      const nextDetails = new Map(stepDetails.value);
+      nextDetails.set(resolvedKey, detail);
+      stepDetails.value = nextDetails;
+      return detail;
+    })();
+
+    stepDetailInflight.set(key, request);
+
+    try {
+      return await request;
+    } finally {
+      stepDetailInflight.delete(key);
+      const nextLoading = new Set(loadingStepDetails.value);
+      nextLoading.delete(key);
+      loadingStepDetails.value = nextLoading;
     }
+  }
 
-    const latestStep = allSteps.length > 0 ? allSteps[allSteps.length - 1] : null;
-    const remainingBudget =
-      budgetRemaining.value ?? latestStep?.budget_remaining ?? null;
-    const budgetLimit =
-      remainingBudget !== null ? budgetConsumed.value + remainingBudget : 0;
-    const status: WorkflowRunInfo["status"] =
-      runStatus ?? (currentReport.value ? "completed" : "error");
+  function getStepDetail(
+    runId: string,
+    stepId: string,
+    stepVersion: number,
+  ): ExecutionStepDetailResponse | null {
+    return stepDetails.value.get(detailKey(runId, stepId, stepVersion)) || null;
+  }
 
-    const run: WorkflowRunInfo = {
-      id: "",
-      user_message_id: msgId,
-      execution_steps: allSteps,
-      tool_executions: [...toolExecutions.value],
-      verification_attempts: [...verificationAttemptData.value],
-      report: currentReport.value,
-      budget_limit: budgetLimit,
-      budget_consumed: budgetConsumed.value,
-      error: error.value || "",
-      status,
-      started_at: allSteps[0]?.started_at ?? new Date().toISOString(),
-      completed_at: new Date().toISOString(),
-      total_elapsed_ms: totalElapsedMs.value ?? undefined,
-    };
-
-    const newMap = new Map(runs.value);
-    newMap.set(msgId, run);
-    runs.value = newMap;
+  function isStepDetailLoading(
+    runId: string,
+    stepId: string,
+    stepVersion: number,
+  ): boolean {
+    return loadingStepDetails.value.has(detailKey(runId, stepId, stepVersion));
   }
 
   async function renameConversation(id: string, title: string) {
@@ -592,7 +752,10 @@ export const useChatStore = defineStore("chat", () => {
       const updated = await api.updateConversation(id, title);
       const idx = conversations.value.findIndex((c) => c.id === id);
       if (idx !== -1) {
-        conversations.value[idx].title = updated.title;
+        const existing = conversations.value[idx];
+        if (existing) {
+          existing.title = updated.title;
+        }
       }
     } catch (e: any) {
       error.value = e.message;
@@ -604,7 +767,10 @@ export const useChatStore = defineStore("chat", () => {
       const updated = await api.generateTitle(id);
       const idx = conversations.value.findIndex((c) => c.id === id);
       if (idx !== -1) {
-        conversations.value[idx].title = updated.title;
+        const existing = conversations.value[idx];
+        if (existing) {
+          existing.title = updated.title;
+        }
       }
     } catch (e: any) {
       error.value = e.message;
@@ -620,8 +786,9 @@ export const useChatStore = defineStore("chat", () => {
         selectConversationRequestId += 1;
         currentConversationId.value = null;
         messages.value = [];
-        runs.value.clear();
-        resetWorkflowState();
+        runs.value = new Map();
+        loading.value = false;
+        clearRunViewState();
       }
     } catch (e: any) {
       error.value = e.message;
@@ -654,6 +821,8 @@ export const useChatStore = defineStore("chat", () => {
     activeUserMessageId,
     totalElapsedMs,
     runSettings,
+    stepDetails,
+    loadingStepDetails,
     fetchConversations,
     startNewChat,
     selectConversation,
@@ -664,6 +833,9 @@ export const useChatStore = defineStore("chat", () => {
     generateTitle,
     deleteConversation,
     getRunForMessage,
+    loadStepDetail,
+    getStepDetail,
+    isStepDetailLoading,
     connectGlobalEvents,
     disconnectGlobalEvents,
     isConversationRunning,

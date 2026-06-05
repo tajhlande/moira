@@ -5,8 +5,6 @@ import {
   NButton,
   NAlert,
   NScrollbar,
-  NCollapse,
-  NCollapseItem,
   NText,
   NSlider,
 } from "naive-ui";
@@ -403,39 +401,6 @@ async function copyMessage(content: string, index: number) {
                 {{ store.runErrored ? 'Retry' : 'Resume' }}
               </NButton>
             </div>
-
-            <!-- Tool executions (shown when old runs lack per-step tool results) -->
-            <NCollapse
-              v-if="
-                store.toolExecutions.length > 0 &&
-                !store.executionSteps.some(
-                  (s) => s.detail?.tool_results?.length,
-                ) &&
-                !(
-                  store.currentStep?.detail?.tool_results as unknown[]
-                )?.length
-              "
-              class="tool-calls-panel"
-            >
-              <NCollapse-item
-                :title="`Tool Executions (${store.toolExecutions.length})`"
-                name="tools"
-              >
-                <div
-                  v-for="(tc, tci) in store.toolExecutions"
-                  :key="tci"
-                  class="tool-call"
-                >
-                  <span
-                    :class="['tool-name', tc.success ? 'success' : 'error']"
-                  >
-                    {{ tc.tool }}
-                  </span>
-                  <span class="tool-duration">{{ tc.duration_ms }}ms</span>
-                  <pre class="tool-output">{{ tc.result?.slice(0, 200) }}</pre>
-                </div>
-              </NCollapse-item>
-            </NCollapse>
 
             <!-- Report -->
             <ReportPanel
