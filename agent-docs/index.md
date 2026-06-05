@@ -22,3 +22,5 @@
 | **kagi-web-search-plan.md**      | Plan for the Kagi web search tool — first tool to use the credential store, using the Kagi Search API with Bearer auth. |
 | **tool-metrics-plan.md**         | Plan for tool call metrics — rolling counters with hourly buckets, call_type, latency min/max/sum. Cost computed at query time. |
 | **context-management.md**        | Plan for adaptive context window management — auto-detect limits, proactive tool output capping, evidence truncation, and progressive message trimming. |
+| **docker-deployment.md**          | Plan for single-container Docker deployment — multi-stage build, FastAPI static file serving, volume mounts, deploy script. |
+| **application-deployment-readiness.md** | Plan for what is needed to deploy this app to family members for testing |
