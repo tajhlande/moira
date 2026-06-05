@@ -433,6 +433,87 @@ class TestSSEStreamingEndpoint:
         assert report["budget_consumed"] > 0
         logger.info("Report answer: %s", report["answer"][:80])
 
+    async def test_stream_emits_monotonic_run_snapshots(self, app_with_fake_inference):
+        """Integration test: SSE stream emits run_snapshot events with
+        monotonically increasing state_version values."""
+        client, transport = app_with_fake_inference
+        logger.info("Integration test: run_snapshot monotonic state_version")
+
+        resp = await client.post("/api/conversations")
+        conversation_id = resp.json()["id"]
+
+        events = await _send_and_stream(client, conversation_id, "Snapshot stream test")
+        snapshots = [e["data"] for e in events if e["event"] == "run_snapshot"]
+        assert snapshots, "Expected at least one run_snapshot event"
+
+        versions = [s["state_version"] for s in snapshots]
+        assert versions == sorted(versions), f"Expected sorted state versions, got {versions}"
+        assert len(set(versions)) == len(versions), (
+            f"Expected strictly increasing state versions, got {versions}"
+        )
+
+        detail = await client.get(f"/api/conversations/{conversation_id}")
+        assert detail.status_code == 200
+        run = detail.json()["runs"][0]
+        final_snapshot = snapshots[-1]
+        assert final_snapshot["id"] == run["id"]
+        assert final_snapshot["state_version"] == run["state_version"]
+        assert final_snapshot["status"] == run["status"]
+
+    async def test_conversation_runs_include_snapshot_metadata(self, app_with_fake_inference):
+        """Integration test: GET /conversations returns runs with snapshot
+        metadata and execution step summary fields."""
+        client, transport = app_with_fake_inference
+        logger.info("Integration test: run snapshot fields in conversation detail")
+
+        resp = await client.post("/api/conversations")
+        conversation_id = resp.json()["id"]
+
+        await _send_and_stream(client, conversation_id, "Snapshot metadata test")
+
+        detail = await client.get(f"/api/conversations/{conversation_id}")
+        assert detail.status_code == 200
+        data = detail.json()
+        assert len(data["runs"]) == 1
+        run = data["runs"][0]
+
+        assert "state_version" in run
+        assert isinstance(run["state_version"], int)
+        assert run["state_version"] >= 1
+        assert "updated_at" in run
+        assert run["updated_at"]
+
+        assert run["execution_steps"], "Expected execution step summaries"
+        step = run["execution_steps"][0]
+        for key in ("id", "tool_call_count", "step_version", "has_detail"):
+            assert key in step
+
+    async def test_lazy_step_detail_endpoint_returns_full_detail(self, app_with_fake_inference):
+        """Integration test: step detail endpoint returns full detail payload
+        for a step summary id from conversation detail."""
+        client, transport = app_with_fake_inference
+        logger.info("Integration test: lazy step detail endpoint")
+
+        resp = await client.post("/api/conversations")
+        conversation_id = resp.json()["id"]
+
+        await _send_and_stream(client, conversation_id, "Lazy detail test")
+
+        detail = await client.get(f"/api/conversations/{conversation_id}")
+        assert detail.status_code == 200
+        run = detail.json()["runs"][0]
+        run_id = run["id"]
+        step_summary = run["execution_steps"][0]
+        step_id = int(step_summary["id"])
+
+        step_resp = await client.get(f"/api/runs/{run_id}/steps/{step_id}/detail")
+        assert step_resp.status_code == 200
+        step_data = step_resp.json()
+        assert step_data["run_id"] == run_id
+        assert step_data["step_id"] == step_id
+        assert step_data["step_version"] == step_summary["step_version"]
+        assert isinstance(step_data["detail"], dict)
+
     async def test_inference_client_was_called(self, app_with_fake_inference):
         """Integration test: the graph run makes real HTTP requests through
         the inference client (exercising request formatting and response parsing)."""

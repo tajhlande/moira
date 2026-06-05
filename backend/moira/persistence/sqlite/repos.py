@@ -145,15 +145,19 @@ class SqliteConversationRepository(ConversationRepository):
                 "INSERT INTO workflow_runs "
                 "(id, conversation_id, user_message_id, thread_id, "
                 "tool_executions, report, budget_limit, budget_consumed, "
-                "error, status, started_at, completed_at, total_elapsed_ms) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "error, status, state_version, started_at, completed_at, "
+                "updated_at, total_elapsed_ms) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "tool_executions = excluded.tool_executions, "
                 "report = excluded.report, "
+                "budget_limit = excluded.budget_limit, "
                 "budget_consumed = excluded.budget_consumed, "
                 "error = excluded.error, "
                 "status = excluded.status, "
+                "state_version = excluded.state_version, "
                 "completed_at = excluded.completed_at, "
+                "updated_at = excluded.updated_at, "
                 "total_elapsed_ms = excluded.total_elapsed_ms",
                 (
                     run.id,
@@ -166,8 +170,10 @@ class SqliteConversationRepository(ConversationRepository):
                     run.budget_consumed,
                     run.error,
                     run.status,
+                    run.state_version,
                     run.started_at,
                     run.completed_at or None,
+                    run.updated_at or None,
                     run.total_elapsed_ms or None,
                 ),
             )
@@ -181,7 +187,8 @@ class SqliteConversationRepository(ConversationRepository):
             rows = conn.execute(
                 "SELECT id, conversation_id, user_message_id, thread_id, "
                 "tool_executions, report, budget_limit, budget_consumed, "
-                "error, status, started_at, completed_at, total_elapsed_ms "
+                "error, status, state_version, started_at, completed_at, "
+                "updated_at, total_elapsed_ms "
                 "FROM workflow_runs WHERE conversation_id = ? ORDER BY started_at ASC",
                 (conversation_id,),
             ).fetchall()
@@ -193,6 +200,8 @@ class SqliteConversationRepository(ConversationRepository):
                     json.loads(te) if te else []
                 )
                 d["report"] = json.loads(d["report"]) if d["report"] else None
+                d["state_version"] = d.get("state_version") or 1
+                d["updated_at"] = d.get("updated_at") or d.get("completed_at") or d["started_at"]
                 d["total_elapsed_ms"] = d["total_elapsed_ms"] or 0
                 result.append(WorkflowRun(**d))
             return result
@@ -242,15 +251,18 @@ class SqliteConversationRepository(ConversationRepository):
         try:
             now = datetime.now(timezone.utc).isoformat()
             step_cursor = conn.execute(
-                "UPDATE workflow_steps SET status = 'stopped' WHERE status = 'running'"
+                "UPDATE workflow_steps SET status = 'stopped', "
+                "step_version = step_version + 1 "
+                "WHERE status = 'running'"
             )
             step_count = step_cursor.rowcount
             run_cursor = conn.execute(
                 "UPDATE workflow_runs SET status = 'stopped', "
                 "error = 'Server restarted while run was in progress', "
-                "completed_at = ? "
+                "state_version = state_version + 1, "
+                "completed_at = ?, updated_at = ? "
                 "WHERE status = 'running'",
-                (now,),
+                (now, now),
             )
             run_count = run_cursor.rowcount
             conn.commit()
@@ -626,11 +638,12 @@ class SqliteWorkflowStepRepository(WorkflowStepRepository):
                 "INSERT INTO workflow_steps "
                 "(workflow_run_id, node_name, label, status, cost, "
                 "budget_remaining, started_at, elapsed_ms, "
+                "step_version, tool_call_count, "
                 "purpose, model, call_count, "
                 "input_tokens, thinking_tokens, output_tokens, "
                 "prompt_time_ms, gen_time_ms, "
                 "error, detail) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     step.workflow_run_id,
                     step.node_name,
@@ -640,6 +653,8 @@ class SqliteWorkflowStepRepository(WorkflowStepRepository):
                     step.budget_remaining,
                     step.started_at,
                     step.elapsed_ms,
+                    step.step_version,
+                    step.tool_call_count,
                     step.purpose,
                     step.model,
                     step.call_count,
@@ -663,6 +678,7 @@ class SqliteWorkflowStepRepository(WorkflowStepRepository):
             rows = conn.execute(
                 "SELECT id, workflow_run_id, node_name, label, status, cost, "
                 "budget_remaining, started_at, elapsed_ms, "
+                "step_version, tool_call_count, "
                 "purpose, model, call_count, "
                 "input_tokens, thinking_tokens, output_tokens, "
                 "prompt_time_ms, gen_time_ms, "

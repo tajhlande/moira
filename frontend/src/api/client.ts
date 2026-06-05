@@ -26,6 +26,7 @@ export interface MessageInfo {
 }
 
 export interface ExecutionStep {
+  id?: string;
   node: string;
   label: string;
   status: "running" | "completed" | "error" | "stopped";
@@ -34,6 +35,9 @@ export interface ExecutionStep {
   elapsed_ms?: number;
   started_at?: string;
   error?: string;
+  tool_call_count?: number;
+  step_version?: number;
+  has_detail?: boolean;
   detail?: Record<string, unknown>;
 }
 
@@ -60,8 +64,17 @@ export interface VerificationAttempt {
   attempt: number;
 }
 
+export interface ExecutionStepDetailResponse {
+  run_id: string;
+  step_id: number;
+  step_version: number;
+  has_detail: boolean;
+  detail: Record<string, unknown>;
+}
+
 export interface WorkflowRunInfo {
   id: string;
+  conversation_id?: string;
   user_message_id: number;
   execution_steps: ExecutionStep[];
   tool_executions: ToolExecution[];
@@ -71,8 +84,10 @@ export interface WorkflowRunInfo {
   budget_consumed: number;
   error: string;
   status: "running" | "completed" | "error" | "stopped";
+  state_version?: number;
   started_at: string;
   completed_at: string;
+  updated_at?: string;
   total_elapsed_ms?: number;
 }
 
@@ -145,6 +160,9 @@ export const api = {
 
   getConversation: (id: string) =>
     request<ConversationDetail>(`/conversations/${id}`),
+
+  getRunStepDetail: (runId: string, stepId: number) =>
+    request<ExecutionStepDetailResponse>(`/runs/${runId}/steps/${stepId}/detail`),
 
   updateConversation: (id: string, title: string) =>
     request<ConversationInfo>(`/conversations/${id}`, {

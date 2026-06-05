@@ -68,6 +68,8 @@ class ActiveRun:
         self.budget_consumed: float = 0.0
         self.completed_at: str = ""
         self.total_elapsed_ms: int = 0
+        self.state_version: int = 1
+        self.updated_at: str = started_at
 
         # Internal bookkeeping
         self._current_step: dict | None = None
@@ -78,12 +80,82 @@ class ActiveRun:
         self._persist_lock = asyncio.Lock()
         self._persist_pending: bool = False
         self._stop_requested: bool = False
+        self._next_step_ordinal: int = 1
+
+    def _mark_state_changed(self) -> None:
+        """Bump run snapshot version and refresh run updated timestamp."""
+        self.state_version += 1
+        self.updated_at = datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _step_tool_call_count(step: dict) -> int:
+        detail = step.get("detail") or {}
+        tool_results = detail.get("tool_results") if isinstance(detail, dict) else None
+        return len(tool_results) if isinstance(tool_results, list) else 0
+
+    def _step_summary(self, step: dict, fallback_id: str) -> dict:
+        return {
+            "id": step.get("id") or fallback_id,
+            "node": step.get("node", ""),
+            "label": step.get("label", ""),
+            "status": step.get("status", "completed"),
+            "cost": step.get("cost", 0),
+            "budget_remaining": step.get("budget_remaining", self.budget_remaining),
+            "elapsed_ms": step.get("elapsed_ms"),
+            "started_at": step.get("started_at", ""),
+            "error": step.get("error") or None,
+            "tool_call_count": step.get("tool_call_count", self._step_tool_call_count(step)),
+            "step_version": step.get("step_version", 1),
+            "has_detail": bool(step.get("detail")),
+        }
+
+    def _build_run_snapshot(self) -> dict:
+        step_summaries = [
+            self._step_summary(step, f"{self.run_id}:{idx + 1}")
+            for idx, step in enumerate(self.execution_steps)
+        ]
+        if self._current_step:
+            step_summaries.append(
+                self._step_summary(self._current_step, f"{self.run_id}:current")
+            )
+
+        return {
+            "id": self.run_id,
+            "conversation_id": self.conversation_id,
+            "user_message_id": self.user_message_id,
+            "status": self.status,
+            "budget_limit": self.budget_limit,
+            "budget_consumed": self.budget_consumed,
+            "total_elapsed_ms": self.total_elapsed_ms or None,
+            "error": self.error,
+            "report": self.report,
+            "execution_steps": step_summaries,
+            "state_version": self.state_version,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at or None,
+            "updated_at": self.updated_at,
+        }
+
+    def _broadcast_run_snapshot(self) -> None:
+        self._broadcast(
+            {
+                "event": "run_snapshot",
+                "data": json.dumps(self._build_run_snapshot()),
+            }
+        )
 
     def _replay_events(self) -> list[dict]:
         """Build a list of SSE events representing all state accumulated so
         far. Used to catch up a newly-connected subscriber so they don't miss
         events that fired before their queue was created."""
         events: list[dict] = []
+
+        events.append(
+            {
+                "event": "run_snapshot",
+                "data": json.dumps(self._build_run_snapshot()),
+            }
+        )
 
         # Budget state
         events.append(
@@ -272,6 +344,7 @@ class ActiveRun:
             elif self.status == "running":
                 self.status = "completed"
                 self._finalize_metrics()
+                self._mark_state_changed()
                 await self._persist()
 
         except asyncio.CancelledError:
@@ -306,9 +379,11 @@ class ActiveRun:
                     if self._step_started_at
                     else 0
                 )
+                self._current_step["step_version"] = self._current_step.get("step_version", 1) + 1
                 self.execution_steps.append(self._current_step)
                 self._current_step = None
             self._finalize_metrics()
+            self._mark_state_changed()
             await self._persist()
             self._broadcast(
                 {
@@ -322,6 +397,7 @@ class ActiveRun:
                     ),
                 }
             )
+            self._broadcast_run_snapshot()
 
         if self.status == "stopped":
             self._broadcast(_STREAM_END)
@@ -401,6 +477,7 @@ class ActiveRun:
             elif self.status == "running":
                 self.status = "completed"
                 self._finalize_metrics()
+                self._mark_state_changed()
                 await self._persist()
 
         except asyncio.CancelledError:
@@ -435,9 +512,11 @@ class ActiveRun:
                     if self._step_started_at
                     else 0
                 )
+                self._current_step["step_version"] = self._current_step.get("step_version", 1) + 1
                 self.execution_steps.append(self._current_step)
                 self._current_step = None
             self._finalize_metrics()
+            self._mark_state_changed()
             await self._persist()
             self._broadcast(
                 {
@@ -451,6 +530,7 @@ class ActiveRun:
                     ),
                 }
             )
+            self._broadcast_run_snapshot()
 
         if self.status == "stopped":
             self._broadcast(_STREAM_END)
@@ -511,6 +591,7 @@ class ActiveRun:
                 if self._step_started_at
                 else 0
             )
+            self._current_step["step_version"] = self._current_step.get("step_version", 1) + 1
             stopped_node = self._current_step.get("node", "unknown")
 
             step_copy = dict(self._current_step)
@@ -523,6 +604,7 @@ class ActiveRun:
 
         self.status = "stopped"
         self._finalize_metrics()
+        self._mark_state_changed()
         try:
             await asyncio.shield(self._persist())
         except asyncio.CancelledError:
@@ -535,10 +617,12 @@ class ActiveRun:
                     {
                         "node": stopped_node,
                         "conversation_id": self.conversation_id,
+                        "total_elapsed_ms": self.total_elapsed_ms,
                     }
                 ),
             }
         )
+        self._broadcast_run_snapshot()
         logger.info(
             "Run %s stopped by user at node %s",
             self.run_id,
@@ -549,13 +633,16 @@ class ActiveRun:
         """Process a single graph event: update accumulated state,
         persist if needed, broadcast to subscribers."""
         persist = False
+        snapshot_changed = False
 
         if event_type == "node_start":
             if self._current_step:
                 self._current_step["status"] = "completed"
+                self._current_step["step_version"] = self._current_step.get("step_version", 1) + 1
                 self.execution_steps.append(self._current_step)
             self._step_started_at = time.monotonic()
             self._current_step = {
+                "id": f"{self.run_id}:{self._next_step_ordinal}",
                 "node": payload.get("node", ""),
                 "label": STAGE_LABELS.get(payload.get("node", ""), payload.get("node", "")),
                 "status": "running",
@@ -563,8 +650,13 @@ class ActiveRun:
                 "budget_remaining": self.budget_remaining,
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "elapsed_ms": 0,
+                "tool_call_count": 0,
+                "step_version": 1,
             }
+            self._next_step_ordinal += 1
             payload["started_at"] = self._current_step["started_at"]
+            self._mark_state_changed()
+            snapshot_changed = True
 
         elif event_type == "node_end":
             if payload.get("budget_remaining") is not None:
@@ -584,6 +676,10 @@ class ActiveRun:
                     if "detail" not in self._current_step:
                         self._current_step["detail"] = {}
                     self._current_step["detail"].update(payload["detail"])
+                self._current_step["tool_call_count"] = self._step_tool_call_count(
+                    self._current_step
+                )
+                self._current_step["step_version"] = self._current_step.get("step_version", 1) + 1
                 # Merge inference metadata from the node_end payload.
                 for key in (
                     "purpose",
@@ -612,7 +708,9 @@ class ActiveRun:
                 self._current_step = None
             payload["elapsed_ms"] = elapsed_ms
             self.budget_consumed = self.budget_limit - self.budget_remaining
+            self._mark_state_changed()
             persist = True
+            snapshot_changed = True
 
         elif event_type == "tool_result":
             tool_entry = {
@@ -632,18 +730,26 @@ class ActiveRun:
                 if "tool_results" not in self._current_step["detail"]:
                     self._current_step["detail"]["tool_results"] = []
                 self._current_step["detail"]["tool_results"].append(tool_entry)
+                self._current_step["tool_call_count"] = len(
+                    self._current_step["detail"]["tool_results"]
+                )
+                self._current_step["step_version"] = self._current_step.get("step_version", 1) + 1
 
             # Rename key for SSE consumers: backend uses "output" internally
             # from the tool executor, but the conceptual model calls it "result"
             payload["result"] = payload.pop("output", "")
+            self._mark_state_changed()
             persist = True
+            snapshot_changed = True
 
         elif event_type == "verification_report":
             # Verification reports are now embedded in the verification
             # step's detail.structured_output via node_end. We still
             # broadcast the SSE event and persist run metadata, but no
             # longer maintain a separate verification_attempts list.
+            self._mark_state_changed()
             persist = True
+            snapshot_changed = True
 
         elif event_type == "run_complete":
             if payload.get("report"):
@@ -651,7 +757,9 @@ class ActiveRun:
             self.status = "completed"
             self._finalize_metrics()
             payload["total_elapsed_ms"] = self.total_elapsed_ms
+            self._mark_state_changed()
             persist = True
+            snapshot_changed = True
 
         elif event_type == "run_error":
             self.error = payload.get("error", "")
@@ -664,11 +772,14 @@ class ActiveRun:
                     if self._step_started_at
                     else 0
                 )
+                self._current_step["step_version"] = self._current_step.get("step_version", 1) + 1
                 self.execution_steps.append(self._current_step)
                 self._current_step = None
             self._finalize_metrics()
             payload["total_elapsed_ms"] = self.total_elapsed_ms
+            self._mark_state_changed()
             persist = True
+            snapshot_changed = True
 
         if persist:
             asyncio.create_task(self._persist())
@@ -679,6 +790,8 @@ class ActiveRun:
                 "data": json.dumps(payload),
             }
         )
+        if snapshot_changed:
+            self._broadcast_run_snapshot()
 
     def _finalize_metrics(self) -> None:
         """Compute final timing metrics."""
@@ -706,8 +819,10 @@ class ActiveRun:
                 budget_consumed=self.budget_consumed,
                 error=self.error,
                 status=self.status,
+                state_version=self.state_version,
                 started_at=self.started_at,
                 completed_at=self.completed_at or None,
+                updated_at=self.updated_at,
                 total_elapsed_ms=self.total_elapsed_ms or None,
             )
             for attempt in range(3):
@@ -738,6 +853,13 @@ class ActiveRun:
                 self._run_manager._get_service("workflow_step_repository"),
             )
             detail = step_dict.get("detail")
+            tool_call_count = step_dict.get("tool_call_count")
+            if tool_call_count is None and isinstance(detail, dict):
+                tool_results = detail.get("tool_results")
+                if isinstance(tool_results, list):
+                    tool_call_count = len(tool_results)
+            if tool_call_count is None:
+                tool_call_count = 0
             wf_step = WorkflowStep(
                 id=None,
                 workflow_run_id=self.run_id,
@@ -757,6 +879,8 @@ class ActiveRun:
                 prompt_time_ms=step_dict.get("prompt_time_ms"),
                 gen_time_ms=step_dict.get("gen_time_ms"),
                 error=step_dict.get("error", ""),
+                step_version=step_dict.get("step_version", 1),
+                tool_call_count=tool_call_count,
                 detail=detail if isinstance(detail, dict) else None,
             )
             await step_repo.save_step(wf_step)

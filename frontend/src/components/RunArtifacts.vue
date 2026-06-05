@@ -37,6 +37,7 @@ function stepHasDetail(step: ExecutionStep): boolean {
 function toolCallCount(step: ExecutionStep): number {
   const tr = step.detail?.tool_results;
   if (Array.isArray(tr)) return tr.length;
+  if (typeof step.tool_call_count === "number") return step.tool_call_count;
   return 0;
 }
 

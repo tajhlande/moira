@@ -131,6 +131,7 @@ function formatElapsed(ms: number | undefined): string {
 function toolCallCount(step: ExecutionStep): number {
   const tr = step.detail?.tool_results;
   if (Array.isArray(tr)) return tr.length;
+  if (typeof step.tool_call_count === "number") return step.tool_call_count;
   return 0;
 }
 
@@ -642,6 +643,13 @@ async function copyMessage(content: string, index: number) {
   display: flex;
   align-items: flex-end;
   gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+.steps-and-resume-wrapper .steps-container {
+  flex: 1;
+  min-width: 0;
 }
 
 .resume-button {

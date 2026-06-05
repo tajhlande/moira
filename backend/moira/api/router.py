@@ -8,6 +8,8 @@ from moira.persistence.interfaces import (
     DEFAULT_USER_ID,
     ConversationRepository,
     ModelPreferencesRepository,
+    WorkflowRun,
+    WorkflowStep,
 )
 from moira.service_setup import service_provider
 
@@ -33,6 +35,75 @@ def _prefs() -> ModelPreferencesRepository:
 
 def _registry() -> ModelRegistry:
     return cast(ModelRegistry, service_provider("model_registry"))
+
+
+def _steps_repo():
+    from moira.persistence.interfaces import WorkflowStepRepository
+
+    return cast(WorkflowStepRepository, service_provider("workflow_step_repository"))
+
+
+def _step_tool_call_count(step: WorkflowStep) -> int:
+    if step.tool_call_count:
+        return step.tool_call_count
+    detail = step.detail or {}
+    if not isinstance(detail, dict):
+        return 0
+    tool_results = detail.get("tool_results")
+    return len(tool_results) if isinstance(tool_results, list) else 0
+
+
+def _step_summary(step: WorkflowStep) -> dict[str, Any]:
+    return {
+        "id": str(step.id) if step.id is not None else "",
+        "node": step.node_name,
+        "label": step.label,
+        "status": step.status,
+        "cost": step.cost,
+        "budget_remaining": step.budget_remaining,
+        "elapsed_ms": step.elapsed_ms,
+        "started_at": step.started_at,
+        "error": step.error if step.error else None,
+        "tool_call_count": _step_tool_call_count(step),
+        "step_version": step.step_version or 1,
+        "has_detail": bool(step.detail),
+    }
+
+
+def _verification_attempts(steps: list[WorkflowStep]) -> list[dict[str, Any]]:
+    attempts: list[dict[str, Any]] = []
+    attempt_num = 0
+    for step in steps:
+        detail = step.detail if isinstance(step.detail, dict) else None
+        if step.node_name != "verification" or not detail:
+            continue
+        structured = detail.get("structured_output")
+        if not structured:
+            continue
+        attempt_num += 1
+        attempts.append({"report": structured, "attempt": attempt_num})
+    return attempts
+
+
+def _run_snapshot(run: WorkflowRun, steps: list[WorkflowStep]) -> dict[str, Any]:
+    return {
+        "id": run.id,
+        "conversation_id": run.conversation_id,
+        "user_message_id": run.user_message_id,
+        "status": run.status,
+        "budget_limit": run.budget_limit,
+        "budget_consumed": run.budget_consumed,
+        "total_elapsed_ms": run.total_elapsed_ms,
+        "error": run.error,
+        "report": run.report,
+        "execution_steps": [_step_summary(s) for s in steps],
+        "tool_executions": run.tool_executions,
+        "verification_attempts": _verification_attempts(steps),
+        "state_version": run.state_version,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
+        "updated_at": run.updated_at,
+    }
 
 
 @router.get("/health")
@@ -75,54 +146,12 @@ async def get_conversation(
     messages = await conversations.get_messages(conversation_id)
     runs = await conversations.get_workflow_runs(conversation_id)
 
-    from typing import cast
-
-    from moira.persistence.interfaces import WorkflowStepRepository
-
-    step_repo = cast(
-        WorkflowStepRepository,
-        service_provider("workflow_step_repository"),
-    )
+    step_repo = _steps_repo()
 
     run_responses = []
     for r in runs:
         steps = await step_repo.get_steps_for_run(r.id)
-        run_responses.append(
-            {
-                "id": r.id,
-                "user_message_id": r.user_message_id,
-                "execution_steps": [
-                    {
-                        "node": s.node_name,
-                        "label": s.label,
-                        "status": s.status,
-                        "cost": s.cost,
-                        "budget_remaining": s.budget_remaining,
-                        "elapsed_ms": s.elapsed_ms,
-                        "started_at": s.started_at,
-                        "error": s.error if s.error else None,
-                        "detail": s.detail,
-                    }
-                    for s in steps
-                ],
-                "tool_executions": r.tool_executions,
-                "verification_attempts": [
-                    s.detail.get("structured_output", {})
-                    for s in steps
-                    if s.node_name == "verification"
-                    and s.detail
-                    and s.detail.get("structured_output")
-                ],
-                "report": r.report,
-                "budget_limit": r.budget_limit,
-                "budget_consumed": r.budget_consumed,
-                "error": r.error,
-                "status": r.status,
-                "started_at": r.started_at,
-                "completed_at": r.completed_at,
-                "total_elapsed_ms": r.total_elapsed_ms,
-            }
-        )
+        run_responses.append(_run_snapshot(r, steps))
 
     return {
         "id": conversation.id,
@@ -139,6 +168,27 @@ async def get_conversation(
             if m.role in ("user", "assistant")
         ],
         "runs": run_responses,
+    }
+
+
+@router.get("/runs/{run_id}/steps/{step_id}/detail", response_model=dict)
+async def get_run_step_detail(run_id: str, step_id: int):
+    """Return the full detail payload for a single workflow step.
+
+    Used by the frontend to lazily load expanded step details while the
+    conversation API and run snapshots stay lightweight."""
+    step_repo = _steps_repo()
+    steps = await step_repo.get_steps_for_run(run_id)
+    target = next((s for s in steps if s.id == step_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Step not found")
+
+    return {
+        "run_id": run_id,
+        "step_id": step_id,
+        "step_version": target.step_version or 1,
+        "has_detail": bool(target.detail),
+        "detail": target.detail or {},
     }
 
 

@@ -44,8 +44,10 @@ class WorkflowRun:
     budget_consumed: float = 0.0
     error: str = ""
     status: str = "running"
+    state_version: int = 1
     started_at: str = ""
     completed_at: str = ""
+    updated_at: str = ""
     total_elapsed_ms: int = 0
 
 
@@ -74,6 +76,8 @@ class WorkflowStep:
     prompt_time_ms: float | None = None
     gen_time_ms: float | None = None
     error: str = ""
+    step_version: int = 1
+    tool_call_count: int = 0
     detail: dict | None = None
 
 

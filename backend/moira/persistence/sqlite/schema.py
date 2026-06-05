@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
-CURRENT_VERSION = 10
+CURRENT_VERSION = 11
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
@@ -129,6 +129,59 @@ def _apply_migration_009(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _apply_migration_011(conn: sqlite3.Connection) -> None:
+    """Add run/step versioning and updated_at tracking columns.
+
+    - workflow_runs: state_version, updated_at
+    - workflow_steps: step_version, tool_call_count
+    """
+    run_columns = {row[1] for row in conn.execute("PRAGMA table_info(workflow_runs)").fetchall()}
+    if "state_version" not in run_columns:
+        conn.execute(
+            "ALTER TABLE workflow_runs "
+            "ADD COLUMN state_version INTEGER NOT NULL DEFAULT 1"
+        )
+        logger.info("Added workflow_runs.state_version")
+    if "updated_at" not in run_columns:
+        conn.execute("ALTER TABLE workflow_runs ADD COLUMN updated_at TEXT")
+        logger.info("Added workflow_runs.updated_at")
+    conn.execute(
+        "UPDATE workflow_runs SET updated_at = COALESCE(updated_at, completed_at, started_at)"
+    )
+
+    step_columns = {row[1] for row in conn.execute("PRAGMA table_info(workflow_steps)").fetchall()}
+    if "step_version" not in step_columns:
+        conn.execute(
+            "ALTER TABLE workflow_steps "
+            "ADD COLUMN step_version INTEGER NOT NULL DEFAULT 1"
+        )
+        logger.info("Added workflow_steps.step_version")
+    if "tool_call_count" not in step_columns:
+        conn.execute(
+            "ALTER TABLE workflow_steps "
+            "ADD COLUMN tool_call_count INTEGER NOT NULL DEFAULT 0"
+        )
+        logger.info("Added workflow_steps.tool_call_count")
+
+    rows = conn.execute("SELECT id, detail FROM workflow_steps").fetchall()
+    for step_id, detail_json in rows:
+        tool_count = 0
+        if detail_json:
+            try:
+                detail = json.loads(detail_json)
+                tool_results = detail.get("tool_results", [])
+                if isinstance(tool_results, list):
+                    tool_count = len(tool_results)
+            except json.JSONDecodeError:
+                pass
+        conn.execute(
+            "UPDATE workflow_steps SET tool_call_count = ? WHERE id = ?",
+            (tool_count, step_id),
+        )
+
+    conn.commit()
+
+
 def run_migrations(db_path: str) -> None:
     """Apply all pending schema migrations to the SQLite database at db_path."""
     logger.info("Running migrations for %s", db_path)
@@ -145,6 +198,8 @@ def run_migrations(db_path: str) -> None:
                 sql_file = sorted(Path(MIGRATIONS_DIR).glob("009_*.sql"))[0]
                 conn.executescript(sql_file.read_text())
                 _apply_migration_009(conn)
+            elif version == 11:
+                _apply_migration_011(conn)
             else:
                 matches = sorted(Path(MIGRATIONS_DIR).glob(f"{version:03d}_*.sql"))
                 if not matches:
@@ -253,6 +308,8 @@ def _repair_migration_009(conn: sqlite3.Connection) -> None:
         ("output_tokens", "INTEGER"),
         ("prompt_time_ms", "REAL"),
         ("gen_time_ms", "REAL"),
+        ("step_version", "INTEGER NOT NULL DEFAULT 1"),
+        ("tool_call_count", "INTEGER NOT NULL DEFAULT 0"),
     ]:
         if col not in step_cols:
             conn.execute(f"ALTER TABLE workflow_steps ADD COLUMN {col} {definition}")
