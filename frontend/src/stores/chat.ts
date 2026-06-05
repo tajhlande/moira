@@ -55,6 +55,7 @@ export const useChatStore = defineStore("chat", () => {
 
   let streamAbort: AbortController | null = null;
   let globalEventsAbort: AbortController | null = null;
+  let selectConversationRequestId = 0;
 
   function cancelStream() {
     if (streamAbort) {
@@ -151,6 +152,7 @@ export const useChatStore = defineStore("chat", () => {
 
   function startNewChat() {
     cancelStream();
+    selectConversationRequestId += 1;
     currentConversationId.value = null;
     isNewChat.value = true;
     messages.value = [];
@@ -175,11 +177,18 @@ export const useChatStore = defineStore("chat", () => {
 
   async function selectConversation(id: string) {
     cancelStream();
+    const requestId = ++selectConversationRequestId;
     currentConversationId.value = id;
     isNewChat.value = false;
     resetWorkflowState();
     try {
       const detail = await api.getConversation(id);
+      if (
+        requestId !== selectConversationRequestId ||
+        currentConversationId.value !== id
+      ) {
+        return;
+      }
       messages.value = detail.messages;
       const runMap = new Map<number, WorkflowRunInfo>();
       for (const run of detail.runs) {
@@ -225,6 +234,12 @@ export const useChatStore = defineStore("chat", () => {
         activeUserMessageId.value = erroredRun.user_message_id;
       }
     } catch (e: any) {
+      if (
+        requestId !== selectConversationRequestId ||
+        currentConversationId.value !== id
+      ) {
+        return;
+      }
       error.value = e.message;
     }
   }
@@ -498,7 +513,7 @@ export const useChatStore = defineStore("chat", () => {
         totalElapsedMs.value = payload.total_elapsed_ms ?? null;
         runStopped.value = false;
         error.value = null;
-        finalizeRun(userMessageId);
+        finalizeRun(userMessageId, "completed");
         loading.value = false;
         break;
       case "run_error":
@@ -513,7 +528,7 @@ export const useChatStore = defineStore("chat", () => {
           currentStep.value = null;
         }
         totalElapsedMs.value = payload.total_elapsed_ms ?? null;
-        finalizeRun(userMessageId);
+        finalizeRun(userMessageId, "error");
         loading.value = false;
         break;
       case "run_stopped":
@@ -525,13 +540,16 @@ export const useChatStore = defineStore("chat", () => {
         }
         totalElapsedMs.value = payload.total_elapsed_ms ?? null;
         runStopped.value = true;
-        finalizeRun(userMessageId);
+        finalizeRun(userMessageId, "stopped");
         loading.value = false;
         break;
     }
   }
 
-  function finalizeRun(userMessageId?: number) {
+  function finalizeRun(
+    userMessageId?: number,
+    runStatus?: WorkflowRunInfo["status"],
+  ) {
     const msgId = userMessageId ?? activeUserMessageId.value;
     if (!msgId) return;
 
@@ -540,6 +558,14 @@ export const useChatStore = defineStore("chat", () => {
       allSteps.push({ ...currentStep.value });
     }
 
+    const latestStep = allSteps.length > 0 ? allSteps[allSteps.length - 1] : null;
+    const remainingBudget =
+      budgetRemaining.value ?? latestStep?.budget_remaining ?? null;
+    const budgetLimit =
+      remainingBudget !== null ? budgetConsumed.value + remainingBudget : 0;
+    const status: WorkflowRunInfo["status"] =
+      runStatus ?? (currentReport.value ? "completed" : "error");
+
     const run: WorkflowRunInfo = {
       id: "",
       user_message_id: msgId,
@@ -547,12 +573,10 @@ export const useChatStore = defineStore("chat", () => {
       tool_executions: [...toolExecutions.value],
       verification_attempts: [...verificationAttemptData.value],
       report: currentReport.value,
-      budget_limit: budgetRemaining.value
-        ? budgetConsumed.value + budgetRemaining.value
-        : 0,
+      budget_limit: budgetLimit,
       budget_consumed: budgetConsumed.value,
       error: error.value || "",
-      status: currentReport.value ? "completed" : "error",
+      status,
       started_at: allSteps[0]?.started_at ?? new Date().toISOString(),
       completed_at: new Date().toISOString(),
       total_elapsed_ms: totalElapsedMs.value ?? undefined,
@@ -593,6 +617,7 @@ export const useChatStore = defineStore("chat", () => {
       conversations.value = conversations.value.filter((c) => c.id !== id);
       if (currentConversationId.value === id) {
         cancelStream();
+        selectConversationRequestId += 1;
         currentConversationId.value = null;
         messages.value = [];
         runs.value.clear();

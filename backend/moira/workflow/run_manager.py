@@ -865,7 +865,11 @@ class RunManager:
         run_id = str(uuid.uuid4())
         thread_id = graph_config.get("configurable", {}).get("thread_id", run_id)
         started_at = datetime.now(timezone.utc).isoformat()
-        budget_limit = config.budget.default_limit
+        raw_budget_limit = initial_state.get("budget_limit")
+        if isinstance(raw_budget_limit, (int, float)):
+            budget_limit = float(raw_budget_limit)
+        else:
+            budget_limit = float(config.budget.default_limit)
 
         active_run = ActiveRun(
             run_id=run_id,

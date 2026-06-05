@@ -359,12 +359,16 @@ async def _send_and_stream(
     client: httpx.AsyncClient,
     conversation_id: str,
     content: str,
+    settings: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Start a run (POST) and consume its SSE stream (GET).
     Returns parsed SSE events."""
+    body: dict[str, Any] = {"content": content}
+    if settings is not None:
+        body["settings"] = settings
     resp = await client.post(
         f"/api/conversations/{conversation_id}/messages",
-        json={"content": content},
+        json=body,
     )
     assert resp.status_code == 200, f"POST /messages failed: {resp.text}"
     data = resp.json()
@@ -467,6 +471,33 @@ class TestSSEStreamingEndpoint:
                 f"Budget not decreasing: {budgets[i]} >= {budgets[i - 1]} at index {i}"
             )
         logger.info("Budget progression: %s", budgets)
+
+    async def test_start_run_honors_budget_override(self, app_with_fake_inference):
+        """Integration test: run manager uses per-run budget overrides from
+        POST /messages settings rather than the global default limit."""
+        client, transport = app_with_fake_inference
+        logger.info("Integration test: per-run budget override")
+
+        resp = await client.post("/api/conversations")
+        conversation_id = resp.json()["id"]
+
+        events = await _send_and_stream(
+            client,
+            conversation_id,
+            "Budget override test",
+            settings={"budget": 37},
+        )
+
+        budget_updates = [e for e in events if e["event"] == "budget_update"]
+        assert budget_updates, "Expected at least one budget_update event"
+        first_budget = budget_updates[0]["data"]["budget_remaining"]
+        assert first_budget == 37
+
+        detail = await client.get(f"/api/conversations/{conversation_id}")
+        assert detail.status_code == 200
+        runs = detail.json()["runs"]
+        assert len(runs) == 1
+        assert runs[0]["budget_limit"] == 37
 
     async def test_assistant_message_persisted_after_run(self, app_with_fake_inference):
         """Integration test: after a successful graph run, the full report

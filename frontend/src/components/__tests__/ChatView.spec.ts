@@ -6,6 +6,15 @@ import { createRouter, createMemoryHistory, type Router } from "vue-router";
 
 let router: Router;
 
+// jsdom does not implement HTMLElement.scrollTo, but ChatView triggers
+// NScrollbar.scrollTo from a watcher when conversations change.
+// Provide a test shim to avoid unhandled rejections in unit tests.
+Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+  value: vi.fn(),
+  writable: true,
+  configurable: true,
+});
+
 beforeEach(async () => {
   router = createRouter({
     history: createMemoryHistory(),
@@ -420,5 +429,113 @@ describe("ChatView", () => {
 
     // Total elapsed
     expect(text).toContain("Total:");
+  });
+
+  it("stores stopped run status and zero-remaining budget limit correctly", async () => {
+    mockStartRunAndStream([
+      {
+        event: "budget_update",
+        data: JSON.stringify({
+          budget_remaining: 0,
+          budget_consumed: 35,
+        }),
+      },
+      {
+        event: "run_stopped",
+        data: JSON.stringify({
+          node: "verification",
+          total_elapsed_ms: 2500,
+        }),
+      },
+    ]);
+
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const store = useChatStore();
+
+    await store.sendMessage("stop status test");
+    await flushUi();
+
+    const userMsg = store.messages.find((m) => m.role === "user");
+    expect(userMsg).toBeDefined();
+    const run = store.getRunForMessage(userMsg!.id);
+    expect(run).not.toBeNull();
+    expect(run!.status).toBe("stopped");
+    expect(run!.budget_consumed).toBe(35);
+    expect(run!.budget_limit).toBe(35);
+  });
+
+  it("ignores stale selectConversation responses when switching quickly", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const store = useChatStore();
+
+    const getConversationMock = api.getConversation as unknown as ReturnType<
+      typeof vi.fn
+    >;
+
+    let resolveFirst: (value: any) => void = () => {};
+    let resolveSecond: (value: any) => void = () => {};
+
+    getConversationMock
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve;
+          }),
+      );
+
+    const p1 = store.selectConversation("conv-1");
+    const p2 = store.selectConversation("conv-2");
+
+    resolveSecond({
+      id: "conv-2",
+      title: "Second",
+      created_at: new Date().toISOString(),
+      messages: [
+        {
+          id: 2,
+          role: "user",
+          content: "newer conversation",
+          created_at: new Date().toISOString(),
+        },
+      ],
+      runs: [],
+    });
+    await p2;
+
+    resolveFirst({
+      id: "conv-1",
+      title: "First",
+      created_at: new Date().toISOString(),
+      messages: [
+        {
+          id: 1,
+          role: "user",
+          content: "stale conversation",
+          created_at: new Date().toISOString(),
+        },
+      ],
+      runs: [],
+    });
+    await p1;
+
+    expect(store.currentConversationId).toBe("conv-2");
+    expect(store.messages).toHaveLength(1);
+    expect(store.messages[0]!.content).toBe("newer conversation");
+
+    getConversationMock.mockImplementation(async () => ({
+      id: "conv-1",
+      title: "New Conversation",
+      created_at: new Date().toISOString(),
+      messages: [],
+      runs: [],
+    }));
   });
 });
