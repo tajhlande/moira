@@ -232,6 +232,38 @@ class SqliteConversationRepository(ConversationRepository):
         finally:
             conn.close()
 
+    async def cleanup_stale_runs(self) -> int:
+        """Mark any runs and steps with status='running' as 'stopped'.
+
+        Called at startup to clean up after an unclean shutdown (server crash,
+        container restart, etc.). Running state is ephemeral — it only exists
+        while the process is alive. Returns the number of runs cleaned up."""
+        conn = self._connect()
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            step_cursor = conn.execute(
+                "UPDATE workflow_steps SET status = 'stopped' WHERE status = 'running'"
+            )
+            step_count = step_cursor.rowcount
+            run_cursor = conn.execute(
+                "UPDATE workflow_runs SET status = 'stopped', "
+                "error = 'Server restarted while run was in progress', "
+                "completed_at = ? "
+                "WHERE status = 'running'",
+                (now,),
+            )
+            run_count = run_cursor.rowcount
+            conn.commit()
+            if run_count > 0 or step_count > 0:
+                logger.info(
+                    "Stale run cleanup: marked %d runs and %d steps as stopped",
+                    run_count,
+                    step_count,
+                )
+            return run_count
+        finally:
+            conn.close()
+
 
 class SqliteModelPreferencesRepository(ModelPreferencesRepository):
     def __init__(self, db_path: str):

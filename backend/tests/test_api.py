@@ -81,6 +81,9 @@ class FakeConversationRepo(ConversationRepository):
             return True
         return False
 
+    async def cleanup_stale_runs(self) -> int:
+        return 0
+
 
 class FakePrefsRepo(ModelPreferencesRepository):
     def __init__(self):

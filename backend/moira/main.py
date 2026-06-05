@@ -36,6 +36,15 @@ async def lifespan(app: FastAPI):
     logger.info("Starting MOiRA")
     config = load_config()
     await init_services(config)
+
+    # clean up stale data in the database
+    from moira.persistence.interfaces import ConversationRepository
+    from moira.service_setup import service_provider
+    from typing import cast
+    repo = cast(ConversationRepository, service_provider("conversation_repository"))
+    await repo.cleanup_stale_runs()
+
+    # show our launch banner
     show_banner()
     logger.info(f"MOiRA v{version('moira-backend')} ready")
     yield

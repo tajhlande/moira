@@ -126,6 +126,9 @@ class ConversationRepository(ABC):
     @abstractmethod
     async def delete_conversation(self, conversation_id: str) -> bool: ...
 
+    @abstractmethod
+    async def cleanup_stale_runs(self) -> int: ...
+
 
 class ModelPreferencesRepository(ABC):
     @abstractmethod
