@@ -97,6 +97,4 @@ The [agent-docs](agent-docs) directory contains specific guidance for architectu
 user experience, and critique notes. 
 See [agent-docs/index.md](agent-docs/index.md) for a list of documents and what they contain. 
 See [agent-docs/core/](agent-docs/core/) for the core application architecture and description docs.
-
-
-
+A general roadmap is available in [roadmap.md](roadmap.md).
