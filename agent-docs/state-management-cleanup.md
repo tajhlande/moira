@@ -1,6 +1,6 @@
 # State Management Cleanup Plan
 
-Status: **In Progress (Phases 0-3 largely complete)**
+Status: **In Progress (Phases 0-4 complete, Phase 5 remaining)**
 
 ## Goal
 
@@ -20,8 +20,9 @@ The migration has moved beyond planning:
 - Phase 1 backend snapshot/versioning contract is implemented.
 - Phase 2 snapshot-driven frontend store is implemented.
 - Phase 3 unified run rendering + lazy step detail loading is implemented.
+- Phase 4 stream replay simplification is implemented (snapshot-only SSE).
 
-Open work is focused on stream simplification and compatibility cleanup (Phases 4-5).
+Open work is compatibility cleanup (Phase 5).
 
 ## UX Decision Update: Attempt Timeline Transparency
 

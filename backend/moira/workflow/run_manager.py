@@ -148,112 +148,17 @@ class ActiveRun:
     def _replay_events(self) -> list[dict]:
         """Build a list of SSE events representing all state accumulated so
         far. Used to catch up a newly-connected subscriber so they don't miss
-        events that fired before their queue was created."""
-        events: list[dict] = []
+        events that fired before their queue was created.
 
-        events.append(
+        Phase 4: only replays the canonical run_snapshot. The frontend
+        ignores legacy event types (node_start, node_end, tool_result,
+        budget_update, verification_report, run_complete)."""
+        return [
             {
                 "event": "run_snapshot",
                 "data": json.dumps(self._build_run_snapshot()),
             }
-        )
-
-        # Budget state
-        events.append(
-            {
-                "event": "budget_update",
-                "data": json.dumps(
-                    {
-                        "budget_remaining": self.budget_remaining,
-                        "budget_consumed": self.budget_consumed,
-                    }
-                ),
-            }
-        )
-
-        # Completed execution steps.  Tool results are embedded in each
-        # step's detail.tool_results, so node_end carries them without
-        # needing separate tool_result events.
-        for step in self.execution_steps:
-            payload = {
-                "node": step["node"],
-                "budget_remaining": step["budget_remaining"],
-                "started_at": step.get("started_at", ""),
-                "elapsed_ms": step.get("elapsed_ms", 0),
-            }
-            events.append({"event": "node_start", "data": json.dumps(payload)})
-            end_payload = {**payload}
-            if step.get("detail"):
-                end_payload["detail"] = step["detail"]
-            events.append({"event": "node_end", "data": json.dumps(end_payload)})
-
-        # Currently running step (started but not yet ended). Emit
-        # node_start, then replay any tool_results that arrived during
-        # this step so the frontend can attach them to the live step.
-        if self._current_step:
-            payload = {
-                "node": self._current_step["node"],
-                "started_at": self._current_step.get("started_at", ""),
-            }
-            events.append({"event": "node_start", "data": json.dumps(payload)})
-            for tr in self._current_step.get("detail", {}).get(
-                "tool_results", []
-            ):
-                events.append(
-                    {
-                        "event": "tool_result",
-                        "data": json.dumps(
-                            {
-                                "tool": tr["tool"],
-                                "args": tr.get("args"),
-                                "result": tr.get("result", ""),
-                                "duration_ms": tr.get("duration_ms", 0),
-                                "success": tr.get("success", False),
-                            }
-                        ),
-                    }
-                )
-
-        # Verification attempts
-        # Verification attempts reconstructed from verification steps'
-        # detail.structured_output for SSE replay compatibility.
-        for step in self.execution_steps:
-            if step.get("node") == "verification" and step.get("detail", {}).get(
-                "structured_output"
-            ):
-                step_idx = self.execution_steps.index(step) + 1
-                attempt_num = sum(
-                    1
-                    for s in self.execution_steps[:step_idx]
-                    if s.get("node") == "verification"
-                )
-                events.append(
-                    {
-                        "event": "verification_report",
-                        "data": json.dumps(
-                            {
-                                "report": step["detail"]["structured_output"],
-                                "attempt": attempt_num,
-                            }
-                        ),
-                    }
-                )
-
-        # Report (if run already completed)
-        if self.report:
-            events.append(
-                {
-                    "event": "run_complete",
-                    "data": json.dumps(
-                        {
-                            "report": self.report,
-                            "total_elapsed_ms": self.total_elapsed_ms,
-                        }
-                    ),
-                }
-            )
-
-        return events
+        ]
 
     async def subscribe(self) -> Any:
         """Async iterator yielding SSE event dicts. First replays all events
@@ -319,18 +224,6 @@ class ActiveRun:
         """Iterate graph.astream(), accumulate state, persist incrementally,
         and broadcast events to subscribers."""
         try:
-            self._broadcast(
-                {
-                    "event": "budget_update",
-                    "data": json.dumps(
-                        {
-                            "budget_remaining": self.budget_limit,
-                            "budget_consumed": 0,
-                        }
-                    ),
-                }
-            )
-
             async for event in graph.astream(
                 initial_state,
                 config=graph_config,
@@ -386,18 +279,6 @@ class ActiveRun:
             self._finalize_metrics()
             self._mark_state_changed()
             await self._persist()
-            self._broadcast(
-                {
-                    "event": "run_error",
-                    "data": json.dumps(
-                        {
-                            "node": "unknown",
-                            "error": self.error,
-                            "conversation_id": self.conversation_id,
-                        }
-                    ),
-                }
-            )
             self._broadcast_run_snapshot()
 
         if self.status == "stopped":
@@ -450,18 +331,6 @@ class ActiveRun:
         to ``_run_graph`` but invokes ``astream`` with a ``Command`` rather
         than fresh initial state."""
         try:
-            self._broadcast(
-                {
-                    "event": "budget_update",
-                    "data": json.dumps(
-                        {
-                            "budget_remaining": self.budget_remaining,
-                            "budget_consumed": self.budget_consumed,
-                        }
-                    ),
-                }
-            )
-
             async for event in graph.astream(
                 resume_input,
                 config=graph_config,
@@ -788,12 +657,6 @@ class ActiveRun:
         if persist:
             asyncio.create_task(self._persist())
 
-        self._broadcast(
-            {
-                "event": event_type,
-                "data": json.dumps(payload),
-            }
-        )
         if snapshot_changed:
             self._broadcast_run_snapshot()
 

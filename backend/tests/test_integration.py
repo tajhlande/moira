@@ -398,10 +398,10 @@ class TestSSEStreamingEndpoint:
     inference client (fake transport) → SQLite persistence."""
 
     async def test_full_graph_run_streams_events(self, app_with_fake_inference):
-        """Integration test: a complete research workflow streams all SSE
-        events from start to finish, ending with a run_complete event."""
+        """Integration test: a complete research workflow streams run_snapshot
+        events from start to finish with step progression."""
         client, transport = app_with_fake_inference
-        logger.info("INTegration test: full graph run with SSE streaming")
+        logger.info("Integration test: full graph run with SSE streaming")
 
         resp = await client.post("/api/conversations")
         assert resp.status_code == 200
@@ -413,12 +413,17 @@ class TestSSEStreamingEndpoint:
         event_types = [e["event"] for e in events]
         logger.info("Event types: %s", event_types)
 
-        assert "node_start" in event_types, "Should see node_start events"
-        assert "node_end" in event_types, "Should see node_end events"
-        assert "run_complete" in event_types, "Should end with run_complete"
+        assert "run_snapshot" in event_types, "Should see run_snapshot events"
+
+        snapshots = [e["data"] for e in events if e["event"] == "run_snapshot"]
+        assert snapshots, "Expected at least one run_snapshot"
+
+        final = snapshots[-1]
+        assert final["status"] == "completed"
+        assert len(final["execution_steps"]) > 0, "Should have execution steps"
 
     async def test_run_complete_contains_report(self, app_with_fake_inference):
-        """Integration test: the run_complete event carries a structured
+        """Integration test: the final run_snapshot carries a structured
         ResearchReport with answer, citations, and budget."""
         client, transport = app_with_fake_inference
         logger.info("Integration test: run_complete report structure")
@@ -428,10 +433,11 @@ class TestSSEStreamingEndpoint:
 
         events = await _send_and_stream(client, conversation_id, "What is the speed of light?")
 
-        complete_events = [e for e in events if e["event"] == "run_complete"]
-        assert len(complete_events) == 1
+        snapshots = [e["data"] for e in events if e["event"] == "run_snapshot"]
+        completed = [s for s in snapshots if s.get("status") == "completed"]
+        assert completed, "Expected at least one completed run_snapshot"
 
-        report = complete_events[0]["data"]["report"]
+        report = completed[-1]["report"]
         assert "answer" in report
         assert "citations" in report
         assert "budget_consumed" in report
@@ -733,8 +739,9 @@ class TestSSEStreamingEndpoint:
         logger.info("Transport received %d requests", len(transport.requests))
 
     async def test_budget_is_deducted_across_nodes(self, app_with_fake_inference):
-        """Integration test: node_end events show decreasing budget_remaining,
-        proving the budget enforcement module works through the full graph."""
+        """Integration test: execution steps in the final run_snapshot show
+        decreasing budget_remaining, proving budget enforcement works through
+        the full graph."""
         client, transport = app_with_fake_inference
         logger.info("Integration test: budget deduction across nodes")
 
@@ -743,10 +750,17 @@ class TestSSEStreamingEndpoint:
 
         events = await _send_and_stream(client, conversation_id, "Budget test question")
 
-        budget_events = [e for e in events if e["event"] == "node_end"]
-        budgets = [e["data"]["budget_remaining"] for e in budget_events]
+        snapshots = [e["data"] for e in events if e["event"] == "run_snapshot"]
+        assert snapshots, "Expected at least one run_snapshot"
+        final = snapshots[-1]
 
-        # Budget should strictly decrease
+        completed_steps = [
+            s for s in final["execution_steps"] if s.get("status") == "completed"
+        ]
+        budgets = [s["budget_remaining"] for s in completed_steps]
+
+        assert len(budgets) >= 2, f"Expected >= 2 completed steps, got {len(budgets)}"
+
         for i in range(1, len(budgets)):
             assert budgets[i] < budgets[i - 1], (
                 f"Budget not decreasing: {budgets[i]} >= {budgets[i - 1]} at index {i}"
@@ -769,10 +783,9 @@ class TestSSEStreamingEndpoint:
             settings={"budget": 37},
         )
 
-        budget_updates = [e for e in events if e["event"] == "budget_update"]
-        assert budget_updates, "Expected at least one budget_update event"
-        first_budget = budget_updates[0]["data"]["budget_remaining"]
-        assert first_budget == 37
+        snapshots = [e["data"] for e in events if e["event"] == "run_snapshot"]
+        assert snapshots, "Expected at least one run_snapshot"
+        assert snapshots[0]["budget_limit"] == 37
 
         detail = await client.get(f"/api/conversations/{conversation_id}")
         assert detail.status_code == 200
@@ -859,7 +872,10 @@ class TestMultiTurnConversation:
         conversation_id = resp.json()["id"]
 
         events_resp = await _send_and_stream(client, conversation_id, "First question")
-        assert any(e["event"] == "run_complete" for e in events_resp)
+        assert any(
+            e["event"] == "run_snapshot" and e["data"].get("status") == "completed"
+            for e in events_resp
+        )
 
         # Reset transport for the second run
         transport._responses = [
@@ -871,7 +887,10 @@ class TestMultiTurnConversation:
 
         # Second message in the same conversation
         events2 = await _send_and_stream(client, conversation_id, "Follow up question")
-        assert any(e["event"] == "run_complete" for e in events2)
+        assert any(
+            e["event"] == "run_snapshot" and e["data"].get("status") == "completed"
+            for e in events2
+        )
         logger.info("Second turn received %d events", len(events2))
 
         # Verify the conversation now has messages from both turns
@@ -923,19 +942,23 @@ class TestGraphVerificationRouting:
         )
         event_types = [e["event"] for e in events]
 
-        # Should see verification_report events (at least 2: fail then pass)
-        verification_reports = [e for e in events if e["event"] == "verification_report"]
-        assert len(verification_reports) >= 2, (
-            f"Expected >= 2 verification reports (fail then pass), got {len(verification_reports)}"
+        snapshots = [e["data"] for e in events if e["event"] == "run_snapshot"]
+        assert snapshots, "Expected at least one run_snapshot"
+
+        final = snapshots[-1]
+        assert final["status"] == "completed", f"Expected completed, got {final['status']}"
+
+        verification_steps = [
+            s for s in final["execution_steps"] if s.get("node") == "verification"
+        ]
+        assert len(verification_steps) >= 2, (
+            f"Expected >= 2 verification steps (fail then pass), got {len(verification_steps)}"
         )
         logger.info(
-            "Verification retry test: %d reports, %d total events",
-            len(verification_reports),
+            "Verification retry test: %d verification steps, %d total events",
+            len(verification_steps),
             len(events),
         )
-
-        # Should still end with a run_complete
-        assert "run_complete" in event_types
 
 
 class TestStreamReplay:
@@ -988,13 +1011,22 @@ class TestStreamReplay:
         event_types = [e["event"] for e in events]
         logger.info("Replay test received %d events: %s", len(events), event_types)
 
-        # Planning node_start should be present even though we connected late,
-        # because subscribe() replays accumulated state.
-        node_starts = [e for e in events if e["event"] == "node_start"]
-        nodes = [e["data"]["node"] for e in node_starts]
-        assert "planning" in nodes, (
-            f"Expected 'planning' in replayed node_start events, got: {nodes}"
+        # First event should be a run_snapshot replay with accumulated state.
+        # Planning should already be done, so it should appear in the steps.
+        assert event_types[0] == "run_snapshot", (
+            f"Expected first event to be run_snapshot, got {event_types[0]}"
+        )
+        first_snapshot = events[0]["data"]
+        planning_steps = [
+            s for s in first_snapshot.get("execution_steps", [])
+            if s.get("node") == "planning"
+        ]
+        assert planning_steps, (
+            "Expected 'planning' step in replayed run_snapshot"
         )
 
-        # Must still end with run_complete
-        assert "run_complete" in event_types
+        # Final snapshot should have completed status
+        final_snapshots = [
+            e["data"] for e in events if e["event"] == "run_snapshot"
+        ]
+        assert final_snapshots[-1]["status"] == "completed"

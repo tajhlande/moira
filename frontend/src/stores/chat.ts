@@ -737,12 +737,6 @@ export const useChatStore = defineStore("chat", () => {
       if (run && run.status !== "running") {
         loading.value = false;
       }
-      return;
-    }
-
-    if (eventType === "run_error" && payload?.error) {
-      error.value = String(payload.error);
-      loading.value = false;
     }
   }
 
