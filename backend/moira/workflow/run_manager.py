@@ -490,7 +490,7 @@ class ActiveRun:
                 self.execution_steps.append(self._current_step)
             self._step_started_at = time.monotonic()
             self._current_step = {
-                "id": f"{self.run_id}:{self._next_step_ordinal}",
+                "id": str(self._next_step_ordinal),
                 "node": payload.get("node", ""),
                 "label": STAGE_LABELS.get(payload.get("node", ""), payload.get("node", "")),
                 "status": "running",

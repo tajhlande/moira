@@ -53,9 +53,9 @@ def _step_tool_call_count(step: WorkflowStep) -> int:
     return len(tool_results) if isinstance(tool_results, list) else 0
 
 
-def _step_summary(step: WorkflowStep) -> dict[str, Any]:
+def _step_summary(step: WorkflowStep, ordinal: int = 1) -> dict[str, Any]:
     return {
-        "id": str(step.id) if step.id is not None else "",
+        "id": str(ordinal),
         "detail_run_id": step.workflow_run_id,
         "node": step.node_name,
         "label": step.label,
@@ -137,6 +137,15 @@ def _coalesced_run_snapshot(
         for attempt in attempts
     ]
 
+    # Compute ordinal step IDs per run so they match the SSE snapshot
+    # format (1-based position within each workflow_run).
+    ordinal_counters: dict[str, int] = {}
+    step_summaries: list[dict[str, Any]] = []
+    for step in merged_steps:
+        rid = step.workflow_run_id
+        ordinal_counters[rid] = ordinal_counters.get(rid, 0) + 1
+        step_summaries.append(_step_summary(step, ordinal_counters[rid]))
+
     return {
         "id": latest.id,
         "conversation_id": latest.conversation_id,
@@ -147,7 +156,7 @@ def _coalesced_run_snapshot(
         "total_elapsed_ms": latest.total_elapsed_ms,
         "error": latest.error,
         "report": latest.report,
-        "execution_steps": [_step_summary(s) for s in merged_steps],
+        "execution_steps": step_summaries,
         "attempts": attempt_summaries,
         "tool_executions": merged_tool_executions,
         "verification_attempts": _verification_attempts(merged_steps),
@@ -240,20 +249,34 @@ async def get_conversation(
 
 
 @router.get("/runs/{run_id}/steps/{step_id}/detail", response_model=dict)
-async def get_run_step_detail(run_id: str, step_id: int):
+async def get_run_step_detail(run_id: str, step_id: str):
     """Return the full detail payload for a single workflow step.
 
     Used by the frontend to lazily load expanded step details while the
-    conversation API and run snapshots stay lightweight."""
+    conversation API and run snapshots stay lightweight.
+
+    ``step_id`` is the 1-based ordinal position of the step within the
+    run (matching the step summary ``id`` field from both SSE snapshots
+    and conversation API responses)."""
     step_repo = _steps_repo()
     steps = await step_repo.get_steps_for_run(run_id)
-    target = next((s for s in steps if s.id == step_id), None)
-    if target is None:
+
+    try:
+        ordinal = int(step_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"step_id must be an integer ordinal, got '{step_id}'",
+        )
+
+    if ordinal < 1 or ordinal > len(steps):
         raise HTTPException(status_code=404, detail="Step not found")
+
+    target = steps[ordinal - 1]
 
     return {
         "run_id": run_id,
-        "step_id": step_id,
+        "step_id": target.id,
         "step_version": target.step_version or 1,
         "has_detail": bool(target.detail),
         "detail": target.detail or {},
