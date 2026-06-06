@@ -53,16 +53,9 @@ export interface ToolExecution {
 export interface ResearchReport {
   answer: string;
   citations: { source: string; url?: string; excerpt?: string }[];
-  support: { content: string; source: string }[];
   critiques: string[];
   unverified_claims: string[];
   budget_consumed: number;
-  generation_path?: string;
-}
-
-export interface VerificationAttempt {
-  report: any;
-  attempt: number;
 }
 
 export interface RunAttemptSummary {
@@ -89,7 +82,6 @@ export interface WorkflowRunInfo {
   attempts?: RunAttemptSummary[];
   execution_steps: ExecutionStep[];
   tool_executions: ToolExecution[];
-  verification_attempts: VerificationAttempt[];
   report: ResearchReport | null;
   budget_limit: number;
   budget_consumed: number;

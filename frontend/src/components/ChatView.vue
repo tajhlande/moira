@@ -323,8 +323,4 @@ async function copyMessage(content: string, index: number) {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
-
-.step-stopped-icon {
-  color: var(--n-warning-color, #f0a020);
-}
 </style>

@@ -176,7 +176,6 @@ describe("ChatView", () => {
         report: {
           answer: "Mocked SSE response",
           citations: [],
-          support: [],
           critiques: [],
           unverified_claims: [],
           budget_consumed: 21,
@@ -238,7 +237,6 @@ describe("ChatView", () => {
         report: {
           answer: "Done",
           citations: [],
-          support: [],
           critiques: [],
           unverified_claims: [],
           budget_consumed: 2,
@@ -268,20 +266,13 @@ describe("ChatView", () => {
     await flushUi();
 
     // After finalization, the run is stored in the runs map
-    // AND the live state persists for immediate rendering
-    expect(store.budgetRemaining).toBe(48);
-
-    // Live state should still be present (not cleared)
-    expect(store.executionSteps.length).toBe(1);
-    expect(store.executionSteps[0]!.label).toBe("Planning");
-    expect(store.executionSteps[0]!.elapsed_ms).toBe(1200);
-
-    // The run should also be in the runs map
     const userMsg = store.messages.find((m) => m.role === "user");
     expect(userMsg).toBeDefined();
     const run = store.getRunForMessage(userMsg!.id);
     expect(run).not.toBeNull();
     expect(run!.execution_steps.length).toBe(1);
+    expect(run!.execution_steps[0]!.label).toBe("Planning");
+    expect(run!.execution_steps[0]!.elapsed_ms).toBe(1200);
     expect(run!.report).not.toBeNull();
     expect(run!.report!.answer).toBe("Done");
     expect(run!.total_elapsed_ms).toBe(5000);
@@ -314,7 +305,6 @@ describe("ChatView", () => {
         report: {
           answer: "Final answer",
           citations: [],
-          support: [],
           critiques: [],
           unverified_claims: [],
           budget_consumed: 10,
@@ -438,7 +428,6 @@ describe("ChatView", () => {
         report: {
           answer: "Rendered answer",
           citations: [],
-          support: [],
           critiques: [],
           unverified_claims: [],
           budget_consumed: 10,
@@ -509,7 +498,6 @@ describe("ChatView", () => {
         report: {
           answer: "Persisted answer",
           citations: [],
-          support: [],
           critiques: [],
           unverified_claims: [],
           budget_consumed: 5,
@@ -737,7 +725,6 @@ describe("ChatView", () => {
             },
           ],
           tool_executions: [],
-          verification_attempts: [],
           state_version: 3,
           started_at: new Date().toISOString(),
           completed_at: new Date().toISOString(),
@@ -768,7 +755,6 @@ describe("ChatView", () => {
             },
           ],
           tool_executions: [],
-          verification_attempts: [],
           state_version: 1,
           started_at: new Date().toISOString(),
           completed_at: "",
@@ -841,7 +827,6 @@ describe("ChatView", () => {
             },
           ],
           tool_executions: [],
-          verification_attempts: [],
           state_version: 3,
           started_at: new Date().toISOString(),
           completed_at: new Date().toISOString(),
@@ -893,7 +878,6 @@ describe("ChatView", () => {
             },
           ],
           tool_executions: [],
-          verification_attempts: [],
           state_version: 3,
           started_at: new Date().toISOString(),
           completed_at: new Date().toISOString(),
@@ -911,7 +895,6 @@ describe("ChatView", () => {
           report: null,
           execution_steps: [],
           tool_executions: [],
-          verification_attempts: [],
           state_version: 1,
           started_at: new Date().toISOString(),
           completed_at: "",
@@ -1049,7 +1032,6 @@ describe("ChatView", () => {
             },
           ],
           tool_executions: [],
-          verification_attempts: [],
           state_version: 3,
           started_at: new Date().toISOString(),
           completed_at: "",

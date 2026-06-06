@@ -60,7 +60,6 @@ class ActiveRun:
 
         # Accumulated state mirrors WorkflowRun fields
         self.execution_steps: list[dict] = []
-        self.tool_executions: list[dict] = []
         self.report: dict | None = None
         self.error: str = ""
         self.status: str = "running"
@@ -386,18 +385,6 @@ class ActiveRun:
             self._finalize_metrics()
             self._mark_state_changed()
             await self._persist()
-            self._broadcast(
-                {
-                    "event": "run_error",
-                    "data": json.dumps(
-                        {
-                            "node": "unknown",
-                            "error": self.error,
-                            "conversation_id": self.conversation_id,
-                        }
-                    ),
-                }
-            )
             self._broadcast_run_snapshot()
 
         if self.status == "stopped":
@@ -483,18 +470,6 @@ class ActiveRun:
         except asyncio.CancelledError:
             pass
 
-        self._broadcast(
-            {
-                "event": "run_stopped",
-                "data": json.dumps(
-                    {
-                        "node": stopped_node,
-                        "conversation_id": self.conversation_id,
-                        "total_elapsed_ms": self.total_elapsed_ms,
-                    }
-                ),
-            }
-        )
         self._broadcast_run_snapshot()
         logger.info(
             "Run %s stopped by user at node %s",
@@ -593,10 +568,7 @@ class ActiveRun:
                 "duration_ms": payload.get("duration_ms", 0),
                 "success": payload.get("success", False),
             }
-            self.tool_executions.append(tool_entry)
 
-            # Also attach to the current step's detail so the frontend can
-            # render tool results inline under the step that produced them.
             if self._current_step:
                 if "detail" not in self._current_step:
                     self._current_step["detail"] = {}
@@ -608,18 +580,6 @@ class ActiveRun:
                 )
                 self._current_step["step_version"] = self._current_step.get("step_version", 1) + 1
 
-            # Rename key for SSE consumers: backend uses "output" internally
-            # from the tool executor, but the conceptual model calls it "result"
-            payload["result"] = payload.pop("output", "")
-            self._mark_state_changed()
-            persist = True
-            snapshot_changed = True
-
-        elif event_type == "verification_report":
-            # Verification reports are now embedded in the verification
-            # step's detail.structured_output via node_end. We still
-            # broadcast the SSE event and persist run metadata, but no
-            # longer maintain a separate verification_attempts list.
             self._mark_state_changed()
             persist = True
             snapshot_changed = True
@@ -629,7 +589,6 @@ class ActiveRun:
                 self.report = payload["report"]
             self.status = "completed"
             self._finalize_metrics()
-            payload["total_elapsed_ms"] = self.total_elapsed_ms
             self._mark_state_changed()
             persist = True
             snapshot_changed = True
@@ -649,7 +608,6 @@ class ActiveRun:
                 self.execution_steps.append(self._current_step)
                 self._current_step = None
             self._finalize_metrics()
-            payload["total_elapsed_ms"] = self.total_elapsed_ms
             self._mark_state_changed()
             persist = True
             snapshot_changed = True
@@ -695,7 +653,7 @@ class ActiveRun:
                 conversation_id=self.conversation_id,
                 user_message_id=self.user_message_id,
                 thread_id=self.thread_id,
-                tool_executions=self.tool_executions,
+                tool_executions=[],
                 report=self.report,
                 budget_limit=float(self.budget_limit),
                 budget_consumed=self.budget_consumed,

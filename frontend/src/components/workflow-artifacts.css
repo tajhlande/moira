@@ -274,10 +274,6 @@
   font-size: 0.85em;
 }
 
-.step-tool-results {
-  margin-top: 8px;
-}
-
 .tool-results-scroll {
   max-height: 400px;
   overflow-y: auto;
@@ -399,17 +395,6 @@
   margin-left: auto;
 }
 
-.tool-calls-panel {
-  border-top: none;
-  padding: 0 0;
-  max-width: 80%;
-}
-
-.tool-call {
-  padding: 4px 0;
-  border-bottom: 1px solid var(--moira-border, #e0e0e0);
-}
-
 .tool-name {
   font-weight: 600;
   font-family: monospace;
@@ -427,14 +412,6 @@
   margin-left: 8px;
   font-size: 0.85em;
   opacity: 0.6;
-}
-
-.tool-output {
-  font-size: 0.85em;
-  margin: 4px 0 0 0;
-  max-height: 60px;
-  overflow: hidden;
-  white-space: pre-wrap;
 }
 
 .report-panel {

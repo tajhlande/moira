@@ -67,10 +67,6 @@ function mergeRunHistory(
       latest.execution_steps,
     ),
     tool_executions: [...previous.tool_executions, ...latest.tool_executions],
-    verification_attempts: [
-      ...previous.verification_attempts,
-      ...latest.verification_attempts,
-    ],
   };
 }
 
@@ -104,50 +100,6 @@ export const useChatStore = defineStore("chat", () => {
     if (!messageId) return null;
     return runs.value.get(messageId) || null;
   });
-
-  const executionSteps = computed<ExecutionStep[]>(() => {
-    const run = activeRun.value;
-    if (!run) return [];
-    return run.execution_steps.filter((s) => s.status !== "running");
-  });
-
-  const currentStep = computed<ExecutionStep | null>(() => {
-    const run = activeRun.value;
-    if (!run) return null;
-    return run.execution_steps.find((s) => s.status === "running") || null;
-  });
-
-  const toolExecutions = computed(() => activeRun.value?.tool_executions ?? []);
-
-  const verificationAttemptData = computed(
-    () => activeRun.value?.verification_attempts ?? [],
-  );
-
-  const currentReport = computed(() => activeRun.value?.report ?? null);
-
-  const budgetConsumed = computed(() => activeRun.value?.budget_consumed ?? 0);
-
-  const budgetRemaining = computed<number | null>(() => {
-    const run = activeRun.value;
-    if (!run) return null;
-    const runningStep = run.execution_steps.find((s) => s.status === "running");
-    if (runningStep && typeof runningStep.budget_remaining === "number") {
-      return runningStep.budget_remaining;
-    }
-    return run.budget_limit - run.budget_consumed;
-  });
-
-  const verificationAttempts = computed(
-    () => verificationAttemptData.value.length,
-  );
-
-  const totalElapsedMs = computed(() => activeRun.value?.total_elapsed_ms ?? null);
-
-  const runStopped = computed(() => activeRun.value?.status === "stopped");
-
-  const runErrored = computed(
-    () => activeRun.value?.status === "error" && !activeRun.value?.report,
-  );
 
   function cancelStream() {
     if (streamAbort) {
@@ -245,9 +197,6 @@ export const useChatStore = defineStore("chat", () => {
       tool_executions: Array.isArray(snapshot.tool_executions)
         ? snapshot.tool_executions
         : existing?.tool_executions ?? [],
-      verification_attempts: Array.isArray(snapshot.verification_attempts)
-        ? snapshot.verification_attempts
-        : existing?.verification_attempts ?? [],
       report:
         snapshot.report !== undefined
           ? (snapshot.report as WorkflowRunInfo["report"])
@@ -589,7 +538,6 @@ export const useChatStore = defineStore("chat", () => {
           user_message_id,
           execution_steps: [],
           tool_executions: [],
-          verification_attempts: [],
           report: null,
           budget_limit: runSettings.value.budget ?? 50,
           budget_consumed: 0,
@@ -860,16 +808,7 @@ export const useChatStore = defineStore("chat", () => {
     loading,
     error,
     runs,
-    executionSteps,
-    currentStep,
-    budgetRemaining,
-    budgetConsumed,
-    currentReport,
-    toolExecutions,
-    verificationAttempts,
-    verificationAttemptData,
     activeUserMessageId,
-    totalElapsedMs,
     runSettings,
     stepDetails,
     loadingStepDetails,
@@ -890,7 +829,5 @@ export const useChatStore = defineStore("chat", () => {
     disconnectGlobalEvents,
     isConversationRunning,
     runningConversations,
-    runStopped,
-    runErrored,
   };
 });
