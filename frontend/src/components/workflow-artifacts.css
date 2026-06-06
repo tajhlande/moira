@@ -35,6 +35,28 @@
   color: var(--n-warning-color, #f0a020);
 }
 
+.attempt-boundary-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 4px;
+}
+
+.attempt-boundary-label {
+  font-size: 0.8em;
+  font-weight: 600;
+  opacity: 0.8;
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.attempt-boundary-line {
+  flex: 1;
+  height: 1px;
+  background: var(--moira-border, #e0e0e0);
+}
+
 .step-completed-icon {
   color: var(--n-success-color, #18a058);
 }
@@ -121,6 +143,14 @@
 .step-detail {
   padding: 8px 24px 8px 40px;
   border-bottom: 1px solid var(--moira-border, #e0e0e0);
+}
+
+.step-detail-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85em;
+  opacity: 0.8;
 }
 
 .step-detail-content {
@@ -265,6 +295,31 @@
   border-bottom: 1px solid var(--moira-border, #e0e0e0);
 }
 
+.step-tool-result-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.step-tool-result-body {
+  margin-top: 4px;
+}
+
+.tool-result-toggle {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  color: var(--n-text-color-3, #999);
+  display: flex;
+  align-items: center;
+}
+
+.tool-result-toggle:hover {
+  color: var(--n-primary-color, #18a058);
+}
+
 .step-tool-result:last-child {
   border-bottom: none;
 }
@@ -310,12 +365,24 @@
   font-family: monospace;
   font-size: 0.85em;
   color: var(--n-info-color, #d03050);
+  min-width: 3em;
+  text-align: right;
+}
+
+.step-cost-placeholder {
+  visibility: hidden;
 }
 
 .step-budget {
   font-family: monospace;
   font-size: 0.8em;
   opacity: 0.6;
+  min-width: 8em;
+  text-align: right;
+}
+
+.step-budget-placeholder {
+  visibility: hidden;
 }
 
 .step-elapsed {

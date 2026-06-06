@@ -27,6 +27,7 @@ export interface MessageInfo {
 
 export interface ExecutionStep {
   id?: string;
+  detail_run_id?: string;
   node: string;
   label: string;
   status: "running" | "completed" | "error" | "stopped";
@@ -64,6 +65,15 @@ export interface VerificationAttempt {
   attempt: number;
 }
 
+export interface RunAttemptSummary {
+  run_id: string;
+  status: "running" | "completed" | "error" | "stopped";
+  started_at: string;
+  completed_at: string;
+  updated_at?: string;
+  state_version?: number;
+}
+
 export interface ExecutionStepDetailResponse {
   run_id: string;
   step_id: number;
@@ -76,6 +86,7 @@ export interface WorkflowRunInfo {
   id: string;
   conversation_id?: string;
   user_message_id: number;
+  attempts?: RunAttemptSummary[];
   execution_steps: ExecutionStep[];
   tool_executions: ToolExecution[];
   verification_attempts: VerificationAttempt[];

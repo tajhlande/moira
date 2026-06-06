@@ -15,8 +15,9 @@ Run alongside unit tests:
 import json
 import logging
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -31,7 +32,12 @@ from moira.config import (
 )
 from moira.inference.client import InferenceClient
 from moira.inference.registry import ModelRegistry
-from moira.persistence.interfaces import DEFAULT_USER_ID
+from moira.persistence.interfaces import (
+    DEFAULT_USER_ID,
+    ConversationRepository,
+    WorkflowRun,
+    WorkflowStep,
+)
 from moira.service_setup import _services
 from moira.workflow.graph import compile_graph
 
@@ -513,6 +519,200 @@ class TestSSEStreamingEndpoint:
         assert step_data["step_id"] == step_id
         assert step_data["step_version"] == step_summary["step_version"]
         assert isinstance(step_data["detail"], dict)
+
+    async def test_conversation_detail_stacks_resume_attempts(self, app_with_fake_inference):
+        """Integration test: conversation detail exposes one logical run for
+        resumed attempts with a stacked, transparent step timeline."""
+        client, transport = app_with_fake_inference
+
+        create_resp = await client.post("/api/conversations")
+        conversation_id = create_resp.json()["id"]
+
+        conversations = cast(
+            ConversationRepository,
+            _services["conversation_repository"],
+        )
+        steps = cast(Any, _services["workflow_step_repository"])
+
+        user_message = await conversations.insert_message(conversation_id, "user", "resume me")
+
+        first_started = datetime.now(timezone.utc)
+        first_completed = first_started + timedelta(seconds=5)
+        second_started = first_started + timedelta(seconds=10)
+
+        old_run = WorkflowRun(
+            id="run-old",
+            conversation_id=conversation_id,
+            user_message_id=user_message.id,
+            thread_id="thread-1",
+            tool_executions=[
+                {
+                    "tool": "hidden_run_level",
+                    "args": {"q": "hidden"},
+                    "result": "hidden run-level call",
+                    "duration_ms": 11,
+                    "success": True,
+                }
+            ],
+            report=None,
+            budget_limit=50,
+            budget_consumed=12,
+            error="",
+            status="stopped",
+            state_version=3,
+            started_at=first_started.isoformat(),
+            completed_at=first_completed.isoformat(),
+            updated_at=first_completed.isoformat(),
+            total_elapsed_ms=5000,
+        )
+        new_run = WorkflowRun(
+            id="run-new",
+            conversation_id=conversation_id,
+            user_message_id=user_message.id,
+            thread_id="thread-1",
+            tool_executions=[
+                {
+                    "tool": "visible_run_level",
+                    "args": {"q": "visible"},
+                    "result": "visible run-level call",
+                    "duration_ms": 12,
+                    "success": True,
+                }
+            ],
+            report=None,
+            budget_limit=50,
+            budget_consumed=12,
+            error="",
+            status="running",
+            state_version=1,
+            started_at=second_started.isoformat(),
+            completed_at="",
+            updated_at=second_started.isoformat(),
+            total_elapsed_ms=0,
+        )
+        await conversations.save_workflow_run(old_run)
+        await conversations.save_workflow_run(new_run)
+
+        completed_step_id = await steps.save_step(
+            WorkflowStep(
+                id=None,
+                workflow_run_id="run-old",
+                node_name="planning",
+                label="Planning",
+                status="completed",
+                cost=2,
+                budget_remaining=48,
+                started_at=first_started.isoformat(),
+                elapsed_ms=1000,
+                step_version=2,
+                tool_call_count=0,
+                detail={
+                    "response": "persisted detail",
+                    "tool_results": [
+                        {
+                            "tool": "visible_from_completed",
+                            "args": {"query": "visible completed"},
+                            "result": "ok",
+                            "duration_ms": 20,
+                            "success": True,
+                        }
+                    ],
+                },
+            )
+        )
+        await steps.save_step(
+            WorkflowStep(
+                id=None,
+                workflow_run_id="run-old",
+                node_name="verification",
+                label="Verifying",
+                status="stopped",
+                cost=0,
+                budget_remaining=38,
+                started_at=first_completed.isoformat(),
+                elapsed_ms=800,
+                step_version=2,
+                tool_call_count=0,
+                detail={
+                    "note": "intermediate stop",
+                    "tool_results": [
+                        {
+                            "tool": "hidden_from_stopped",
+                            "args": {"query": "hidden stopped"},
+                            "result": "skip",
+                            "duration_ms": 25,
+                            "success": True,
+                        }
+                    ],
+                },
+            )
+        )
+        await steps.save_step(
+            WorkflowStep(
+                id=None,
+                workflow_run_id="run-new",
+                node_name="verification",
+                label="Verifying",
+                status="running",
+                cost=0,
+                budget_remaining=38,
+                started_at=second_started.isoformat(),
+                elapsed_ms=0,
+                step_version=1,
+                tool_call_count=0,
+                detail={
+                    "tool_results": [
+                        {
+                            "tool": "visible_from_running",
+                            "args": {"query": "visible running"},
+                            "result": "pending",
+                            "duration_ms": 15,
+                            "success": True,
+                        }
+                    ]
+                },
+            )
+        )
+
+        detail = await client.get(f"/api/conversations/{conversation_id}")
+        assert detail.status_code == 200
+        data = detail.json()
+
+        assert len(data["runs"]) == 1
+        logical_run = data["runs"][0]
+        assert logical_run["id"] == "run-new"
+        assert logical_run["status"] == "running"
+
+        statuses = [step["status"] for step in logical_run["execution_steps"]]
+        assert "completed" in statuses
+        assert "stopped" in statuses
+
+        attempts = logical_run["attempts"]
+        assert len(attempts) == 2
+        assert attempts[0]["run_id"] == "run-old"
+        assert attempts[1]["run_id"] == "run-new"
+
+        timeline_tools = [entry["tool"] for entry in logical_run["tool_executions"]]
+        assert "visible_from_completed" in timeline_tools
+        assert "visible_from_running" in timeline_tools
+        assert "hidden_from_stopped" in timeline_tools
+        assert "hidden_run_level" not in timeline_tools
+        assert "visible_run_level" not in timeline_tools
+
+        completed_summary = next(
+            step for step in logical_run["execution_steps"] if step["status"] == "completed"
+        )
+        assert completed_summary["id"] == str(completed_step_id)
+        assert completed_summary["detail_run_id"] == "run-old"
+
+        detail_resp = await client.get(
+            f"/api/runs/{completed_summary['detail_run_id']}/steps/{completed_step_id}/detail"
+        )
+        assert detail_resp.status_code == 200
+        detail_payload = detail_resp.json()
+        assert detail_payload["run_id"] == "run-old"
+        assert detail_payload["step_id"] == completed_step_id
+        assert detail_payload["detail"]["response"] == "persisted detail"
 
     async def test_inference_client_was_called(self, app_with_fake_inference):
         """Integration test: the graph run makes real HTTP requests through

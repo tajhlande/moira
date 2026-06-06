@@ -31,6 +31,49 @@ function detailKey(runId: string, stepId: string, stepVersion: number): string {
   return `${runId}:${stepId}:${stepVersion}`;
 }
 
+function mergeHistoricalCarryover(
+  previous: ExecutionStep[],
+  incoming: ExecutionStep[],
+): ExecutionStep[] {
+  const incomingIds = new Set(
+    incoming
+      .map((step) => step.id)
+      .filter((stepId): stepId is string => typeof stepId === "string"),
+  );
+
+  const carryover = previous.filter(
+    (step) =>
+      step.status !== "running" &&
+      (!step.id || !incomingIds.has(step.id)),
+  );
+
+  if (carryover.length === 0) {
+    return incoming;
+  }
+
+  return [...carryover, ...incoming];
+}
+
+function mergeRunHistory(
+  previous: WorkflowRunInfo,
+  latest: WorkflowRunInfo,
+): WorkflowRunInfo {
+  return {
+    ...latest,
+    started_at: previous.started_at || latest.started_at,
+    attempts: latest.attempts ?? previous.attempts,
+    execution_steps: mergeHistoricalCarryover(
+      previous.execution_steps,
+      latest.execution_steps,
+    ),
+    tool_executions: [...previous.tool_executions, ...latest.tool_executions],
+    verification_attempts: [
+      ...previous.verification_attempts,
+      ...latest.verification_attempts,
+    ],
+  };
+}
+
 export const useChatStore = defineStore("chat", () => {
   const conversations = ref<ConversationInfo[]>([]);
   const currentConversationId = ref<string | null>(null);
@@ -139,6 +182,8 @@ export const useChatStore = defineStore("chat", () => {
 
     return {
       id: step.id ? String(step.id) : undefined,
+      detail_run_id:
+        typeof step.detail_run_id === "string" ? step.detail_run_id : undefined,
       node,
       label,
       status,
@@ -193,6 +238,9 @@ export const useChatStore = defineStore("chat", () => {
           ? snapshot.conversation_id
           : existing?.conversation_id,
       user_message_id: userMessageId,
+      attempts: Array.isArray(snapshot.attempts)
+        ? (snapshot.attempts as WorkflowRunInfo["attempts"])
+        : existing?.attempts,
       execution_steps: executionSteps,
       tool_executions: Array.isArray(snapshot.tool_executions)
         ? snapshot.tool_executions
@@ -278,11 +326,20 @@ export const useChatStore = defineStore("chat", () => {
       typeof current?.state_version === "number" ? current.state_version : null;
 
     if (
+      current &&
+      current.id === normalized.id &&
       incomingVersion !== null &&
       currentVersion !== null &&
       incomingVersion <= currentVersion
     ) {
-      return current || null;
+      return current;
+    }
+
+    if (current) {
+      normalized.execution_steps = mergeHistoricalCarryover(
+        current.execution_steps,
+        normalized.execution_steps,
+      );
     }
 
     const nextRuns = new Map(runs.value);
@@ -330,7 +387,17 @@ export const useChatStore = defineStore("chat", () => {
     for (const rawRun of detail.runs) {
       const normalized = normalizeRunSnapshot(rawRun as RunSnapshotInput);
       if (!normalized) continue;
-      nextRuns.set(normalized.user_message_id, normalized);
+
+      const prior = nextRuns.get(normalized.user_message_id);
+      if (!prior) {
+        nextRuns.set(normalized.user_message_id, normalized);
+        continue;
+      }
+
+      nextRuns.set(
+        normalized.user_message_id,
+        mergeRunHistory(prior, normalized),
+      );
     }
     runs.value = nextRuns;
     stepDetails.value = new Map();
@@ -570,28 +637,17 @@ export const useChatStore = defineStore("chat", () => {
       const { run_id, user_message_id } = await api.resumeRun(
         currentConversationId.value,
       );
-      activeUserMessageId.value = user_message_id;
 
-      const existing = runs.value.get(user_message_id);
-      if (existing) {
-        upsertRunSnapshot(
-          {
-            ...existing,
-            id: run_id,
-            status: "running",
-            error: "",
-            completed_at: "",
-            updated_at: new Date().toISOString(),
-            state_version:
-              typeof existing.state_version === "number"
-                ? existing.state_version + 1
-                : undefined,
-          },
-          user_message_id,
-        );
+      const detail = await api.getConversation(currentConversationId.value);
+      applyConversationDetail(detail);
+
+      const runningRun = detail.runs.find((r) => r.status === "running");
+      if (runningRun) {
+        activeUserMessageId.value = runningRun.user_message_id;
+        loading.value = true;
       }
 
-      await connectStream(currentConversationId.value, user_message_id);
+      void connectStream(currentConversationId.value, user_message_id);
     } catch (e: any) {
       error.value = e.message;
       loading.value = false;

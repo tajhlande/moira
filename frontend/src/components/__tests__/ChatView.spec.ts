@@ -85,10 +85,26 @@ vi.mock("../../api/client", () => ({
       run_id: "run-1",
       user_message_id: 1,
     })),
+    resumeRun: vi.fn(async () => ({
+      run_id: "run-resume",
+      user_message_id: 1,
+    })),
+    stopRun: vi.fn(async () => ({ status: "stopped" })),
     streamUrl: vi.fn(
       () => "http://localhost:8000/api/conversations/conv-1/stream",
     ),
-    generateTitle: vi.fn(async () => {}),
+    getRunStepDetail: vi.fn(async () => ({
+      run_id: "run-1",
+      step_id: 1,
+      step_version: 1,
+      has_detail: true,
+      detail: {},
+    })),
+    generateTitle: vi.fn(async () => ({
+      id: "conv-1",
+      title: "New Conversation",
+      created_at: new Date().toISOString(),
+    })),
   },
 }));
 
@@ -659,5 +675,533 @@ describe("ChatView", () => {
       messages: [],
       runs: [],
     }));
+  });
+
+  it("keeps prior completed steps when a run is resumed", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const store = useChatStore();
+
+    const getConversationMock = api.getConversation as unknown as ReturnType<
+      typeof vi.fn
+    >;
+
+    getConversationMock.mockResolvedValueOnce({
+      id: "conv-1",
+      title: "Resume Test",
+      created_at: new Date().toISOString(),
+      messages: [
+        {
+          id: 1,
+          role: "user",
+          content: "resume me",
+          created_at: new Date().toISOString(),
+        },
+      ],
+      runs: [
+        {
+          id: "run-old",
+          conversation_id: "conv-1",
+          user_message_id: 1,
+          status: "stopped",
+          budget_limit: 50,
+          budget_consumed: 14,
+          error: "",
+          report: null,
+          execution_steps: [
+            {
+              id: "101",
+              detail_run_id: "run-old",
+              node: "planning",
+              label: "Planning",
+              status: "completed",
+              cost: 2,
+              budget_remaining: 48,
+              elapsed_ms: 1200,
+              tool_call_count: 0,
+              step_version: 2,
+              has_detail: false,
+            },
+            {
+              id: "102",
+              detail_run_id: "run-old",
+              node: "verification",
+              label: "Verifying",
+              status: "stopped",
+              cost: 0,
+              budget_remaining: 36,
+              elapsed_ms: 800,
+              tool_call_count: 0,
+              step_version: 2,
+              has_detail: false,
+            },
+          ],
+          tool_executions: [],
+          verification_attempts: [],
+          state_version: 3,
+          started_at: new Date().toISOString(),
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          total_elapsed_ms: 4000,
+        },
+        {
+          id: "run-new",
+          conversation_id: "conv-1",
+          user_message_id: 1,
+          status: "running",
+          budget_limit: 50,
+          budget_consumed: 14,
+          error: "",
+          report: null,
+          execution_steps: [
+            {
+              id: "run-new:1",
+              detail_run_id: "run-new",
+              node: "verification",
+              label: "Verifying",
+              status: "running",
+              cost: 0,
+              budget_remaining: 36,
+              tool_call_count: 0,
+              step_version: 1,
+              has_detail: false,
+            },
+          ],
+          tool_executions: [],
+          verification_attempts: [],
+          state_version: 1,
+          started_at: new Date().toISOString(),
+          completed_at: "",
+          updated_at: new Date().toISOString(),
+          total_elapsed_ms: undefined,
+        },
+      ],
+    });
+
+    mockFetch.mockResolvedValueOnce(createSSEResponse([]));
+    await store.selectConversation("conv-1");
+
+    const run = store.getRunForMessage(1);
+    expect(run).not.toBeNull();
+    expect(run!.status).toBe("running");
+    expect(run!.execution_steps.some((s) => s.status === "completed")).toBe(true);
+    expect(run!.execution_steps.some((s) => s.status === "stopped")).toBe(true);
+
+    getConversationMock.mockImplementation(async () => ({
+      id: "conv-1",
+      title: "New Conversation",
+      created_at: new Date().toISOString(),
+      messages: [],
+      runs: [],
+    }));
+  });
+
+  it("accepts resumed run snapshot when run id changes", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const store = useChatStore();
+
+    const getConversationMock = api.getConversation as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    getConversationMock.mockResolvedValueOnce({
+      id: "conv-1",
+      title: "Resume Snapshot",
+      created_at: new Date().toISOString(),
+      messages: [
+        {
+          id: 1,
+          role: "user",
+          content: "resume snapshot",
+          created_at: new Date().toISOString(),
+        },
+      ],
+      runs: [
+        {
+          id: "run-old",
+          conversation_id: "conv-1",
+          user_message_id: 1,
+          status: "stopped",
+          budget_limit: 50,
+          budget_consumed: 10,
+          error: "",
+          report: null,
+          execution_steps: [
+            {
+              id: "101",
+              node: "planning",
+              label: "Planning",
+              status: "completed",
+              cost: 2,
+              budget_remaining: 48,
+              elapsed_ms: 1000,
+              tool_call_count: 0,
+              step_version: 2,
+              has_detail: false,
+            },
+          ],
+          tool_executions: [],
+          verification_attempts: [],
+          state_version: 3,
+          started_at: new Date().toISOString(),
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          total_elapsed_ms: 3000,
+        },
+      ],
+    });
+
+    // selectConversation connects stream only for running runs; stopped run
+    // means no stream call here.
+    await store.selectConversation("conv-1");
+
+    // resumeRun re-fetches conversation after the resume API call.
+    getConversationMock.mockResolvedValueOnce({
+      id: "conv-1",
+      title: "Resume Snapshot",
+      created_at: new Date().toISOString(),
+      messages: [
+        {
+          id: 1,
+          role: "user",
+          content: "resume snapshot",
+          created_at: new Date().toISOString(),
+        },
+      ],
+      runs: [
+        {
+          id: "run-old",
+          conversation_id: "conv-1",
+          user_message_id: 1,
+          status: "stopped",
+          budget_limit: 50,
+          budget_consumed: 10,
+          error: "",
+          report: null,
+          execution_steps: [
+            {
+              id: "101",
+              node: "planning",
+              label: "Planning",
+              status: "completed",
+              cost: 2,
+              budget_remaining: 48,
+              elapsed_ms: 1000,
+              tool_call_count: 0,
+              step_version: 2,
+              has_detail: false,
+            },
+          ],
+          tool_executions: [],
+          verification_attempts: [],
+          state_version: 3,
+          started_at: new Date().toISOString(),
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          total_elapsed_ms: 3000,
+        },
+        {
+          id: "run-resume",
+          conversation_id: "conv-1",
+          user_message_id: 1,
+          status: "running",
+          budget_limit: 50,
+          budget_consumed: 10,
+          error: "",
+          report: null,
+          execution_steps: [],
+          tool_executions: [],
+          verification_attempts: [],
+          state_version: 1,
+          started_at: new Date().toISOString(),
+          completed_at: "",
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    });
+
+    mockFetch.mockResolvedValueOnce(
+      createSSEResponse([
+        runSnapshot({
+          id: "run-resume",
+          state_version: 1,
+          status: "running",
+          execution_steps: [
+            {
+              id: "run-resume:1",
+              node: "verification",
+              label: "Verifying",
+              status: "running",
+              cost: 0,
+              budget_remaining: 40,
+              tool_call_count: 0,
+              step_version: 1,
+              has_detail: false,
+            },
+          ],
+        }),
+      ]),
+    );
+
+    await store.resumeRun();
+    await flushUi();
+
+    const run = store.getRunForMessage(1);
+    expect(run).not.toBeNull();
+    expect(run!.id).toBe("run-resume");
+    expect(run!.status).toBe("running");
+
+    getConversationMock.mockImplementation(async () => ({
+      id: "conv-1",
+      title: "New Conversation",
+      created_at: new Date().toISOString(),
+      messages: [],
+      runs: [],
+    }));
+  });
+
+  it("renders a resumed boundary between attempt step lists", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const store = useChatStore();
+
+    const getConversationMock = api.getConversation as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    getConversationMock.mockResolvedValueOnce({
+      id: "conv-1",
+      title: "Attempt Timeline",
+      created_at: new Date().toISOString(),
+      messages: [
+        {
+          id: 1,
+          role: "user",
+          content: "resume timeline",
+          created_at: new Date().toISOString(),
+        },
+      ],
+      runs: [
+        {
+          id: "run-new",
+          conversation_id: "conv-1",
+          user_message_id: 1,
+          status: "running",
+          budget_limit: 50,
+          budget_consumed: 10,
+          error: "",
+          report: null,
+          attempts: [
+            {
+              run_id: "run-old",
+              status: "stopped",
+              started_at: new Date().toISOString(),
+              completed_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              state_version: 2,
+            },
+            {
+              run_id: "run-new",
+              status: "running",
+              started_at: new Date().toISOString(),
+              completed_at: "",
+              updated_at: new Date().toISOString(),
+              state_version: 1,
+            },
+          ],
+          execution_steps: [
+            {
+              id: "101",
+              detail_run_id: "run-old",
+              node: "planning",
+              label: "Planning",
+              status: "completed",
+              cost: 2,
+              budget_remaining: 48,
+              elapsed_ms: 1000,
+              tool_call_count: 0,
+              step_version: 2,
+              has_detail: false,
+            },
+            {
+              id: "102",
+              detail_run_id: "run-old",
+              node: "verification",
+              label: "Verifying",
+              status: "stopped",
+              cost: 0,
+              budget_remaining: 40,
+              elapsed_ms: 500,
+              tool_call_count: 0,
+              step_version: 2,
+              has_detail: false,
+            },
+            {
+              id: "run-new:1",
+              detail_run_id: "run-new",
+              node: "verification",
+              label: "Verifying",
+              status: "running",
+              cost: 0,
+              budget_remaining: 40,
+              tool_call_count: 0,
+              step_version: 1,
+              has_detail: false,
+            },
+          ],
+          tool_executions: [],
+          verification_attempts: [],
+          state_version: 3,
+          started_at: new Date().toISOString(),
+          completed_at: "",
+          updated_at: new Date().toISOString(),
+          total_elapsed_ms: undefined,
+        },
+      ],
+    });
+
+    mockFetch.mockResolvedValueOnce(createSSEResponse([]));
+    const wrapper = mount(ChatView, {
+      global: { plugins: [pinia, router] },
+    });
+    await store.selectConversation("conv-1");
+    await flushUi();
+
+    expect(wrapper.text()).toContain("Resumed");
+  });
+
+  it("lazy-loads step detail with loading indicator on expand", async () => {
+    let resolveDetail: ((value: any) => void) | null = null;
+    const getRunStepDetailMock = api.getRunStepDetail as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    getRunStepDetailMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDetail = resolve;
+        }),
+    );
+
+    mockStartRunAndStream([
+      runSnapshot({
+        state_version: 2,
+        status: "completed",
+        budget_consumed: 2,
+        execution_steps: [
+          {
+            id: "11",
+            node: "planning",
+            label: "Planning",
+            status: "completed",
+            cost: 2,
+            budget_remaining: 48,
+            elapsed_ms: 1000,
+            tool_call_count: 0,
+            step_version: 2,
+            has_detail: true,
+          },
+        ],
+      }),
+    ]);
+
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const wrapper = mount(ChatView, {
+      global: { plugins: [pinia, router] },
+    });
+    const store = useChatStore();
+
+    await store.sendMessage("load detail test");
+    await flushUi();
+
+    const toggle = wrapper.find(".step-toggle");
+    expect(toggle.exists()).toBe(true);
+    await toggle.trigger("click");
+    await flushUi();
+
+    expect(wrapper.text()).toContain("Loading step details...");
+
+    if (!resolveDetail) {
+      throw new Error("Expected lazy detail resolver to be set");
+    }
+    const resolve = resolveDetail as (value: any) => void;
+    resolve({
+      run_id: "run-1",
+      step_id: 11,
+      step_version: 2,
+      has_detail: true,
+      detail: {
+        response: "Lazy detail payload",
+      },
+    });
+
+    for (let i = 0; i < 5; i++) {
+      await flushUi();
+    }
+
+    expect(store.getStepDetail("run-1", "11", 2)?.detail.response).toBe(
+      "Lazy detail payload",
+    );
+
+    expect(wrapper.text()).toContain("Response");
+    expect(wrapper.text()).not.toContain("Loading step details...");
+  });
+
+  it("loads coalesced step detail from detail_run_id", async () => {
+    const getRunStepDetailMock = api.getRunStepDetail as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    getRunStepDetailMock.mockResolvedValueOnce({
+      run_id: "run-old",
+      step_id: 21,
+      step_version: 2,
+      has_detail: true,
+      detail: {
+        response: "Old attempt detail",
+      },
+    });
+
+    mockStartRunAndStream([
+      runSnapshot({
+        id: "run-latest",
+        state_version: 2,
+        status: "completed",
+        budget_consumed: 2,
+        execution_steps: [
+          {
+            id: "21",
+            detail_run_id: "run-old",
+            node: "planning",
+            label: "Planning",
+            status: "completed",
+            cost: 2,
+            budget_remaining: 48,
+            elapsed_ms: 1000,
+            tool_call_count: 0,
+            step_version: 2,
+            has_detail: true,
+          },
+        ],
+      }),
+    ]);
+
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const wrapper = mount(ChatView, {
+      global: { plugins: [pinia, router] },
+    });
+    const store = useChatStore();
+
+    await store.sendMessage("coalesced detail test");
+    await flushUi();
+
+    const toggle = wrapper.find(".step-toggle");
+    expect(toggle.exists()).toBe(true);
+    await toggle.trigger("click");
+    await flushUi();
+
+    expect(api.getRunStepDetail).toHaveBeenCalledWith("run-old", 21);
+    expect(store.getStepDetail("run-old", "21", 2)?.detail.response).toBe(
+      "Old attempt detail",
+    );
   });
 });

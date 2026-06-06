@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { NCollapse, NCollapseItem } from "naive-ui";
+import { IconChevronDown, IconChevronRight } from "@tabler/icons-vue";
 import type { ToolExecution } from "../api/client";
 import { useToolsStore } from "../stores/tools";
 import "./workflow-artifacts.css";
@@ -65,6 +66,18 @@ const isReport = computed(() => {
 const hasStructuredOutput = computed(() => {
   return so.value && Object.keys(so.value).length > 0;
 });
+
+const expandedToolResults = ref<Set<number>>(new Set());
+
+function toggleToolResult(index: number) {
+  const next = new Set(expandedToolResults.value);
+  if (next.has(index)) {
+    next.delete(index);
+  } else {
+    next.add(index);
+  }
+  expandedToolResults.value = next;
+}
 
 function getToolNames(key: string): string[] {
   return (so.value?.[key] as string[]) ?? [];
@@ -229,15 +242,32 @@ function claimList(key: string): unknown[] {
             :key="tri"
             class="step-tool-result"
           >
-            <span :class="['tool-name', tr.success ? 'success' : 'error']">{{
-              tr.tool
-            }}</span>
-            <span class="tool-duration">{{ tr.duration_ms }}ms</span>
-            <pre
-              v-if="tr.args && Object.keys(tr.args).length > 0"
-              class="tool-output-full"
-            >{{ JSON.stringify(tr.args, null, 2) }}</pre>
-            <pre class="tool-output-full">{{ tr.result }}</pre>
+            <div class="step-tool-result-header">
+              <span :class="['tool-name', tr.success ? 'success' : 'error']">{{
+                tr.tool
+              }}</span>
+              <span class="tool-duration">{{ tr.duration_ms }}ms</span>
+              <button
+                class="tool-result-toggle"
+                @click="toggleToolResult(tri)"
+              >
+                <IconChevronDown
+                  v-if="expandedToolResults.has(tri)"
+                  :size="14"
+                />
+                <IconChevronRight v-else :size="14" />
+              </button>
+            </div>
+            <div
+              v-if="expandedToolResults.has(tri)"
+              class="step-tool-result-body"
+            >
+              <pre
+                v-if="tr.args && Object.keys(tr.args).length > 0"
+                class="tool-output-full"
+              >{{ JSON.stringify(tr.args, null, 2) }}</pre>
+              <pre class="tool-output-full">{{ tr.result }}</pre>
+            </div>
           </div>
         </div>
       </NCollapseItem>

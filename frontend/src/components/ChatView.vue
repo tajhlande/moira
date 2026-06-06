@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, nextTick, onMounted, onUnmounted } from "vue";
+import { computed, ref, watch, nextTick } from "vue";
 import {
   NInput,
   NButton,
@@ -10,70 +10,22 @@ import {
 } from "naive-ui";
 import {
   IconCircleCheck,
-  IconCircleX,
-  IconLoader,
   IconCopy,
-  IconChevronRight,
-  IconChevronDown,
-  IconTool,
-  IconRestore,
   IconAdjustments,
-  IconPlayerStop,
   IconHandStop,
 } from "@tabler/icons-vue";
 import { useRoute, useRouter } from "vue-router";
 import { useChatStore } from "../stores/chat";
-import { useToolsStore } from "../stores/tools";
-import type { ExecutionStep } from "../api/client";
 import RunArtifacts from "./RunArtifacts.vue";
-import ReportPanel from "./ReportPanel.vue";
 import MarkdownContent from "./MarkdownContent.vue";
-import StepDetailContent from "./StepDetailContent.vue";
 import "./workflow-artifacts.css";
 
 const store = useChatStore();
-const toolsStore = useToolsStore();
 const route = useRoute();
 const router = useRouter();
 const inputText = ref("");
 const showSettings = ref(false);
 const messagesScrollbar = ref<InstanceType<typeof NScrollbar> | null>(null);
-
-// Track which steps are expanded
-const expandedSteps = ref<Set<number>>(new Set());
-
-function toggleStep(index: number) {
-  const next = new Set(expandedSteps.value);
-  if (next.has(index)) {
-    next.delete(index);
-  } else {
-    next.add(index);
-  }
-  expandedSteps.value = next;
-}
-
-const runningStepExpanded = ref(false);
-
-function toggleRunningStep() {
-  runningStepExpanded.value = !runningStepExpanded.value;
-}
-
-function stepHasDetail(step: ExecutionStep): boolean {
-  return !!step.detail && Object.keys(step.detail).length > 0;
-}
-
-// Live clock: updates every second while a step is running
-const nowMs = ref(Date.now());
-let clockInterval: ReturnType<typeof setInterval> | null = null;
-
-onMounted(() => {
-  clockInterval = setInterval(() => {
-    nowMs.value = Date.now();
-  }, 1000);
-});
-onUnmounted(() => {
-  if (clockInterval) clearInterval(clockInterval);
-});
 
 // Sync store state with the current route.
 // - /conversation/new → startNewChat()
@@ -118,44 +70,6 @@ watch(
   },
 );
 
-function formatElapsed(ms: number | undefined): string {
-  if (ms === undefined || ms === null) return "";
-  const totalSec = Math.floor(ms / 1000);
-  const min = Math.floor(totalSec / 60);
-  const sec = totalSec % 60;
-  return `${min}:${sec.toString().padStart(2, "0")}`;
-}
-
-function toolCallCount(step: ExecutionStep): number {
-  const tr = step.detail?.tool_results;
-  if (Array.isArray(tr)) return tr.length;
-  if (typeof step.tool_call_count === "number") return step.tool_call_count;
-  return 0;
-}
-
-function needsStopMarker(): boolean {
-  if (!store.runStopped || store.loading) return false;
-  const hasStopped = store.executionSteps.some((s) => s.status === "stopped");
-  return !hasStopped && !store.currentStep;
-}
-
-// A verification step that sent control flow back (outcome=retry_plan or retry_draft)
-// gets a distinct branch icon instead of the standard checkmark.
-function isRetryBranch(step: ExecutionStep): boolean {
-  if (step.node !== "verification" || step.status !== "completed") return false;
-  const so = step.detail?.structured_output as
-    | Record<string, unknown>
-    | undefined;
-  return so?.outcome === "retry_plan" || so?.outcome === "retry_draft";
-}
-
-// Compute live elapsed for the currently running step
-function liveElapsedMs(step: ExecutionStep): number | undefined {
-  if (step.status !== "running" || !step.started_at) return step.elapsed_ms;
-  const start = new Date(step.started_at).getTime();
-  return nowMs.value - start;
-}
-
 const currentTitle = computed(() => {
   if (store.isNewChat) return "New Chat";
   const c = store.conversations.find(
@@ -164,24 +78,6 @@ const currentTitle = computed(() => {
   return c?.title || "Chat";
 });
 
-// Find the index of the last user message in the messages array.
-// Live streaming state belongs to this message.
-const lastUserMessageIndex = computed(() => {
-  for (let i = store.messages.length - 1; i >= 0; i--) {
-    if (store.messages[i].role === "user") return i;
-  }
-  return -1;
-});
-
-function hasLiveData(): boolean {
-  return (
-    store.executionSteps.length > 0 ||
-    store.currentStep !== null ||
-    store.toolExecutions.length > 0 ||
-    store.currentReport !== null
-  );
-}
-
 function send() {
   const text = inputText.value.trim();
   if (!text || store.loading) return;
@@ -189,12 +85,8 @@ function send() {
   store.sendMessage(text);
 }
 
-// Check if the last message is a user message that has an active live stream
-// (no persisted run yet). If so, the live workflowSteps/currentStep/toolCalls/
-// currentReport belong to that message.
-function isLiveRun(messageId: number | undefined): boolean {
-  if (!messageId || messageId < 0) return true;
-  return !store.runs.has(messageId);
+function runForMessage(messageId: number | undefined) {
+  return store.getRunForMessage(messageId);
 }
 
 const copiedMsgIndex = ref<number | null>(null);
@@ -239,180 +131,8 @@ async function copyMessage(content: string, index: number) {
         </div>
 
         <!-- After a user message: render associated run artifacts -->
-        <template v-if="msg.role === 'user'">
-          <!-- Persisted run (completed — from DB via selectConversation) -->
-          <template
-            v-if="
-              store.getRunForMessage(msg.id) &&
-              store.getRunForMessage(msg.id)!.status !== 'running'
-            "
-            as="template"
-          >
-            <RunArtifacts :run="store.getRunForMessage(msg.id)!" />
-          </template>
-
-          <!-- Live streaming run (steps/report from current or completed stream) -->
-          <template v-else-if="i === lastUserMessageIndex && hasLiveData()">
-            <!-- Steps -->
-            <div class="steps-and-resume-wrapper">
-              <div
-                v-if="store.executionSteps.length > 0 || store.currentStep"
-                class="steps-container"
-              >
-              <div v-for="(step, si) in store.executionSteps" :key="'ls-' + si">
-                <div :class="['step-row', step.status]">
-                  <IconRestore
-                    v-if="isRetryBranch(step)"
-                    :size="16"
-                    class="retry-branch-icon"
-                  />
-                  <IconHandStop
-                    v-else-if="step.status === 'stopped'"
-                    :size="16"
-                    class="step-stopped-icon"
-                  />
-                  <IconCircleCheck
-                    v-else-if="step.status === 'completed'"
-                    :size="16"
-                    class="step-completed-icon"
-                  />
-                  <IconCircleX v-else :size="16" class="step-error-icon" />
-                  <span class="step-label">{{ step.label }}</span>
-                  <span
-                    v-if="toolCallCount(step) > 0"
-                    class="step-tool-indicators"
-                  >
-                    <template v-if="toolCallCount(step) <= 10">
-                      <IconTool
-                        v-for="ti in toolCallCount(step)"
-                        :key="ti"
-                        :size="13"
-                        class="tool-indicator-icon"
-                      />
-                    </template>
-                    <template v-else>
-                      <IconTool :size="13" class="tool-indicator-icon" />
-                      <span class="tool-indicator-count"
-                        >&times;{{ toolCallCount(step) }}</span
-                      >
-                    </template>
-                  </span>
-                  <span v-if="step.status === 'completed'" class="step-cost"
-                    >-{{ step.cost }}</span
-                  >
-                  <span v-if="step.elapsed_ms != null" class="step-elapsed">{{
-                    formatElapsed(step.elapsed_ms)
-                  }}</span>
-                  <span v-if="step.status === 'completed'" class="step-budget"
-                    >{{ step.budget_remaining }} remaining</span
-                  >
-                  <span
-                    v-if="step.status === 'error' && step.error"
-                    class="step-error-msg"
-                    >{{ step.error }}</span
-                  >
-                  <button
-                    v-if="stepHasDetail(step)"
-                    class="step-toggle"
-                    @click="toggleStep(si)"
-                  >
-                    <IconChevronDown v-if="expandedSteps.has(si)" :size="14" />
-                    <IconChevronRight v-else :size="14" />
-                  </button>
-                  <span v-else class="step-toggle-placeholder" />
-                </div>
-                <div
-                  v-if="expandedSteps.has(si) && stepHasDetail(step)"
-                  class="step-detail"
-                >
-                  <StepDetailContent :detail="step.detail!" />
-                </div>
-              </div>
-              <div v-if="store.currentStep">
-                <div class="step-row running">
-                  <IconLoader :size="16" class="spinning" />
-                  <span class="step-label">{{
-                    store.currentStep.label
-                  }}</span>
-                  <span
-                    v-if="toolCallCount(store.currentStep) > 0"
-                    class="step-tool-indicators"
-                  >
-                    <template v-if="toolCallCount(store.currentStep) <= 10">
-                      <IconTool
-                        v-for="ti in toolCallCount(store.currentStep)"
-                        :key="ti"
-                        :size="13"
-                        class="tool-indicator-icon"
-                      />
-                    </template>
-                    <template v-else>
-                      <IconTool :size="13" class="tool-indicator-icon" />
-                      <span class="tool-indicator-count"
-                        >&times;{{ toolCallCount(store.currentStep) }}</span
-                      >
-                    </template>
-                  </span>
-                  <span class="step-elapsed">{{
-                    formatElapsed(liveElapsedMs(store.currentStep))
-                  }}</span>
-                  <span class="step-budget"
-                    >{{ store.currentStep.budget_remaining }} remaining</span
-                  >
-                  <button
-                    v-if="stepHasDetail(store.currentStep)"
-                    class="step-toggle"
-                    @click="toggleRunningStep"
-                  >
-                    <IconChevronDown
-                      v-if="runningStepExpanded"
-                      :size="14"
-                    />
-                    <IconChevronRight v-else :size="14" />
-                  </button>
-                  <span v-else class="step-toggle-placeholder" />
-                </div>
-                <div
-                  v-if="
-                    runningStepExpanded &&
-                    stepHasDetail(store.currentStep)
-                  "
-                  class="step-detail"
-                >
-                  <StepDetailContent :detail="store.currentStep.detail!" />
-                </div>
-                </div>
-              <div v-if="needsStopMarker()" class="stop-marker-row">
-                <IconHandStop :size="16" class="step-stopped-icon" />
-                <span class="stop-marker-label">Stopped</span>
-                <span class="stop-marker-line" />
-              </div>
-              </div>
-              <NButton
-                v-if="(store.runStopped || store.runErrored) && !store.loading"
-                type="primary"
-                ghost
-                class="resume-button"
-                @click="store.resumeRun()"
-              >
-                <template #icon>
-                  <IconRestore :size="16" />
-                </template>
-                {{ store.runErrored ? 'Retry' : 'Resume' }}
-              </NButton>
-            </div>
-
-            <!-- Report -->
-            <ReportPanel
-              v-if="store.currentReport"
-              :report="store.currentReport"
-            />
-
-            <!-- Total cycle time -->
-            <div v-if="store.totalElapsedMs != null" class="total-elapsed">
-              Total: {{ formatElapsed(store.totalElapsedMs) }}
-            </div>
-          </template>
+        <template v-if="msg.role === 'user' && runForMessage(msg.id)">
+          <RunArtifacts :run="runForMessage(msg.id)!" />
         </template>
       </template>
     </NScrollbar>
@@ -602,24 +322,6 @@ async function copyMessage(content: string, index: number) {
   min-width: 28px;
   text-align: right;
   font-variant-numeric: tabular-nums;
-}
-
-.steps-and-resume-wrapper {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-  width: 100%;
-  min-width: 0;
-}
-
-.steps-and-resume-wrapper .steps-container {
-  flex: 1;
-  min-width: 0;
-}
-
-.resume-button {
-  flex-shrink: 0;
-  margin-bottom: 2px;
 }
 
 .step-stopped-icon {

@@ -107,6 +107,7 @@ class ActiveRun:
             "tool_call_count": step.get("tool_call_count", self._step_tool_call_count(step)),
             "step_version": step.get("step_version", 1),
             "has_detail": bool(step.get("detail")),
+            "detail_run_id": step.get("detail_run_id"),
         }
 
     def _build_run_snapshot(self) -> dict:
@@ -410,8 +411,7 @@ class ActiveRun:
             return
 
         if self.status == "error":
-            await self._conversation_repo.insert_message(
-                self.conversation_id,
+            await self._queue_insert_message(
                 "assistant",
                 "The research run encountered an error and could not generate a report.",
             )
@@ -425,8 +425,7 @@ class ActiveRun:
             return
 
         if self.report:
-            await self._conversation_repo.insert_message(
-                self.conversation_id,
+            await self._queue_insert_message(
                 "assistant_report",
                 json.dumps(self.report),
             )
@@ -543,8 +542,7 @@ class ActiveRun:
             return
 
         if self.status == "error":
-            await self._conversation_repo.insert_message(
-                self.conversation_id,
+            await self._queue_insert_message(
                 "assistant",
                 "The research run encountered an error and could not generate a report.",
             )
@@ -558,8 +556,7 @@ class ActiveRun:
             return
 
         if self.report:
-            await self._conversation_repo.insert_message(
-                self.conversation_id,
+            await self._queue_insert_message(
                 "assistant_report",
                 json.dumps(self.report),
             )
@@ -596,7 +593,14 @@ class ActiveRun:
 
             step_copy = dict(self._current_step)
             try:
-                await asyncio.shield(self._persist_step(step_copy))
+                from moira.persistence.write_queue import AsyncWriteQueue
+
+                write_queue = cast(
+                    AsyncWriteQueue,
+                    self._run_manager._get_service("write_queue"),
+                )
+                write_future = write_queue.enqueue(lambda: self._persist_step(step_copy))
+                await asyncio.shield(write_future)
             except asyncio.CancelledError:
                 pass
             self.execution_steps.append(self._current_step)
@@ -799,13 +803,28 @@ class ActiveRun:
         self.completed_at = datetime.now(timezone.utc).isoformat()
         self.budget_consumed = self.budget_limit - self.budget_remaining
 
+    async def _queue_insert_message(self, role: str, content: str) -> None:
+        """Insert a conversation message through the write queue so it
+        is serialized with all other SQLite writes."""
+        from moira.persistence.write_queue import AsyncWriteQueue
+
+        write_queue = cast(
+            AsyncWriteQueue,
+            self._run_manager._get_service("write_queue"),
+        )
+        await write_queue.enqueue(
+            lambda: self._conversation_repo.insert_message(
+                self.conversation_id, role, content,
+            )
+        )
+
     async def _persist(self) -> None:
         """Upsert run-level metadata as a WorkflowRun. Steps are persisted
         individually via _persist_step() on node_end, so this only writes
         status, budget, error, and other run-level fields. Serialized via
         an asyncio.Lock so concurrent create_task calls don't collide on
         SQLite."""
-        import sqlite3
+        from moira.persistence.write_queue import AsyncWriteQueue
 
         async with self._persist_lock:
             run = WorkflowRun(
@@ -825,97 +844,110 @@ class ActiveRun:
                 updated_at=self.updated_at,
                 total_elapsed_ms=self.total_elapsed_ms or None,
             )
-            for attempt in range(3):
-                try:
-                    await self._conversation_repo.save_workflow_run(run)
-                    logger.debug(
-                        "Persisted run %s (status=%s, %d steps)",
-                        self.run_id,
-                        self.status,
-                        len(self.execution_steps),
-                    )
-                    return
-                except sqlite3.OperationalError as e:
-                    if "locked" in str(e) and attempt < 2:
-                        await asyncio.sleep(0.1 * (attempt + 1))
-                        continue
-                    raise
+            write_queue = cast(
+                AsyncWriteQueue,
+                self._run_manager._get_service("write_queue"),
+            )
+            await write_queue.enqueue(lambda: self._conversation_repo.save_workflow_run(run))
+            logger.debug(
+                "Persisted run %s (status=%s, %d steps)",
+                self.run_id,
+                self.status,
+                len(self.execution_steps),
+            )
 
     async def _persist_step(self, step_dict: dict) -> None:
         """Write a completed step to the workflow_steps table and upsert
-        aggregated metrics into inference_metrics. Swallows exceptions so
-        step persistence failures never break graph execution."""
+        aggregated metrics into inference_metrics.
+
+        Called exclusively through ``AsyncWriteQueue`` — lets
+        ``sqlite3.OperationalError`` propagate so the queue retries
+        on lock contention.  Metrics recording is non-critical and
+        swallows its own errors so a metrics failure never prevents
+        the queue from marking the step write as successful."""
+        from moira.persistence.interfaces import WorkflowStep
+
+        step_repo = cast(
+            type,
+            self._run_manager._get_service("workflow_step_repository"),
+        )
+        detail = step_dict.get("detail")
+        tool_call_count = step_dict.get("tool_call_count")
+        if tool_call_count is None and isinstance(detail, dict):
+            tool_results = detail.get("tool_results")
+            if isinstance(tool_results, list):
+                tool_call_count = len(tool_results)
+        if tool_call_count is None:
+            tool_call_count = 0
+        wf_step = WorkflowStep(
+            id=None,
+            workflow_run_id=self.run_id,
+            node_name=step_dict.get("node", ""),
+            label=step_dict.get("label", ""),
+            status=step_dict.get("status", "completed"),
+            cost=step_dict.get("cost", 0),
+            budget_remaining=step_dict.get("budget_remaining", 0),
+            started_at=step_dict.get("started_at", ""),
+            elapsed_ms=step_dict.get("elapsed_ms", 0),
+            purpose=step_dict.get("purpose"),
+            model=step_dict.get("model"),
+            call_count=step_dict.get("call_count"),
+            input_tokens=step_dict.get("input_tokens"),
+            thinking_tokens=step_dict.get("thinking_tokens"),
+            output_tokens=step_dict.get("output_tokens"),
+            prompt_time_ms=step_dict.get("prompt_time_ms"),
+            gen_time_ms=step_dict.get("gen_time_ms"),
+            error=step_dict.get("error", ""),
+            step_version=step_dict.get("step_version", 1),
+            tool_call_count=tool_call_count,
+            detail=detail if isinstance(detail, dict) else None,
+        )
+        await step_repo.save_step(wf_step)
+
         try:
-            from moira.persistence.interfaces import WorkflowStep
-
-            step_repo = cast(
-                type,
-                self._run_manager._get_service("workflow_step_repository"),
-            )
-            detail = step_dict.get("detail")
-            tool_call_count = step_dict.get("tool_call_count")
-            if tool_call_count is None and isinstance(detail, dict):
-                tool_results = detail.get("tool_results")
-                if isinstance(tool_results, list):
-                    tool_call_count = len(tool_results)
-            if tool_call_count is None:
-                tool_call_count = 0
-            wf_step = WorkflowStep(
-                id=None,
-                workflow_run_id=self.run_id,
-                node_name=step_dict.get("node", ""),
-                label=step_dict.get("label", ""),
-                status=step_dict.get("status", "completed"),
-                cost=step_dict.get("cost", 0),
-                budget_remaining=step_dict.get("budget_remaining", 0),
-                started_at=step_dict.get("started_at", ""),
-                elapsed_ms=step_dict.get("elapsed_ms", 0),
-                purpose=step_dict.get("purpose"),
-                model=step_dict.get("model"),
-                call_count=step_dict.get("call_count"),
-                input_tokens=step_dict.get("input_tokens"),
-                thinking_tokens=step_dict.get("thinking_tokens"),
-                output_tokens=step_dict.get("output_tokens"),
-                prompt_time_ms=step_dict.get("prompt_time_ms"),
-                gen_time_ms=step_dict.get("gen_time_ms"),
-                error=step_dict.get("error", ""),
-                step_version=step_dict.get("step_version", 1),
-                tool_call_count=tool_call_count,
-                detail=detail if isinstance(detail, dict) else None,
-            )
-            await step_repo.save_step(wf_step)
-
-            model = step_dict.get("model")
-            purpose = step_dict.get("purpose")
-            if model and purpose:
-                from datetime import datetime as dt
-                from datetime import timezone
-
-                started_at = step_dict.get("started_at", "")
-                if len(started_at) >= 13:
-                    period_hour = started_at[:13] + ":00"
-                else:
-                    period_hour = dt.now(timezone.utc).strftime(
-                        "%Y-%m-%dT%H:00"
-                    )
-
-                inference_repo = cast(
-                    type,
-                    self._run_manager._get_service("inference_metrics_repository"),
-                )
-                await inference_repo.record_step(
-                    model=model,
-                    purpose=purpose,
-                    period_hour=period_hour,
-                    call_count=step_dict.get("call_count") or 1,
-                    input_tokens=step_dict.get("input_tokens") or 0,
-                    output_tokens=step_dict.get("output_tokens") or 0,
-                    thinking_tokens=step_dict.get("thinking_tokens") or 0,
-                    prompt_time_ms=step_dict.get("prompt_time_ms") or 0.0,
-                    gen_time_ms=step_dict.get("gen_time_ms") or 0.0,
-                )
+            await self._record_inference_metrics(step_dict)
         except Exception:
-            logger.debug("Failed to persist step for run %s", self.run_id, exc_info=True)
+            logger.debug(
+                "Failed to record inference metrics for run %s",
+                self.run_id,
+                exc_info=True,
+            )
+
+    async def _record_inference_metrics(self, step_dict: dict) -> None:
+        """Upsert step-level inference counters into inference_metrics.
+
+        Non-critical — callers should catch and swallow exceptions.
+        Called from within the write queue consumer (via ``_persist_step``),
+        so no need to re-enqueue; the write is already serialized."""
+        model = step_dict.get("model")
+        purpose = step_dict.get("purpose")
+        if not model or not purpose:
+            return
+
+        from datetime import datetime as dt
+        from datetime import timezone
+
+        started_at = step_dict.get("started_at", "")
+        if len(started_at) >= 13:
+            period_hour = started_at[:13] + ":00"
+        else:
+            period_hour = dt.now(timezone.utc).strftime("%Y-%m-%dT%H:00")
+
+        inference_repo = cast(
+            type,
+            self._run_manager._get_service("inference_metrics_repository"),
+        )
+        await inference_repo.record_step(
+            model=model,
+            purpose=purpose,
+            period_hour=period_hour,
+            call_count=step_dict.get("call_count") or 1,
+            input_tokens=step_dict.get("input_tokens") or 0,
+            output_tokens=step_dict.get("output_tokens") or 0,
+            thinking_tokens=step_dict.get("thinking_tokens") or 0,
+            prompt_time_ms=step_dict.get("prompt_time_ms") or 0.0,
+            gen_time_ms=step_dict.get("gen_time_ms") or 0.0,
+        )
 
     def _broadcast(self, event: Any) -> None:
         """Put an event into all subscriber queues. Drops the oldest event

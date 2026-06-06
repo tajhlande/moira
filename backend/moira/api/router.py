@@ -56,6 +56,7 @@ def _step_tool_call_count(step: WorkflowStep) -> int:
 def _step_summary(step: WorkflowStep) -> dict[str, Any]:
     return {
         "id": str(step.id) if step.id is not None else "",
+        "detail_run_id": step.workflow_run_id,
         "node": step.node_name,
         "label": step.label,
         "status": step.status,
@@ -85,25 +86,92 @@ def _verification_attempts(steps: list[WorkflowStep]) -> list[dict[str, Any]]:
     return attempts
 
 
-def _run_snapshot(run: WorkflowRun, steps: list[WorkflowStep]) -> dict[str, Any]:
+def _tool_executions_from_steps(steps: list[WorkflowStep]) -> list[dict[str, Any]]:
+    """Extract flattened tool execution entries from timeline step detail.
+
+    Conversation responses derive tool executions from the rendered step
+    timeline, while analytics are recorded separately and are not affected by
+    this projection.
+    """
+    tool_executions: list[dict[str, Any]] = []
+    for step in steps:
+        detail = step.detail if isinstance(step.detail, dict) else None
+        if not detail:
+            continue
+        tool_results = detail.get("tool_results")
+        if not isinstance(tool_results, list):
+            continue
+        for result in tool_results:
+            if isinstance(result, dict):
+                tool_executions.append(result)
+    return tool_executions
+
+
+def _coalesced_run_snapshot(
+    attempts: list[WorkflowRun],
+    steps_by_run_id: dict[str, list[WorkflowStep]],
+) -> dict[str, Any]:
+    """Build one logical run snapshot from one or more persisted attempts.
+
+    Resume creates a new workflow_runs row per attempt, but the API contract
+    exposes one logical run per user_message_id with a stacked attempt
+    timeline.
+    """
+    latest = attempts[-1]
+    merged_steps: list[WorkflowStep] = []
+
+    for attempt in attempts:
+        attempt_steps = steps_by_run_id.get(attempt.id, [])
+        merged_steps.extend(attempt_steps)
+
+    merged_tool_executions = _tool_executions_from_steps(merged_steps)
+    attempt_summaries = [
+        {
+            "run_id": attempt.id,
+            "status": attempt.status,
+            "started_at": attempt.started_at,
+            "completed_at": attempt.completed_at,
+            "updated_at": attempt.updated_at,
+            "state_version": attempt.state_version,
+        }
+        for attempt in attempts
+    ]
+
     return {
-        "id": run.id,
-        "conversation_id": run.conversation_id,
-        "user_message_id": run.user_message_id,
-        "status": run.status,
-        "budget_limit": run.budget_limit,
-        "budget_consumed": run.budget_consumed,
-        "total_elapsed_ms": run.total_elapsed_ms,
-        "error": run.error,
-        "report": run.report,
-        "execution_steps": [_step_summary(s) for s in steps],
-        "tool_executions": run.tool_executions,
-        "verification_attempts": _verification_attempts(steps),
-        "state_version": run.state_version,
-        "started_at": run.started_at,
-        "completed_at": run.completed_at,
-        "updated_at": run.updated_at,
+        "id": latest.id,
+        "conversation_id": latest.conversation_id,
+        "user_message_id": latest.user_message_id,
+        "status": latest.status,
+        "budget_limit": latest.budget_limit,
+        "budget_consumed": latest.budget_consumed,
+        "total_elapsed_ms": latest.total_elapsed_ms,
+        "error": latest.error,
+        "report": latest.report,
+        "execution_steps": [_step_summary(s) for s in merged_steps],
+        "attempts": attempt_summaries,
+        "tool_executions": merged_tool_executions,
+        "verification_attempts": _verification_attempts(merged_steps),
+        "state_version": latest.state_version,
+        "started_at": latest.started_at,
+        "completed_at": latest.completed_at,
+        "updated_at": latest.updated_at,
     }
+
+
+def _logical_runs_snapshot(
+    runs: list[WorkflowRun],
+    steps_by_run_id: dict[str, list[WorkflowStep]],
+) -> list[dict[str, Any]]:
+    runs_by_message: dict[int, list[WorkflowRun]] = {}
+    for run in runs:
+        runs_by_message.setdefault(run.user_message_id, []).append(run)
+
+    logical_runs: list[dict[str, Any]] = []
+    for attempts in runs_by_message.values():
+        attempts.sort(key=lambda run: (run.started_at, run.id))
+        logical_runs.append(_coalesced_run_snapshot(attempts, steps_by_run_id))
+
+    return logical_runs
 
 
 @router.get("/health")
@@ -147,11 +215,11 @@ async def get_conversation(
     runs = await conversations.get_workflow_runs(conversation_id)
 
     step_repo = _steps_repo()
+    steps_by_run_id: dict[str, list[WorkflowStep]] = {}
+    for run in runs:
+        steps_by_run_id[run.id] = await step_repo.get_steps_for_run(run.id)
 
-    run_responses = []
-    for r in runs:
-        steps = await step_repo.get_steps_for_run(r.id)
-        run_responses.append(_run_snapshot(r, steps))
+    run_responses = _logical_runs_snapshot(runs, steps_by_run_id)
 
     return {
         "id": conversation.id,

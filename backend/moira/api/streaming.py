@@ -53,7 +53,12 @@ async def send_message(
             detail="A run is already in progress for this conversation",
         )
 
-    user_msg = await conversations.insert_message(conversation_id, "user", user_content)
+    from moira.persistence.write_queue import AsyncWriteQueue
+
+    write_queue = cast(AsyncWriteQueue, service_provider("write_queue"))
+    user_msg = await write_queue.enqueue(
+        lambda: conversations.insert_message(conversation_id, "user", user_content)
+    )
     logger.info("Starting run for conversation %s", conversation_id)
 
     config = _config()

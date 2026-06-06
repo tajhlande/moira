@@ -1,6 +1,6 @@
 # State Management Cleanup Plan
 
-Status: **Planned**
+Status: **In Progress (Phases 0-3 largely complete)**
 
 ## Goal
 
@@ -11,6 +11,28 @@ Primary outcomes:
 1. The UI always reflects current workflow state after reload, reconnect, and route changes.
 2. "Live" and "persisted" run rendering paths are unified.
 3. Stream handling is idempotent and ordering-safe.
+
+## Current Implementation Status
+
+The migration has moved beyond planning:
+
+- Phase 0 stabilization fixes are implemented.
+- Phase 1 backend snapshot/versioning contract is implemented.
+- Phase 2 snapshot-driven frontend store is implemented.
+- Phase 3 unified run rendering + lazy step detail loading is implemented.
+
+Open work is focused on stream simplification and compatibility cleanup (Phases 4-5).
+
+## UX Decision Update: Attempt Timeline Transparency
+
+We evaluated filtered/coalesced rendering and chose transparent attempt history:
+
+- Keep one logical run per `user_message_id` in the API/UI.
+- Show a stacked chronological step timeline across all attempts.
+- Do not hide intermediate `stopped`/`error` steps from prior attempts.
+- Insert visual attempt boundaries in UI (for example: `Resumed`, `Restarted after error`).
+
+Rationale: this avoids hidden-state confusion and keeps tool/cost/status math inspectable.
 
 ---
 
@@ -50,6 +72,7 @@ WorkflowRunSnapshot
   total_elapsed_ms?: number
   error: string
   report: ResearchReport | null
+  attempts?: RunAttemptSummary[]
   execution_steps: ExecutionStepSummary[]
   state_version: number
   started_at: string
@@ -67,6 +90,7 @@ This includes any condition that causes a step's own `step_version` number to in
 ```text
 ExecutionStepSummary
   id: string
+  detail_run_id?: string
   node: string
   label: string
   status: running | completed | error | stopped
@@ -78,6 +102,14 @@ ExecutionStepSummary
   tool_call_count: number
   step_version: number
   has_detail: boolean
+
+RunAttemptSummary
+  run_id: string
+  status: running | completed | stopped | error
+  started_at: string
+  completed_at?: string
+  updated_at?: string
+  state_version?: number
 ```
 
 `step_version` must monotonically increase per step whenever that step's detail payload or status changes.
@@ -91,7 +123,7 @@ Full detail blobs are fetched only when the user expands a step row:
 - UI caches by `(run_id, step_id, step_version)`.
 - If step summary updates with a higher `step_version`, cached detail is invalidated and reloaded on next expand.
 
-`ExecutionStepDetail` contains heavy fields such as prompt messages, thinking blocks, structured output, and full tool call arguments/results.
+`ExecutionStepDetail` contains heavy fields such as prompt messages, thinking blocks, structured output, and full tool call arguments/results. For steps from prior attempts in a stacked timeline, frontend should resolve detail by `detail_run_id` when present.
 
 ## Store Architecture
 
@@ -208,6 +240,10 @@ Remove live/persisted bifurcation in components.
 3. Fewer conditional bugs and simpler tests.
 4. Smaller baseline payloads for conversation hydrate and stream updates.
 
+### Implementation Note (current)
+
+The unified renderer now supports stacked attempt timelines. Attempt boundaries are injected in the UI when step `detail_run_id` changes across adjacent timeline steps.
+
 ### Tests
 
 1. Running run displays same component before/after completion.
@@ -285,6 +321,8 @@ If `summary.step_version` is greater, detail is stale and must be refetched.
 Conversation hydrate and `run_snapshot` payloads should include step summaries only.
 Large fields (prompt text, thinking, full tool args/output) must be served through lazy detail endpoints.
 
+`tool_executions` in conversation responses should be derived from timeline-visible step `detail.tool_results` (not separately merged hidden attempt blobs), so displayed tools match displayed steps.
+
 ---
 
 ## Verification Plan
@@ -342,3 +380,4 @@ This migration is complete when all are true:
 4. Reload/reconnect/navigation scenarios pass consistently in automated tests.
 5. Legacy event-based state assembly logic is removed.
 6. Step detail panels are lazy-loaded with spinner UX and refreshed by `step_version`.
+7. Attempt timeline boundaries are explicit in the UI, and prior attempt steps are not hidden.
