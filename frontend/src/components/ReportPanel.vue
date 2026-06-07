@@ -51,7 +51,6 @@ async function copyFullReport() {
 
 <template>
   <div class="report-panel">
-    <h3>Research Report</h3>
     <MarkdownContent class="report-answer" :content="report.answer" />
     <div class="answer-footer">
       <NButton
@@ -68,7 +67,7 @@ async function copyFullReport() {
       </NButton>
     </div>
 
-    <div v-if="report.citations.length > 0" class="report-section">
+    <div v-if="report.citations.length > 0" class="report-secondary-section">
       <h4>Citations</h4>
       <ul>
         <li v-for="(c, ci) in report.citations" :key="ci">
@@ -85,7 +84,7 @@ async function copyFullReport() {
       </ul>
     </div>
 
-    <div v-if="report.critiques.length > 0" class="report-section">
+    <div v-if="report.critiques.length > 0" class="report-secondary-section">
       <h4>Critiques</h4>
       <ul>
         <li v-for="(c, ci) in report.critiques" :key="ci">
@@ -94,7 +93,7 @@ async function copyFullReport() {
       </ul>
     </div>
 
-    <div v-if="report.unverified_claims.length > 0" class="report-section">
+    <div v-if="report.unverified_claims.length > 0" class="report-secondary-section">
       <h4>Unverified Claims</h4>
       <ul>
         <li

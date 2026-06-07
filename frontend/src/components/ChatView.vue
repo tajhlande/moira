@@ -237,7 +237,7 @@ async function copyMessage(content: string, index: number) {
 }
 
 .message.user {
-  background-color: var(--moira-border, #e0e0e0);
+  background-color: var(--moira-user-message-bg, #e0e0e0);
   margin-left: auto;
 }
 
