@@ -226,6 +226,7 @@ Critiques should read as self-critical notes about your own report, not as feedb
 The citations should be drawn from results that were returned by tool calls from prior steps and provided as input to you.
 for report geneneration.  
 Where your report's answer content draws directly from a citation, include a `[n]` reference for the number of the citation that is included in the citations list.
+If a sentence or piece of text has multiple citations, write them in sequence like this: `[2][4]`.
 You should not create or manufacture any URLs or citations you were not provided.
 Don't directly mention the existence of a draft, as your output is what is presented to the user. 
 You should address draft verification feedback directly by writing the correct content in your output.
