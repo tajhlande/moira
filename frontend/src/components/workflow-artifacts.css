@@ -531,3 +531,45 @@
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+
+.cite-ref {
+  color: var(--n-info-color, #2080f0);
+  text-decoration: underline dashed;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.cite-ref:hover {
+  text-decoration: underline dashed;
+}
+
+.citation-tooltip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 360px;
+  padding: 10px 12px;
+  background: var(--moira-bg, #fff);
+  border: 1px solid var(--moira-border, #e0e0e0);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  font-size: 0.85em;
+  line-height: 1.4;
+}
+
+.citation-tooltip-source {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.citation-tooltip-url {
+  display: block;
+  font-size: 0.9em;
+  opacity: 0.7;
+  word-break: break-all;
+}
+
+.citation-tooltip-excerpt {
+  margin-top: 6px;
+  font-style: italic;
+  opacity: 0.7;
+}
