@@ -253,7 +253,6 @@ async function copyMessage(content: string, index: number) {
 }
 
 .message-content {
-  white-space: pre-wrap;
 }
 
 .message-actions {

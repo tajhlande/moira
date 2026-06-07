@@ -29,7 +29,7 @@ async function copyAnswer() {
 function buildFullReport(): string {
   const parts: string[] = [props.report.answer];
   if (props.report.citations.length > 0) {
-    parts.push("\n\n## Citations\n");
+    parts.push("\n\n## Sources\n");
     for (const c of props.report.citations) {
       let line = `- ${c.source}`;
       if (c.url) line += ` — ${c.url}`;
@@ -90,8 +90,8 @@ async function copyFullReport() {
     </div>
 
     <div v-if="report.citations.length > 0" class="report-secondary-section">
-      <h4>Citations</h4>
-      <ul>
+      <h4>Sources</h4>
+      <ol>
         <li v-for="(c, ci) in report.citations" :key="ci">
           {{ c.source }}
           <a
@@ -103,7 +103,7 @@ async function copyFullReport() {
           >
           <span v-if="c.excerpt" class="citation-excerpt">{{ c.excerpt }}</span>
         </li>
-      </ul>
+      </ol>
     </div>
 
     <div v-if="report.critiques.length > 0" class="report-secondary-section">

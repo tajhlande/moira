@@ -441,7 +441,8 @@
   letter-spacing: 0.03em;
 }
 
-.report-secondary-section ul {
+.report-secondary-section ul,
+.report-secondary-section ol {
   margin: 0;
   padding-left: 20px;
   font-size: 0.9em;
