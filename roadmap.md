@@ -18,9 +18,12 @@ These are roughly organized by area and not in a plan order.
 
 ## Content and intelligence
 
+- Thinking budgets
 - Better citation formatting and referencing
 - Web content prompt injection safety
 - long conversation context management
+- "Grind" verification option to split draft text into sentences and
+verify each sentence independently.
 - Memory
   - Fact storage and recall
   - Fact hygiene
