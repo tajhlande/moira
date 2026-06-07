@@ -423,7 +423,6 @@
 }
 
 .report-answer {
-  white-space: pre-wrap;
   line-height: 1.5;
 }
 
@@ -471,11 +470,20 @@
   margin-top: 8px;
 }
 
-.report-footer .copy-btn {
+.report-raw {
+  font-family: var(--moira-font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace);
+  font-size: 0.93em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.report-footer .icon-action-btn {
   color: var(--n-text-color-3, #999);
 }
 
-.report-footer .copy-btn:hover {
+.report-footer .icon-action-btn:hover {
   color: var(--n-primary-color, #18a058);
 }
 
@@ -485,11 +493,11 @@
   margin-top: 4px;
 }
 
-.answer-footer .copy-btn {
+.answer-footer .icon-action-btn {
   color: var(--n-text-color-3, #999);
 }
 
-.answer-footer .copy-btn:hover {
+.answer-footer .icon-action-btn:hover {
   color: var(--n-primary-color, #18a058);
 }
 
@@ -501,6 +509,10 @@
   font-size: 0.85em;
   opacity: 0.7;
   max-width: 80%;
+}
+
+.token-stats {
+  font-family: var(--moira-font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace);
 }
 
 .run-error {

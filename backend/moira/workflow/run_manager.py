@@ -119,6 +119,13 @@ class ActiveRun:
                 self._step_summary(self._current_step, f"{self.run_id}:current")
             )
 
+        all_steps = self.execution_steps + (
+            [self._current_step] if self._current_step else []
+        )
+        input_tokens = sum(s.get("input_tokens") or 0 for s in all_steps)
+        output_tokens = sum(s.get("output_tokens") or 0 for s in all_steps)
+        thinking_tokens = sum(s.get("thinking_tokens") or 0 for s in all_steps)
+
         return {
             "id": self.run_id,
             "conversation_id": self.conversation_id,
@@ -134,6 +141,9 @@ class ActiveRun:
             "started_at": self.started_at,
             "completed_at": self.completed_at or None,
             "updated_at": self.updated_at,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "thinking_tokens": thinking_tokens,
         }
 
     def _broadcast_run_snapshot(self) -> None:

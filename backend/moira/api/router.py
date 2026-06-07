@@ -164,6 +164,9 @@ def _coalesced_run_snapshot(
         "started_at": latest.started_at,
         "completed_at": latest.completed_at,
         "updated_at": latest.updated_at,
+        "input_tokens": sum(s.input_tokens or 0 for s in merged_steps),
+        "output_tokens": sum(s.output_tokens or 0 for s in merged_steps),
+        "thinking_tokens": sum(s.thinking_tokens or 0 for s in merged_steps),
     }
 
 

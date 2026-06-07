@@ -92,6 +92,9 @@ export interface WorkflowRunInfo {
   completed_at: string;
   updated_at?: string;
   total_elapsed_ms?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  thinking_tokens?: number;
 }
 
 export interface ConversationDetail {

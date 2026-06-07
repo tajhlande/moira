@@ -483,7 +483,7 @@ describe("ChatView", () => {
     // Report answer must be visible
     expect(text).toContain("Rendered answer");
     // Total elapsed must be visible
-    expect(text).toContain("Total:");
+    expect(text).toContain("Time:");
   });
 
   it("steps persist in DOM after assistant message is added", async () => {
@@ -547,7 +547,7 @@ describe("ChatView", () => {
     expect(text).toContain("Persisted answer");
 
     // Total elapsed
-    expect(text).toContain("Total:");
+    expect(text).toContain("Time:");
   });
 
   it("stores stopped run status and zero-remaining budget limit correctly", async () => {

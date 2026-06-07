@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, computed } from "vue";
 import { NButton } from "naive-ui";
-import { IconCopy, IconCircleCheck } from "@tabler/icons-vue";
+import {
+  IconCopy,
+  IconCircleCheck,
+  IconMarkdown,
+  IconFileTypography,
+} from "@tabler/icons-vue";
 import type { ResearchReport } from "../api/client";
 import MarkdownContent from "./MarkdownContent.vue";
 import "./workflow-artifacts.css";
@@ -9,6 +14,9 @@ import "./workflow-artifacts.css";
 const props = defineProps<{ report: ResearchReport }>();
 const copiedAnswer = ref(false);
 const copiedFull = ref(false);
+const showRaw = ref(false);
+
+const fullReportMarkdown = computed(() => buildFullReport());
 
 async function copyAnswer() {
   await navigator.clipboard.writeText(props.report.answer);
@@ -51,17 +59,31 @@ async function copyFullReport() {
 
 <template>
   <div class="report-panel">
-    <MarkdownContent class="report-answer" :content="report.answer" />
+    <MarkdownContent v-if="!showRaw" class="report-answer" :content="report.answer" />
+    <pre v-else class="report-raw">{{ report.answer }}</pre>
     <div class="answer-footer">
       <NButton
         quaternary
         circle
         size="tiny"
-        class="copy-btn"
-        @click="copyAnswer"
+        class="icon-action-btn"
+        :title="showRaw ? 'Rendered view' : 'Raw markdown'"
+        @click="showRaw = !showRaw"
       >
         <template #icon>
-          <IconCopy v-if="!copiedAnswer" :size="14" />
+          <IconFileTypography v-if="showRaw" :size="14" />
+          <IconMarkdown v-else :size="14" />
+        </template>
+      </NButton>
+      <NButton
+        quaternary
+        circle
+        size="tiny"
+        class="icon-action-btn"
+        @click="showRaw ? copyFullReport() : copyAnswer()"
+      >
+        <template #icon>
+          <IconCopy v-if="!(showRaw ? copiedFull : copiedAnswer)" :size="14" />
           <IconCircleCheck v-else :size="14" />
         </template>
       </NButton>
@@ -114,7 +136,7 @@ async function copyFullReport() {
         quaternary
         circle
         size="tiny"
-        class="copy-btn"
+        class="icon-action-btn"
         @click="copyFullReport"
       >
         <template #icon>

@@ -232,6 +232,18 @@ export const useChatStore = defineStore("chat", () => {
         typeof snapshot.total_elapsed_ms === "number"
           ? snapshot.total_elapsed_ms
           : existing?.total_elapsed_ms,
+      input_tokens:
+        typeof snapshot.input_tokens === "number"
+          ? snapshot.input_tokens
+          : existing?.input_tokens ?? 0,
+      output_tokens:
+        typeof snapshot.output_tokens === "number"
+          ? snapshot.output_tokens
+          : existing?.output_tokens ?? 0,
+      thinking_tokens:
+        typeof snapshot.thinking_tokens === "number"
+          ? snapshot.thinking_tokens
+          : existing?.thinking_tokens ?? 0,
     };
   }
 

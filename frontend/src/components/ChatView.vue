@@ -119,7 +119,7 @@ async function copyMessage(content: string, index: number) {
               quaternary
               circle
               size="tiny"
-              class="copy-btn"
+              class="icon-action-btn"
               @click="copyMessage(msg.content, i)"
             >
               <template #icon>
@@ -262,11 +262,11 @@ async function copyMessage(content: string, index: number) {
   margin-top: 4px;
 }
 
-.copy-btn {
+.icon-action-btn {
   color: var(--n-text-color-3, #999);
 }
 
-.copy-btn:hover {
+.icon-action-btn:hover {
   color: var(--n-primary-color, #18a058);
 }
 

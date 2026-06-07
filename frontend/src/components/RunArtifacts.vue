@@ -170,6 +170,11 @@ function formatElapsed(ms: number | undefined): string {
   const sec = totalSec % 60;
   return `${min}:${sec.toString().padStart(2, "0")}`;
 }
+
+function fmt(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
 </script>
 
 <template>
@@ -279,7 +284,15 @@ function formatElapsed(ms: number | undefined): string {
     <ReportPanel v-if="run.report" :report="run.report" />
 
     <div v-if="run.total_elapsed_ms != null" class="total-elapsed">
-      Total: {{ formatElapsed(run.total_elapsed_ms) }}
+      Time: {{ formatElapsed(run.total_elapsed_ms) }}
+      <span v-if="(run.input_tokens ?? 0) > 0" class="token-stats">
+        &middot; Tokens: 
+        {{ fmt(run.input_tokens ?? 0) }} in /
+        {{ fmt(run.output_tokens ?? 0) }} out
+        <template v-if="(run.thinking_tokens ?? 0) > 0">
+          / {{ fmt(run.thinking_tokens ?? 0) }} thinking
+        </template>
+      </span>
     </div>
 
     <div v-if="run.error && run.status === 'error'" class="run-error">
