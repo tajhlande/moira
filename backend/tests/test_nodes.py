@@ -44,6 +44,7 @@ def mock_model():
 
 @pytest.fixture
 def base_state(config) -> ResearchState:
+    cw = config.budget.cost_weights
     return {
         "question": "What is the speed of light?",
         "plan": "",
@@ -55,6 +56,16 @@ def base_state(config) -> ResearchState:
         "report": None,
         "budget_remaining": float(config.budget.default_limit),
         "budget_limit": float(config.budget.default_limit),
+        "cost_weights": {
+            "planning": cw.planning,
+            "tool_discovery": cw.tool_discovery,
+            "tool_selection": cw.tool_selection,
+            "research_execution": cw.research_execution,
+            "compression": cw.compression,
+            "draft_synthesis": cw.draft_synthesis,
+            "verification": cw.verification,
+            "report_generation": cw.report_generation,
+        },
         "verification_history": [],
         "unverified_claims": [],
         "error": "",

@@ -5,7 +5,6 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 from langgraph.types import interrupt
 
-from moira.config import MoiraConfig
 from moira.inference.metrics import TokenCounts
 from moira.models.state import ResearchState, VerificationReport
 from moira.prompts import get_prompt
@@ -336,18 +335,18 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
     """Planning node: analyzes the question and produces a research plan.
     Uses the intelligence model. Cost weight: 2."""
     _check_stop("planning", config)
-    moira_config = _get_config(config)
+    cost_weights = state.get("cost_weights", {})
     budget = state.get("budget_remaining", 0.0)
     node = "planning"
     logger.debug("PLANNING Start")
 
-    if not can_execute(moira_config, node, budget):
+    if not can_execute(cost_weights, node, budget):
         return {"error": f"Insufficient budget for {node}"}
 
     writer = get_stream_writer()
     writer({"event": "node_start", "payload": {"node": node, "timestamp": _now()}})
 
-    new_budget = deduct_cost(moira_config, node, budget)
+    new_budget = deduct_cost(cost_weights, node, budget)
 
     registry = _get_registry(config)
     question = state.get("question", "")
@@ -356,7 +355,9 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
     prior_question = config.get("configurable", {}).get("prior_question")
     prior_turns = config.get("configurable", {}).get("prior_turns")
 
-    messages = _build_planning_messages(question, verification_history, prior_report, prior_question, prior_turns)
+    messages = _build_planning_messages(
+        question, verification_history, prior_report, prior_question, prior_turns,
+    )
     _log_prompts(node, messages)
     resolved = await registry.resolve("intelligence")
     raw = await resolved.client.chat_completion(
@@ -388,18 +389,18 @@ async def tool_discovery(state: ResearchState, config: RunnableConfig) -> dict:
     relevant tools. Default tools are always included. No model call.
     Cost weight: 1."""
     _check_stop("tool_discovery", config)
-    moira_config = _get_config(config)
+    cost_weights = state.get("cost_weights", {})
     budget = state.get("budget_remaining", 0.0)
     node = "tool_discovery"
 
     logger.debug("TOOL DISCOVERY Start")
-    if not can_execute(moira_config, node, budget):
+    if not can_execute(cost_weights, node, budget):
         return {"error": f"Insufficient budget for {node}"}
 
     writer = get_stream_writer()
     writer({"event": "node_start", "payload": {"node": node, "timestamp": _now()}})
 
-    new_budget = deduct_cost(moira_config, node, budget)
+    new_budget = deduct_cost(cost_weights, node, budget)
 
     from moira.service_setup import service_provider
 
@@ -444,18 +445,18 @@ async def tool_selection(state: ResearchState, config: RunnableConfig) -> dict:
     """Tool Selection node: intelligence model selects the best tools from
     the discovered candidates. Cost weight: 2."""
     _check_stop("tool_selection", config)
-    moira_config = _get_config(config)
+    cost_weights = state.get("cost_weights", {})
     budget = state.get("budget_remaining", 0.0)
     node = "tool_selection"
 
     logger.debug("TOOL SELECTION Start")
-    if not can_execute(moira_config, node, budget):
+    if not can_execute(cost_weights, node, budget):
         return {"error": f"Insufficient budget for {node}"}
 
     writer = get_stream_writer()
     writer({"event": "node_start", "payload": {"node": node, "timestamp": _now()}})
 
-    new_budget = deduct_cost(moira_config, node, budget)
+    new_budget = deduct_cost(cost_weights, node, budget)
 
     active_tools = state.get("active_tools", [])
     if not active_tools:
@@ -520,18 +521,18 @@ async def research_execution(state: ResearchState, config: RunnableConfig) -> di
     """Research Execution node: intelligence model uses selected tools to
     gather evidence. Supports multi-round tool use. Cost weight: 5."""
     _check_stop("research_execution", config)
-    moira_config = _get_config(config)
+    cost_weights = state.get("cost_weights", {})
     budget = state.get("budget_remaining", 0.0)
     node = "research_execution"
 
     logger.debug("RESEARCH EXECUTION Start")
-    if not can_execute(moira_config, node, budget):
+    if not can_execute(cost_weights, node, budget):
         return {"error": f"Insufficient budget for {node}"}
 
     writer = get_stream_writer()
     writer({"event": "node_start", "payload": {"node": node, "timestamp": _now()}})
 
-    new_budget = deduct_cost(moira_config, node, budget)
+    new_budget = deduct_cost(cost_weights, node, budget)
 
     active_tools = state.get("active_tools", [])
     question = state.get("question", "")
@@ -606,18 +607,18 @@ async def compression(state: ResearchState, config: RunnableConfig) -> dict:
     """Compression node: task model compresses and deduplicates findings.
     Cost weight: 1."""
     _check_stop("compression", config)
-    moira_config = _get_config(config)
+    cost_weights = state.get("cost_weights", {})
     budget = state.get("budget_remaining", 0.0)
     node = "compression"
 
     logger.debug("COMPRESSION Start")
-    if not can_execute(moira_config, node, budget):
+    if not can_execute(cost_weights, node, budget):
         return {"error": f"Insufficient budget for {node}"}
 
     writer = get_stream_writer()
     writer({"event": "node_start", "payload": {"node": node, "timestamp": _now()}})
 
-    new_budget = deduct_cost(moira_config, node, budget)
+    new_budget = deduct_cost(cost_weights, node, budget)
 
     findings = state.get("findings", [])
     if not findings:
@@ -674,19 +675,19 @@ async def draft_synthesis(state: ResearchState, config: RunnableConfig) -> dict:
     Cost weight: 3. On draft retry, includes verification feedback so the
     synthesizer can address specific issues."""
     _check_stop("draft_synthesis", config)
-    moira_config = _get_config(config)
+    cost_weights = state.get("cost_weights", {})
     budget = state.get("budget_remaining", 0.0)
     node = "draft_synthesis"
     draft_retry_count = state.get("draft_retry_count", 0)
 
     logger.debug("DRAFT SYNTHESIS Start (retry=%d)", draft_retry_count)
-    if not can_execute(moira_config, node, budget):
+    if not can_execute(cost_weights, node, budget):
         return {"error": f"Insufficient budget for {node}"}
 
     writer = get_stream_writer()
     writer({"event": "node_start", "payload": {"node": node, "timestamp": _now()}})
 
-    new_budget = deduct_cost(moira_config, node, budget)
+    new_budget = deduct_cost(cost_weights, node, budget)
 
     question = state.get("question", "")
     plan = state.get("plan", "")
@@ -759,18 +760,18 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
     independent claim verification. Cost weight: 4. Produces a
     VerificationReport and may route back to Planning if budget permits."""
     _check_stop("verification", config)
-    moira_config = _get_config(config)
+    cost_weights = state.get("cost_weights", {})
     budget = state.get("budget_remaining", 0.0)
     node = "verification"
 
     logger.debug("VERIFICATION Start")
-    if not can_execute(moira_config, node, budget):
+    if not can_execute(cost_weights, node, budget):
         return {"error": f"Insufficient budget for {node}"}
 
     writer = get_stream_writer()
     writer({"event": "node_start", "payload": {"node": node, "timestamp": _now()}})
 
-    new_budget = deduct_cost(moira_config, node, budget)
+    new_budget = deduct_cost(cost_weights, node, budget)
 
     question = state.get("question", "")
     draft = state.get("draft", "")
@@ -937,10 +938,7 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
     # the state's verification_history clean — only the UI sees the note.
     structured = dict(report)
     if outcome == "retry_plan":
-        from moira.service_setup import service_provider
-
-        moira_cfg = cast(MoiraConfig, service_provider("config"))
-        cycle_cost = full_cycle_cost(moira_cfg)
+        cycle_cost = full_cycle_cost(cost_weights)
         if new_budget < cycle_cost:
             structured["retry_declined"] = True
             structured["retry_declined_reason"] = (
@@ -948,11 +946,9 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
                 f"({new_budget:.1f} remaining, {cycle_cost} needed)"
             )
     elif outcome == "retry_draft":
-        from moira.service_setup import service_provider
         from moira.workflow.budget import draft_retry_cost
 
-        moira_cfg = cast(MoiraConfig, service_provider("config"))
-        dr_cost = draft_retry_cost(moira_cfg)
+        dr_cost = draft_retry_cost(cost_weights)
         draft_retries = state.get("draft_retry_count", 0)
         if new_budget < dr_cost or draft_retries >= 1:
             structured["retry_declined"] = True
@@ -1043,7 +1039,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     Produces a structured ResearchReport. Robust to partial state from
     earlier node failures. Cost weight: 3 (accounting only)."""
     _check_stop("report_generation", config)
-    moira_config = _get_config(config)
+    cost_weights = state.get("cost_weights", {})
     budget = state.get("budget_remaining", 0.0)
     node = "report_generation"
 
@@ -1052,7 +1048,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     writer({"event": "node_start", "payload": {"node": node, "timestamp": _now()}})
 
     # Deduct cost for accounting but never prevent execution
-    new_budget = deduct_cost(moira_config, node, budget)
+    new_budget = deduct_cost(cost_weights, node, budget)
 
     question = state.get("question", "")
     draft = state.get("draft", "")
@@ -1172,15 +1168,6 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     logger.info("Report generation complete, answer length=%d", len(report["answer"]))
     logger.debug("REPORT GENERATION Complete")
     return {"report": report, "budget_remaining": new_budget}
-
-
-def _get_config(config: RunnableConfig) -> MoiraConfig:
-    cfg = config.get("configurable", {}).get("moira_config")
-    if cfg is None:
-        from moira.service_setup import service_provider
-
-        return cast(MoiraConfig, service_provider("config"))
-    return cfg
 
 
 def _get_registry(config: RunnableConfig):

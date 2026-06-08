@@ -46,6 +46,7 @@ class ResearchState(TypedDict):
     report: ResearchReport
     budget_remaining: float
     budget_limit: float
+    cost_weights: dict[str, int]
     verification_history: list[VerificationReport]
     unverified_claims: list[str]
     # Error tracking for node failure path

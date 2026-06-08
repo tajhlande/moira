@@ -894,6 +894,33 @@ class RunManager:
         )
         return run_id
 
+    async def _resolve_cost_weights(self, config: MoiraConfig) -> dict[str, int]:
+        """Resolve cost weights from the settings service with config fallback.
+
+        Ensures resumed runs have cost_weights available even if the
+        original checkpoint predates the cost_weights field."""
+        try:
+            from moira.persistence.interfaces import SCOPE_SYSTEM, SYSTEM_SCOPE_ID
+            from moira.services.settings.settings_service import SettingsService
+
+            settings_svc = cast(SettingsService, self._get_service("settings_service"))
+            return await settings_svc.get_typed_prefix(
+                "budget.cost.", scope=SCOPE_SYSTEM, scope_id=SYSTEM_SCOPE_ID
+            )
+        except Exception:
+            logger.debug("Settings service unavailable, falling back to config for cost_weights")
+            cw = config.budget.cost_weights
+            return {
+                "planning": cw.planning,
+                "tool_discovery": cw.tool_discovery,
+                "tool_selection": cw.tool_selection,
+                "research_execution": cw.research_execution,
+                "compression": cw.compression,
+                "draft_synthesis": cw.draft_synthesis,
+                "verification": cw.verification,
+                "report_generation": cw.report_generation,
+            }
+
     async def resume_run(
         self,
         conversation_id: str,
@@ -917,6 +944,10 @@ class RunManager:
             raise ValueError(f"No stopped or errored run found for conversation {conversation_id}")
 
         graph = cast(CompiledStateGraph, self._get_service("research_graph"))
+
+        # Resolve cost_weights so resumed runs always have them, even if
+        # the checkpoint predates the cost_weights field addition.
+        cost_weights = await self._resolve_cost_weights(config)
 
         run_id = str(uuid.uuid4())
         started_at = datetime.now(timezone.utc).isoformat()
@@ -947,7 +978,13 @@ class RunManager:
 
         await active_run._persist()
 
-        active_run.start_graph_resume(graph, Command(resume=True), graph_config)
+        # Inject cost_weights via Command.update so the checkpoint state
+        # always has them, regardless of when the original run was created.
+        active_run.start_graph_resume(
+            graph,
+            Command(resume=True, update={"cost_weights": cost_weights}),
+            graph_config,
+        )
         logger.info(
             "Resumed run %s for conversation %s (thread %s, previous status=%s)",
             run_id,

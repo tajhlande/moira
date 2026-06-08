@@ -18,13 +18,10 @@ from moira.workflow.nodes.research_nodes import (
 logger = logging.getLogger(__name__)
 
 
-def make_verification_router(config: MoiraConfig):
+def make_verification_router():
     """Return a routing function that checks verification outcome against
-    the config-derived full cycle cost. Captures config via closure so
-    LangGraph's conditional edge handler receives the right signature
-    (just state)."""
-
-    cycle_cost = full_cycle_cost(config)
+    budget. Reads cost_weights from state so the router uses the same
+    resolved values as the nodes themselves."""
 
     def route_after_verification(state: ResearchState) -> str:
         """Conditional routing after the Verification node based on the
@@ -35,6 +32,7 @@ def make_verification_router(config: MoiraConfig):
         - "retry_plan" + budget sufficient -> planning
         - fallback: report_generation
         """
+        cost_weights = state.get("cost_weights", {})
         verification_history = state.get("verification_history", [])
         if not verification_history:
             return "report_generation"
@@ -59,7 +57,7 @@ def make_verification_router(config: MoiraConfig):
         if outcome == "retry_draft":
             budget_remaining = state.get("budget_remaining", 0.0)
             draft_retries = state.get("draft_retry_count", 0)
-            dr_cost = draft_retry_cost(config)
+            dr_cost = draft_retry_cost(cost_weights)
             if draft_retries < 1 and budget_remaining >= dr_cost:
                 logger.info(
                     "Verification retry_draft (case %d), budget sufficient"
@@ -78,6 +76,7 @@ def make_verification_router(config: MoiraConfig):
 
         # outcome == "retry_plan" or retry_draft fallback
         budget_remaining = state.get("budget_remaining", 0.0)
+        cycle_cost = full_cycle_cost(cost_weights)
         if budget_remaining >= cycle_cost:
             logger.info(
                 "Verification retry_plan (case %d), budget sufficient"
@@ -135,7 +134,7 @@ def build_graph(config: MoiraConfig) -> StateGraph:
     # Conditional routing after Verification
     graph.add_conditional_edges(
         "verification",
-        make_verification_router(config),
+        make_verification_router(),
         {
             "planning": "planning",
             "draft_synthesis": "draft_synthesis",

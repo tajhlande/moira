@@ -86,6 +86,17 @@ export const useChatStore = defineStore("chat", () => {
   const stepDetailInflight = new Map<string, Promise<ExecutionStepDetailResponse>>();
 
   const runSettings = ref<RunSettings>({ budget: 50 });
+
+  async function loadDefaultBudget() {
+    try {
+      const resp = await api.getSetting("budget.default_limit");
+      if (resp?.value != null) {
+        runSettings.value = { budget: parseInt(resp.value, 10) || 50 };
+      }
+    } catch {
+      // Settings endpoint unavailable; keep the current default.
+    }
+  }
   const runningConversations = ref<Set<string>>(new Set());
 
   // Message id of the run currently being streamed for this conversation.
@@ -464,7 +475,7 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
-  function startNewChat() {
+  async function startNewChat() {
     cancelStream();
     selectConversationRequestId += 1;
     currentConversationId.value = null;
@@ -474,6 +485,7 @@ export const useChatStore = defineStore("chat", () => {
     error.value = null;
     loading.value = false;
     clearRunViewState();
+    await loadDefaultBudget();
   }
 
   async function selectConversation(id: string) {
@@ -516,6 +528,7 @@ export const useChatStore = defineStore("chat", () => {
     clearRunViewState();
 
     try {
+      await loadDefaultBudget();
       let createdNewConversation = false;
       if (!currentConversationId.value) {
         const conversation = await api.createConversation();
@@ -841,5 +854,6 @@ export const useChatStore = defineStore("chat", () => {
     disconnectGlobalEvents,
     isConversationRunning,
     runningConversations,
+    loadDefaultBudget,
   };
 });

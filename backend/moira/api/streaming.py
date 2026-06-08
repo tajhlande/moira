@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from moira.config import MoiraConfig
-from moira.persistence.interfaces import ConversationRepository
+from moira.persistence.interfaces import SCOPE_SYSTEM, SYSTEM_SCOPE_ID, ConversationRepository
 from moira.service_setup import service_provider
 from moira.workflow.run_manager import RunManager
 
@@ -64,10 +64,52 @@ async def send_message(
     config = _config()
     budget_limit = config.budget.default_limit
 
+    # Resolve default budget from settings service (async boundary).
+    # Falls back to config file value if the service is unavailable.
+    try:
+        from moira.services.settings.settings_service import SettingsService
+
+        settings_svc = cast(SettingsService, service_provider("settings_service"))
+        resolved_budget = await settings_svc.get_typed("budget.default_limit")
+        if resolved_budget is not None:
+            budget_limit = int(resolved_budget)
+    except Exception:
+        logger.warning(
+            "Settings service unavailable, falling back to config for budget_limit",
+            exc_info=True,
+        )
+
     settings = body.get("settings") or {}
     raw_budget = settings.get("budget")
     if isinstance(raw_budget, (int, float)):
         budget_limit = max(35, min(150, int(raw_budget)))
+
+    # Resolve cost weights from settings service (async boundary).
+    # Falls back to config file values if the service is unavailable.
+    cost_weights: dict[str, int] = {}
+    try:
+        from moira.services.settings.settings_service import SettingsService
+
+        settings_svc = cast(SettingsService, service_provider("settings_service"))
+        cost_weights = await settings_svc.get_typed_prefix(
+            "budget.cost.", scope=SCOPE_SYSTEM, scope_id=SYSTEM_SCOPE_ID
+        ) # pyright: ignore[reportAssignmentType]
+    except Exception:
+        logger.warning(
+            "Settings service unavailable, falling back to config for cost_weights",
+            exc_info=True,
+        )
+        cw = config.budget.cost_weights
+        cost_weights = {
+            "planning": cw.planning,
+            "tool_discovery": cw.tool_discovery,
+            "tool_selection": cw.tool_selection,
+            "research_execution": cw.research_execution,
+            "compression": cw.compression,
+            "draft_synthesis": cw.draft_synthesis,
+            "verification": cw.verification,
+            "report_generation": cw.report_generation,
+        }
 
     # Collect all prior Q&A turns for context carry-forward.
     # Each turn is a (question, answer) pair from a completed run.
@@ -102,6 +144,7 @@ async def send_message(
         "report": None,
         "budget_remaining": float(budget_limit),
         "budget_limit": float(budget_limit),
+        "cost_weights": cost_weights,
         "verification_history": [],
         "unverified_claims": [],
         "error": "",
