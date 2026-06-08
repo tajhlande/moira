@@ -278,6 +278,41 @@ export const api = {
       `/metrics/inference${qs ? `?${qs}` : ""}`,
     );
   },
+
+  getSettingDefinitions: () =>
+    request<{ definitions: SettingDefinition[] }>("/settings/definitions"),
+
+  getSettings: (prefix?: string) => {
+    const params = new URLSearchParams();
+    if (prefix) params.set("prefix", prefix);
+    const qs = params.toString();
+    return request<{ settings: SettingEntry[] }>(`/settings${qs ? `?${qs}` : ""}`);
+  },
+
+  getSetting: (key: string) =>
+    request<SettingEntry>(`/settings/${encodeURIComponent(key)}`),
+
+  setSetting: (key: string, value: string | number) =>
+    request<SettingEntry>(`/settings/${encodeURIComponent(key)}`, {
+      method: "PUT",
+      body: JSON.stringify({ value }),
+    }),
+
+  batchSetSettings: (settings: { key: string; value: string }[]) =>
+    request<{ settings: SettingEntry[] }>("/settings", {
+      method: "PUT",
+      body: JSON.stringify({ settings }),
+    }),
+
+  resetSettings: (keys?: string[]) => {
+    const params = new URLSearchParams();
+    if (keys?.length) params.set("keys", keys.join(","));
+    const qs = params.toString();
+    return request<{ settings: SettingEntry[] }>(
+      `/settings${qs ? `?${qs}` : ""}`,
+      { method: "DELETE" },
+    );
+  },
 };
 
 export interface ToolGroupInfo {
@@ -297,4 +332,26 @@ export interface ToolInfo {
   built_in: boolean;
   implementation: string;
   group_name: string;
+}
+
+export interface SettingDefinition {
+  key: string;
+  type: "string" | "integer" | "float" | "boolean";
+  default: string;
+  label: string;
+  description: string;
+  group: string;
+  constraints: Record<string, unknown>;
+}
+
+export interface SettingEntry {
+  key: string;
+  value: string;
+  type: string;
+  label: string;
+  description: string;
+  group: string;
+  constraints: Record<string, unknown>;
+  scope: string;
+  scope_id: string;
 }

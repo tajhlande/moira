@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 #   "research_graph"                       -> CompiledStateGraph
 #   "config"                               -> MoiraConfig
 #   "write_queue"                          -> AsyncWriteQueue
+#   "system_settings_repository"           -> SystemSettingsRepository
+#   "settings_service"                     -> SettingsService
 # Returns object; callers must cast() to the expected type.
 # Type parameters were rejected due to Pylance/pyright inability to infer
 # from assignment context (TypeVar appears only once in signature).
@@ -235,6 +237,19 @@ async def init_services(
     from moira.workflow.run_manager import RunManager
 
     _services["run_manager"] = RunManager()
+
+    # --- System settings ---
+    from moira.persistence.sqlite.repos import SqliteSystemSettingsRepository
+    from moira.services.settings.settings_service import SettingsService
+
+    settings_repo = SqliteSystemSettingsRepository(db_path)
+    _services["system_settings_repository"] = settings_repo
+
+    settings_service = SettingsService(repo=settings_repo)
+    _services["settings_service"] = settings_service
+
+    await settings_service.seed_defaults()
+    logger.info("Settings service initialized and defaults seeded")
 
     _services["config"] = config
 

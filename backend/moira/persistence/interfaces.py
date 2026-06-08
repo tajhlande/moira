@@ -5,6 +5,12 @@ from moira.tools.base import ToolDefinition
 
 DEFAULT_USER_ID = "default"
 
+SCOPE_SYSTEM = "system"
+SCOPE_USER = "user"
+SCOPE_PROJECT = "project"
+SCOPE_CONVERSATION = "conversation"
+SYSTEM_SCOPE_ID = "_system"
+
 
 @dataclass
 class Message:
@@ -184,3 +190,56 @@ class CredentialRepository(ABC):
 
     @abstractmethod
     async def list_all(self, owner: str | None = None) -> list[CredentialRow]: ...
+
+
+@dataclass
+class SettingEntry:
+    """A single persisted setting row. Maps directly to the settings table.
+
+    Used by the repository layer for raw DB reads/writes and passed through
+    the service layer. Value is always a string; type information lives in
+    the SettingDefinition registry, not here."""
+
+    key: str
+    value: str
+    scope: str
+    scope_id: str
+
+
+@dataclass
+class ResolvedSetting:
+    """A setting value after scope-chain resolution, enriched with type info.
+
+    Returned by SettingsService.get() for API consumers. Carries which scope
+    layer actually resolved the value (useful when multiple scopes are
+    searched in precedence order). Type comes from SettingDefinition, not
+    from the DB."""
+
+    key: str
+    value: str
+    type: str
+    scope: str
+    scope_id: str
+
+
+class SystemSettingsRepository(ABC):
+    """Persistence interface for the settings table.
+
+    Phase 1 only supports single-scope reads. Multi-scope resolution
+    (conversation > project > user > system) is handled by SettingsService,
+    not by the repo. The repo is scope-unaware beyond filtering rows by
+    (scope, scope_id)."""
+    @abstractmethod
+    async def get(self, key: str, scope: str, scope_id: str) -> SettingEntry | None: ...
+
+    @abstractmethod
+    async def get_prefix(self, prefix: str, scope: str, scope_id: str) -> list[SettingEntry]: ...
+
+    @abstractmethod
+    async def set(self, entry: SettingEntry) -> None: ...
+
+    @abstractmethod
+    async def set_batch(self, entries: list[SettingEntry]) -> None: ...
+
+    @abstractmethod
+    async def delete(self, key: str, scope: str, scope_id: str) -> bool: ...

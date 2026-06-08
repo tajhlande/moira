@@ -235,3 +235,98 @@ def test_set_model_assignments(app_client):
     data = resp.json()
     assert data["intelligence"]["model"] == "new-model"
     assert data["task"]["model"] == "tiny-model"
+
+
+def test_get_setting_definitions(app_client):
+    resp = app_client.get("/api/settings/definitions")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "definitions" in data
+    assert len(data["definitions"]) > 0
+    defn = data["definitions"][0]
+    assert "key" in defn
+    assert "type" in defn
+    assert "default" in defn
+    assert "label" in defn
+    assert "group" in defn
+    assert "constraints" in defn
+
+
+def test_get_settings_prefix(app_client):
+    resp = app_client.get("/api/settings?prefix=budget")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "settings" in data
+    assert len(data["settings"]) > 0
+    assert all(s["key"].startswith("budget.") for s in data["settings"])
+
+
+def test_get_single_setting(app_client):
+    resp = app_client.get("/api/settings/budget.default_limit")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["key"] == "budget.default_limit"
+    assert data["type"] == "integer"
+    assert "label" in data
+    assert "constraints" in data
+
+
+def test_get_unknown_setting(app_client):
+    resp = app_client.get("/api/settings/nonexistent.key")
+    assert resp.status_code == 404
+
+
+def test_set_setting(app_client):
+    resp = app_client.put(
+        "/api/settings/budget.default_limit",
+        json={"value": 75},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["value"] == "75"
+
+    get_resp = app_client.get("/api/settings/budget.default_limit")
+    assert get_resp.json()["value"] == "75"
+
+
+def test_set_setting_invalid_value(app_client):
+    resp = app_client.put(
+        "/api/settings/budget.default_limit",
+        json={"value": -5},
+    )
+    assert resp.status_code == 422
+
+
+def test_set_unknown_setting(app_client):
+    resp = app_client.put(
+        "/api/settings/nonexistent.key",
+        json={"value": "test"},
+    )
+    assert resp.status_code == 404
+
+
+def test_batch_set_settings(app_client):
+    resp = app_client.put(
+        "/api/settings",
+        json={
+            "settings": [
+                {"key": "budget.cost.planning", "value": "10"},
+                {"key": "budget.cost.verification", "value": "8"},
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    keys = {s["key"] for s in data["settings"]}
+    assert "budget.cost.planning" in keys
+    assert "budget.cost.verification" in keys
+
+
+def test_reset_settings(app_client):
+    app_client.put("/api/settings/budget.default_limit", json={"value": 99})
+
+    resp = app_client.delete("/api/settings?keys=budget.default_limit")
+    assert resp.status_code == 200
+    data = resp.json()
+    reset = {s["key"]: s["value"] for s in data["settings"]}
+    assert reset["budget.default_limit"] == "50"

@@ -16,6 +16,7 @@ dependencies = [
     "beautifulsoup4>=4.14.3",
     "lxml>=6.1.1",
     "cryptography>=44.0",
+    "jsonschema>=4.23",
 ]
 
 [tool.pytest.ini_options]

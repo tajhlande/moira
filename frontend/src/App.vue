@@ -12,9 +12,11 @@ provide("isDark", isDark);
 <template>
   <n-config-provider :theme="isDark ? darkTheme : undefined">
     <n-message-provider>
-      <AppLayout>
-        <RouterView />
-      </AppLayout>
+      <n-dialog-provider>
+        <AppLayout>
+          <RouterView />
+        </AppLayout>
+      </n-dialog-provider>
     </n-message-provider>
   </n-config-provider>
 </template>
