@@ -18,6 +18,7 @@ These are roughly organized by area and not in a plan order.
 
 ## Content and intelligence
 
+- Native tool calling
 - Thinking budgets
 - Better citation formatting and referencing
 - Web content prompt injection safety

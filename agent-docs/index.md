@@ -42,7 +42,6 @@ have not been fully completed yet.
 | Document | Description |
 |---|---|
 | **conversation-state.md** | Conceptual data model of a conversation (Section 0) and complete inventory of every data element across all implementation layers. |
-| **state-management-cleanup.md** | Migration plan to unify frontend/backend run state around a canonical snapshot model and remove live-vs-persisted UI duplication. |
 | **agent-craft.md** | Running notes on prompt tuning, model behavior observations, and the non-structural factors that make the agent trustworthy. |
 | **two-pass-discovery.md** | Plan for restructuring tool discovery to run before and after planning so plans are tool-aware. |
 | **tool-secrets-and-spec.md** | Plan for encrypted secrets storage on tools and spec-from-implementation (config/secret schemas from tool classes, not DB). |
@@ -50,6 +49,8 @@ have not been fully completed yet.
 | **kagi-web-search-plan.md** | Plan for the Kagi web search tool — first tool to use the credential store, using the Kagi Search API with Bearer auth. |
 | **latex-rendering.md** | Plan for adding LaTeX formula rendering to the markdown pipeline (KaTeX integration with disambiguation heuristics). |
 | **context-management.md** | Plan for adaptive context window management — auto-detect limits, proactive tool output capping, evidence truncation, and progressive message trimming. |
+| **dynamic-tool-discovery.md** | Design for dynamic tool discovery — ingest external APIs via OpenAPI/Swagger specs, register as tools with credential binding, guided wizard UX. |
+| **native-function-calling.md** | Design for native function calling — structured tool parameters to LLM APIs, per-model text-based vs. native selection, tradeoffs and model considerations. |
 | **docker-deployment.md** | Plan for single-container Docker deployment — multi-stage build, FastAPI static file serving, volume mounts, deploy script. |
 | **application-deployment-readiness.md** | Assessment of what is needed to deploy this app to family members for testing. |
 
@@ -69,3 +70,4 @@ projects are completed.
 | **stop-and-resume-plan.md** | Stop/resume feature — dual mechanism (task cancel + interrupt), stopped step persistence, UI controls. |
 | **inference-metrics-plan.md** | Workflow steps normalization and inference token tracking — per-node token counts and timing persisted in `workflow_steps`. |
 | **tool-metrics-plan.md** | Tool call metrics — rolling counters with hourly buckets, call_type, latency min/max/sum. |
+| **state-management-cleanup.md** | Migration plan to unify frontend/backend run state around a canonical snapshot model and remove live-vs-persisted UI duplication. |

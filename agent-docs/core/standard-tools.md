@@ -3,6 +3,12 @@
 The following is a descriptive list of standard tools that should be built into MOiRA 
 and generally always available to the agent.
 
+## Date and time tool
+
+A tool that provides the current date and time to the LLM on request.
+This should be the date and time in the user's time zone, if available,
+or the server's time zone otherwise. The response should indicate
+which source was used to select the time zone. 
 
 ## User question tool
 
