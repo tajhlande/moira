@@ -229,6 +229,12 @@ export const api = {
       body: JSON.stringify(fields),
     }),
 
+  bulkPatchTools: (updates: { name: string; [key: string]: unknown }[]) =>
+    request<{ updated: ToolInfo[] }>("/tool-admin/bulk", {
+      method: "PATCH",
+      body: JSON.stringify({ updates }),
+    }),
+
   getToolSpec: (name: string) =>
     request<{ config_schema: Record<string, unknown> }>(`/tools/${name}/spec`),
 
@@ -313,6 +319,60 @@ export const api = {
       { method: "DELETE" },
     );
   },
+
+  ingestStart: (body: IngestStartRequest) =>
+    request<IngestPreview>("/tools/ingest/start", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  ingestCommit: (body: IngestCommitRequest) =>
+    request<IngestCommitResponse>("/tools/ingest/commit", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  listIngestSources: () =>
+    request<{ sources: ApiSourceInfo[] }>("/tools/ingest/sources"),
+
+  getIngestSource: (sourceId: string) =>
+    request<ApiSourceInfo>(`/tools/ingest/sources/${sourceId}`),
+
+  deleteIngestSource: (sourceId: string) =>
+    request<{ status: string; deleted_tools: string[] }>(
+      `/tools/ingest/sources/${sourceId}`,
+      { method: "DELETE" },
+    ),
+
+  renameToolGroup: (name: string, displayName: string) =>
+    request<{ name: string; display_name: string }>(
+      `/tool-admin/groups/${encodeURIComponent(name)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ display_name: displayName }),
+      },
+    ),
+
+  toggleToolGroup: (name: string, enabled: boolean) =>
+    request<{ toggled: number; enabled: boolean }>(
+      `/tool-admin/groups/${encodeURIComponent(name)}/toggle`,
+      {
+        method: "POST",
+        body: JSON.stringify({ enabled }),
+      },
+    ),
+
+  deleteToolGroup: (name: string) =>
+    request<{ deleted: string[] }>(
+      `/tool-admin/groups/${encodeURIComponent(name)}`,
+      { method: "DELETE" },
+    ),
+
+  deleteTool: (name: string) =>
+    request<{ deleted: string }>(
+      `/tool-admin/tools/${encodeURIComponent(name)}`,
+      { method: "DELETE" },
+    ),
 };
 
 export interface ToolGroupInfo {
@@ -354,4 +414,95 @@ export interface SettingEntry {
   constraints: Record<string, unknown>;
   scope: string;
   scope_id: string;
+}
+
+export interface IngestStartRequest {
+  url?: string;
+  spec_url?: string;
+  spec_content?: string;
+  group_name?: string;
+}
+
+export interface IngestOperation {
+  name: string;
+  description: string;
+  method: string;
+  path: string;
+  parameters: {
+    name: string;
+    location: string;
+    required: boolean;
+    schema_def: Record<string, unknown>;
+    description: string;
+  }[];
+  request_body: {
+    content_type: string;
+    schema_def: Record<string, unknown>;
+    required: boolean;
+    description: string;
+  } | null;
+  tags: string[];
+  deprecated: boolean;
+  security_requirements: string[];
+  operation_id: string | null;
+}
+
+export interface IngestPreview {
+  source_id: string;
+  api_title: string;
+  api_description: string;
+  api_version: string;
+  spec_format: string;
+  server_urls: string[];
+  base_url: string;
+  security_schemes: Record<
+    string,
+    {
+      scheme_type: string;
+      name: string;
+      location: string;
+      description: string;
+    }
+  >;
+  operations: IngestOperation[];
+  total_operations: number;
+  auth_required: boolean;
+  auth_type: string | null;
+  group_name: string;
+  group_slug: string;
+  spec_url: string | null;
+}
+
+export interface IngestCommitRequest {
+  source_id: string;
+  base_url?: string;
+  spec_url?: string | null;
+  spec_format?: string;
+  group_name: string;
+  auth_type?: string | null;
+  selected_operations: string[];
+  operations: IngestOperation[];
+  server_url: string;
+  is_default?: boolean;
+}
+
+export interface IngestCommitResponse {
+  succeeded: string[];
+  failed: { name: string; reason: string }[];
+  disabled: string[];
+  total: number;
+}
+
+export interface ApiSourceInfo {
+  id: string;
+  name: string;
+  base_url: string;
+  spec_url: string | null;
+  spec_format: string;
+  auth_type: string | null;
+  group_name: string;
+  tool_count: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
 }

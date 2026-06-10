@@ -7,8 +7,10 @@ import {
   NSwitch,
   NScrollbar,
   NInput,
+  useMessage,
+  useDialog,
 } from "naive-ui";
-import { IconArrowLeft } from "@tabler/icons-vue";
+import { IconArrowLeft, IconTrash } from "@tabler/icons-vue";
 import { useToolsStore } from "../stores/tools";
 import { useRoute, useRouter } from "vue-router";
 import { computed } from "vue";
@@ -17,14 +19,40 @@ import { api } from "../api/client";
 const store = useToolsStore();
 const route = useRoute();
 const router = useRouter();
+const message = useMessage();
+const dialog = useDialog();
 
 const toolName = computed(() => route.params.name as string);
 const tool = computed(() => store.tools.find((t) => t.name === toolName.value));
+const isProtected = computed(() => tool.value?.groupName === "standard");
 
 const configSchema = ref<Record<string, unknown> | null>(null);
 const configSchemaLoading = ref(false);
 const configEdits = ref<Record<string, string>>({});
 const configSaving = ref(false);
+
+function confirmDelete() {
+  if (!tool.value) return;
+  dialog.error({
+    title: "Delete tool?",
+    content: `Permanently delete "${tool.value.name}"? Restoring it will require reimporting from the source API. This cannot be undone.`,
+    positiveText: "Delete",
+    negativeText: "Cancel",
+    onPositiveClick: doDelete,
+  });
+}
+
+async function doDelete() {
+  if (!toolName.value) return;
+  try {
+    await api.deleteTool(toolName.value);
+    message.success("Tool deleted");
+    await store.refreshTools();
+    router.push({ name: "tools" });
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : "Failed to delete tool");
+  }
+}
 
 async function fetchSpec() {
   if (!toolName.value) return;
@@ -140,7 +168,8 @@ const configEntries = computed(() => {
 </script>
 
 <template>
-  <div class="detail-view" v-if="tool">
+  <NScrollbar class="detail-scroll">
+    <div class="detail-view" v-if="tool">
     <div class="detail-header">
       <NButton quaternary circle @click="router.push({ name: 'tools' })">
         <template #icon>
@@ -163,6 +192,18 @@ const configEntries = computed(() => {
             <NText depth="3" class="control-label">Default</NText>
             <NSwitch :value="tool.isDefault" @update:value="onToggleDefault" />
           </div>
+          <NButton
+            v-if="!isProtected"
+            type="error"
+            ghost
+            size="small"
+            @click="confirmDelete"
+          >
+            <template #icon>
+              <IconTrash :size="16" />
+            </template>
+            Delete
+          </NButton>
         </div>
       </div>
     </div>
@@ -265,9 +306,15 @@ const configEntries = computed(() => {
     <NText>Tool "{{ toolName }}" not found.</NText>
     <NButton @click="router.push({ name: 'tools' })">Back to catalog</NButton>
   </div>
+  </NScrollbar>
 </template>
 
 <style scoped>
+.detail-scroll {
+  flex: 1;
+  overflow: hidden;
+}
+
 .detail-view {
   padding: 32px;
   max-width: 800px;

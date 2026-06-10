@@ -8,12 +8,14 @@ catalog but cannot be executed."""
 
 from moira.tools.base import ToolDefinition
 from moira.tools.builtin.calculator import CalculatorTool
+from moira.tools.builtin.date_time import DateTimeTool
 from moira.tools.builtin.url_content import UrlContentTool
 from moira.tools.builtin.web_search import WebSearchTool
 
 DEFAULT_GROUP = {"name": "standard", "display_name": "Standard"}
 
 STANDARD_TOOLS: list[ToolDefinition] = [
+    DateTimeTool.make_definition(),
     ToolDefinition(
         name="user_question",
         description=(

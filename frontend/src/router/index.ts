@@ -27,9 +27,19 @@ const router = createRouter({
       meta: { sidebar: "tools" },
     },
     {
+      path: "/tools/ingest",
+      name: "tool-ingest",
+      component: () => import("../components/ToolIngestWizard.vue"),
+      meta: { sidebar: "tools" },
+    },
+    {
       path: "/tools/new",
-      name: "tool-new",
-      component: () => import("../components/ToolWizardView.vue"),
+      redirect: { name: "tool-ingest" },
+    },
+    {
+      path: "/tools/groups/:name",
+      name: "tool-group",
+      component: () => import("../components/ToolGroupView.vue"),
       meta: { sidebar: "tools" },
     },
     {

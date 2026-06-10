@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 #   "write_queue"                          -> AsyncWriteQueue
 #   "system_settings_repository"           -> SystemSettingsRepository
 #   "settings_service"                     -> SettingsService
+#   "api_source_repository"                -> ApiSourceRepository
+#   "tool_provisioner"                     -> ToolProvisioner
 # Returns object; callers must cast() to the expected type.
 # Type parameters were rejected due to Pylance/pyright inability to infer
 # from assignment context (TypeVar appears only once in signature).
@@ -250,6 +252,20 @@ async def init_services(
 
     await settings_service.seed_defaults()
     logger.info("Settings service initialized and defaults seeded")
+
+    # --- Tool provisioner (dynamic tool discovery) ---
+    from moira.persistence.sqlite.repos import SqliteApiSourceRepository
+    from moira.services.tool_ingestion.tool_provisioner import ToolProvisioner
+
+    api_source_repo = SqliteApiSourceRepository(db_path)
+    _services["api_source_repository"] = api_source_repo
+
+    provisioner = ToolProvisioner(
+        source_repo=api_source_repo,
+        tool_repo=tool_repo,
+    )
+    _services["tool_provisioner"] = provisioner
+    logger.info("Tool provisioner initialized")
 
     _services["config"] = config
 

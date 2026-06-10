@@ -123,17 +123,23 @@ class ToolEmbeddingRepository:
 
         return await asyncio.to_thread(_search)
 
-    async def delete(self, name: str) -> None:
-        """Remove a tool from the index by name."""
+    async def delete(self, names: str | list[str]) -> None:
+        """Remove one or more tools from the index by name."""
         assert self._db is not None
+        if isinstance(names, str):
+            names = [names]
+        if not names:
+            return
+
         db = self._db
         table_name = self._table_name
 
         def _delete():
             try:
                 table = db.open_table(table_name)
-                table.delete(f'name = "{name}"')
-                logger.debug("Deleted tool '%s' from vector index", name)
+                for name in names:
+                    table.delete(f'name = "{name}"')
+                logger.debug("Deleted %d tools from vector index", len(names))
             except (FileNotFoundError, ValueError, Exception):
                 pass
 

@@ -50,6 +50,10 @@ class ToolCatalog:
     def get_by_names(self, names: list[str]) -> list[ToolDefinition]:
         return [self._tools[n] for n in names if n in self._tools]
 
+    def remove(self, name: str) -> None:
+        """Remove a tool from the catalog by name."""
+        self._tools.pop(name, None)
+
     def get_default_tools(self) -> list[ToolDefinition]:
         """Return tools marked as is_default and enabled. These are always
         available to the research workflow regardless of semantic discovery."""

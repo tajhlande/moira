@@ -411,6 +411,17 @@ async def tool_discovery(state: ResearchState, config: RunnableConfig) -> dict:
     plan = state.get("plan", "")
     discovered = await discovery.discover(plan, top_k=5)
 
+    # Discovery returns stub ToolDefinitions (name + description only)
+    # from the vector index. Hydrate them with full definitions from
+    # the catalog so argument_schema and config are available downstream.
+    from moira.tools.base import ToolDefinition as _TD
+
+    hydrated = []
+    for tool in discovered:
+        full = catalog.get(tool.name)
+        hydrated.append(full if isinstance(full, _TD) else tool)
+    discovered = hydrated
+
     # Merge: start with default tools, add any discovered tools not already
     # in the list. Default tools always participate regardless of relevance.
     default_names = {t.name for t in default_tools}

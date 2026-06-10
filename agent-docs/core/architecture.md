@@ -430,6 +430,22 @@ Avoid:
 
 ---
 
+## REST API Routing Conventions
+
+Routes with path parameters (e.g. `/tools/{name}`) will match any string in that segment, including words that look like sub-resources. This causes ambiguous routing when fixed-path endpoints share the same prefix (e.g. `PATCH /tools/bulk` vs `PATCH /tools/{name}`).
+
+**Rule:** Endpoints that operate on collections, perform bulk operations, or are administrative in nature must use a distinct prefix that cannot collide with identifier-based routes.
+
+| Pattern | Use for | Example |
+|---|---|---|
+| `/tools/{name}` | Single-resource CRUD | `PATCH /tools/my_tool` |
+| `/tool-admin/bulk` | Bulk/multi-resource operations | `PATCH /tool-admin/bulk` |
+| `/tool-admin/groups/{name}` | Group-level operations | `DELETE /tool-admin/groups/weather_api` |
+
+This avoids relying on route registration order, which is fragile across frameworks and refactors.
+
+---
+
 ## Step-Cost Budget
 
 ### Purpose

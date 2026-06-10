@@ -122,9 +122,21 @@ def _config(tmp_dir: str):
 
 @pytest.fixture
 async def app_client(tmp_path):
+    import os
+
+    data_dir = str(tmp_path / "moira_data")
+    os.makedirs(data_dir, exist_ok=True)
+    os.environ["MOIRA_DATA_DIR"] = data_dir
+
     config = _config(str(tmp_path))
     conversation_repo = FakeConversationRepo()
     prefs_repo = FakePrefsRepo()
+
+    from moira.config import resolve_db_path
+    from moira.persistence.sqlite.schema import run_migrations
+
+    run_migrations(resolve_db_path(config))
+
     await init_services(config, conversation_repo=conversation_repo, prefs_repo=prefs_repo)
     from moira.main import create_app
 
@@ -132,6 +144,7 @@ async def app_client(tmp_path):
     client = TestClient(app)
     yield client
     await shutdown_services()
+    os.environ.pop("MOIRA_DATA_DIR", None)
 
 
 def test_health_endpoint(app_client):

@@ -2,33 +2,39 @@
 import { ref, onMounted } from "vue";
 import {
   NText,
-  NDivider,
   NButton,
-  NTooltip,
-  NScrollbar,
+  NSpin,
+  NSwitch,
   NEmpty,
+  NTooltip,
   useDialog,
   useMessage,
 } from "naive-ui";
-import { IconTools, IconTrash, IconLock } from "@tabler/icons-vue";
-import { useToolsStore } from "../stores/tools";
+import { IconTools, IconPlus, IconTrash, IconLock } from "@tabler/icons-vue";
+import { useRouter } from "vue-router";
 import { api, type ApiSourceInfo } from "../api/client";
 
-const store = useToolsStore();
 const message = useMessage();
 const dialog = useDialog();
+const router = useRouter();
 
-const apiSources = ref<ApiSourceInfo[]>([]);
+const loading = ref(true);
+const sources = ref<ApiSourceInfo[]>([]);
 
 onMounted(async () => {
-  store.fetchTools();
   try {
     const resp = await api.listIngestSources();
-    apiSources.value = resp.sources;
+    sources.value = resp.sources;
   } catch {
-    // Sources not available yet
+    message.error("Failed to load API sources");
+  } finally {
+    loading.value = false;
   }
 });
+
+function addApi() {
+  router.push({ name: "settings-tools-ingest" });
+}
 
 function deleteSource(source: ApiSourceInfo) {
   dialog.warning({
@@ -39,11 +45,12 @@ function deleteSource(source: ApiSourceInfo) {
     onPositiveClick: async () => {
       try {
         await api.deleteIngestSource(source.id);
-        apiSources.value = apiSources.value.filter((s) => s.id !== source.id);
+        sources.value = sources.value.filter((s) => s.id !== source.id);
         message.success(`Deleted ${source.name}`);
-        store.refreshTools();
       } catch (e) {
-        message.error(e instanceof Error ? e.message : "Failed to delete");
+        message.error(
+          e instanceof Error ? e.message : "Failed to delete source",
+        );
       }
     },
   });
@@ -59,51 +66,40 @@ function authLabel(authType: string | null): string {
   };
   return labels[authType] || authType;
 }
-
-const enabledCount = () => store.tools.filter((t) => t.enabled).length;
 </script>
 
 <template>
-  <NScrollbar class="catalog-scroll">
-    <div class="catalog-view">
-      <div class="catalog-header">
-        <IconTools :size="28" class="header-icon" />
-        <NText class="header-title">Tools</NText>
-      </div>
+  <div class="settings-tools">
+    <div class="section-header">
+      <IconTools :size="24" class="section-icon" />
+      <NText class="section-title">Tools</NText>
+      <NButton type="primary" size="small" @click="addApi" class="add-btn">
+        <template #icon>
+          <IconPlus :size="16" />
+        </template>
+        Add API
+      </NButton>
+    </div>
 
-      <div class="catalog-summary">
-        <div class="summary-card">
-          <NText class="summary-value">{{ store.toolCount }}</NText>
-          <NText depth="3" class="summary-label">Registered</NText>
-        </div>
-        <div class="summary-card">
-          <NText class="summary-value">{{ enabledCount() }}</NText>
-          <NText depth="3" class="summary-label">Enabled</NText>
-        </div>
-        <div class="summary-card">
-          <NText class="summary-value">{{ apiSources.length }}</NText>
-          <NText depth="3" class="summary-label">API Sources</NText>
-        </div>
-      </div>
+    <NSpin :show="loading">
+      <div v-if="!loading">
+        <NEmpty
+          v-if="sources.length === 0"
+          description="No external APIs registered yet. Add an API to expand your agent's capabilities."
+        />
 
-      <NText depth="3" class="catalog-hint">
-        Select a tool from the sidebar to view details and configure it, or
-        click "Add API" to discover and register new tools from an external API.
-      </NText>
-
-      <!-- API Sources section -->
-      <template v-if="apiSources.length > 0">
-        <NDivider class="section-divider">API Sources</NDivider>
-        <div class="sources-list">
+        <div v-else class="sources-list">
           <div
-            v-for="source in apiSources"
+            v-for="source in sources"
             :key="source.id"
             class="source-card"
           >
             <div class="source-header">
               <div class="source-title-row">
                 <NText strong class="source-name">{{ source.name }}</NText>
-                <NText depth="3" class="source-url">{{ source.base_url }}</NText>
+                <NText depth="3" class="source-url">{{
+                  source.base_url
+                }}</NText>
               </div>
               <div class="source-actions">
                 <NText depth="3" class="source-count"
@@ -128,6 +124,7 @@ const enabledCount = () => store.tools.filter((t) => t.enabled).length;
                 </NTooltip>
               </div>
             </div>
+
             <div class="source-meta">
               <NText v-if="source.auth_type" depth="3" class="source-auth">
                 <IconLock :size="14" class="auth-icon" />
@@ -142,100 +139,55 @@ const enabledCount = () => store.tools.filter((t) => t.enabled).length;
             </div>
           </div>
         </div>
-      </template>
-
-      <NEmpty
-        v-else
-        description="No external APIs registered yet."
-        class="empty-sources"
-      />
-    </div>
-  </NScrollbar>
+      </div>
+    </NSpin>
+  </div>
 </template>
 
 <style scoped>
-.catalog-scroll {
-  flex: 1;
-  min-height: 0;
-}
-
-.catalog-view {
-  padding: 32px;
+.settings-tools {
+  padding: 20px;
   max-width: 700px;
   width: 100%;
 }
 
-.catalog-header {
+.section-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 24px;
-}
-
-.header-icon {
-  color: var(--n-primary-color);
-}
-
-.header-title {
-  font-size: 1.6em;
-  font-weight: 700;
-}
-
-.catalog-summary {
-  display: flex;
-  gap: 16px;
+  gap: 8px;
   margin-bottom: 16px;
 }
 
-.summary-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 16px 24px;
-  border: 1px solid var(--n-border-color, #e0e0e0);
-  border-radius: 8px;
-  min-width: 120px;
-}
-
-.summary-value {
-  font-size: 1.8em;
-  font-weight: 700;
+.section-icon {
   color: var(--n-primary-color);
 }
 
-.summary-label {
-  font-size: 0.85em;
-  margin-top: 4px;
+.section-title {
+  font-size: 1.2em;
+  font-weight: 600;
 }
 
-.catalog-hint {
-  font-size: 0.9em;
-  display: block;
-  margin-bottom: 8px;
+.add-btn {
+  margin-left: auto;
 }
 
-.section-divider {
-  margin: 16px 0 12px;
-}
-
-/* API Sources */
 .sources-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .source-card {
   border: 1px solid var(--n-border-color, #e0e0e0);
   border-radius: 8px;
-  padding: 12px 16px;
+  padding: 16px;
 }
 
 .source-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .source-title-row {
@@ -245,11 +197,11 @@ const enabledCount = () => store.tools.filter((t) => t.enabled).length;
 }
 
 .source-name {
-  font-size: 0.95em;
+  font-size: 1em;
 }
 
 .source-url {
-  font-size: 0.82em;
+  font-size: 0.85em;
   font-family: monospace;
 }
 
@@ -260,14 +212,14 @@ const enabledCount = () => store.tools.filter((t) => t.enabled).length;
 }
 
 .source-count {
-  font-size: 0.82em;
+  font-size: 0.85em;
 }
 
 .source-meta {
   display: flex;
   align-items: center;
   gap: 16px;
-  font-size: 0.82em;
+  font-size: 0.85em;
 }
 
 .source-auth {
@@ -286,13 +238,9 @@ const enabledCount = () => store.tools.filter((t) => t.enabled).length;
 
 .source-format {
   font-family: monospace;
-  font-size: 0.78em;
+  font-size: 0.8em;
   padding: 2px 6px;
   border-radius: 3px;
   background-color: var(--n-action-color, #f5f5f5);
-}
-
-.empty-sources {
-  margin-top: 16px;
 }
 </style>

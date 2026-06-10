@@ -13,7 +13,7 @@ const route = useRoute();
 const store = useChatStore();
 const toolsStore = useToolsStore();
 
-const siderWidth = ref(260);
+const siderWidth = ref(400);
 const SIDER_MIN = 180;
 const SIDER_MAX = 480;
 let dragging = false;

@@ -349,8 +349,8 @@
 }
 
 .tool-tag.discovered {
-  background-color: var(--moira-sidebar-bg, #e8e8e8);
-  color: var(--n-text-color, #333);
+  background-color: var(--n-info-color-suppl, #e8f4fd);
+  color: var(--n-info-color, #2080f0);
 }
 
 .tool-tag.none {

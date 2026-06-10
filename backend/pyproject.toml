@@ -17,6 +17,8 @@ dependencies = [
     "lxml>=6.1.1",
     "cryptography>=44.0",
     "jsonschema>=4.23",
+    "prance>=23",
+    "pandas>=3.0.3",
 ]
 
 [tool.pytest.ini_options]

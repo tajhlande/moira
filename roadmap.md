@@ -69,3 +69,4 @@ verify each sentence independently.
 - render images from web content
 - suggested follow-up prompts
 - Share links
+- export and import of tool groups

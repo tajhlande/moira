@@ -80,6 +80,25 @@ export const useToolsStore = defineStore("tools", () => {
 
   async function fetchTools() {
     if (loaded.value) return;
+    await loadTools();
+  }
+
+  async function refreshTools() {
+    loaded.value = false;
+    await loadTools();
+  }
+
+  function _rebuildGroups() {
+    const map = new Map<string, ToolDefinition[]>();
+    for (const tool of tools.value) {
+      const list = map.get(tool.groupName) || [];
+      list.push(tool);
+      map.set(tool.groupName, list);
+    }
+    groups.value = map;
+  }
+
+  async function loadTools() {
     try {
       const resp = await api.getTools();
       const groupLookup = new Map<string, ToolGroupInfo>();
@@ -87,14 +106,7 @@ export const useToolsStore = defineStore("tools", () => {
         groupLookup.set(g.name, g);
       }
       tools.value = resp.tools.map((t) => apiToolToStore(t, groupLookup));
-
-      const map = new Map<string, ToolDefinition[]>();
-      for (const tool of tools.value) {
-        const list = map.get(tool.groupName) || [];
-        list.push(tool);
-        map.set(tool.groupName, list);
-      }
-      groups.value = map;
+      _rebuildGroups();
       loaded.value = true;
     } catch {
       // Backend not available — store stays empty
@@ -114,7 +126,6 @@ export const useToolsStore = defineStore("tools", () => {
     const tool = tools.value.find((t) => t.name === name);
     if (tool) {
       const groupLookup = new Map<string, ToolGroupInfo>();
-      // Re-derive the group display name from the current groups
       for (const [g, list] of groups.value) {
         if (list.length > 0)
           groupLookup.set(g, {
@@ -122,13 +133,31 @@ export const useToolsStore = defineStore("tools", () => {
             display_name: list[0].groupDisplayName,
           });
       }
-      const patched = apiToolToStore(updated, groupLookup);
-      Object.assign(tool, patched);
+      Object.assign(tool, apiToolToStore(updated, groupLookup));
+      _rebuildGroups();
     }
   }
 
   async function toggleEnabled(name: string, enabled: boolean) {
     await patchTool(name, { enabled });
+  }
+
+  async function bulkToggleEnabled(names: string[], enabled: boolean) {
+    const updates = names.map((name) => ({ name, enabled }));
+    const resp = await api.bulkPatchTools(updates);
+    const groupLookup = new Map<string, ToolGroupInfo>();
+    for (const [g, list] of groups.value) {
+      if (list.length > 0)
+        groupLookup.set(g, {
+          name: g,
+          display_name: list[0].groupDisplayName,
+        });
+    }
+    for (const info of resp.updated) {
+      const tool = tools.value.find((t) => t.name === info.name);
+      if (tool) Object.assign(tool, apiToolToStore(info, groupLookup));
+    }
+    _rebuildGroups();
   }
 
   async function toggleDefault(name: string, isDefault: boolean) {
@@ -148,9 +177,11 @@ export const useToolsStore = defineStore("tools", () => {
     groupCount,
     defaultToolNames,
     fetchTools,
+    refreshTools,
     selectTool,
     clearSelection,
     toggleEnabled,
+    bulkToggleEnabled,
     toggleDefault,
     patchTool,
   };
