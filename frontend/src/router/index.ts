@@ -67,6 +67,11 @@ const router = createRouter({
           name: "settings-analytics",
           component: () => import("../components/SettingsAnalytics.vue"),
         },
+        {
+          path: "debug",
+          name: "settings-debug",
+          component: () => import("../components/SettingsDebug.vue"),
+        },
       ],
     },
   ],

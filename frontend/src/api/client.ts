@@ -245,6 +245,15 @@ export const api = {
   getToolSpec: (name: string) =>
     request<{ config_schema: Record<string, unknown> }>(`/tools/${name}/spec`),
 
+  embeddingSearch: (q: string, topK?: number) => {
+    const params = new URLSearchParams({ q });
+    if (topK) params.set("top_k", String(topK));
+    return request<{
+      query: string;
+      results: { name: string; description: string; enabled: boolean; distance: number }[];
+    }>(`/tools/embeddings/search?${params}`);
+  },
+
   listCredentials: (owner?: string) => {
     const params = owner ? `?owner=${encodeURIComponent(owner)}` : "";
     return request<{ credentials: CredentialInfo[] }>(`/credentials${params}`);
