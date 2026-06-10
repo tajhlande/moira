@@ -6,6 +6,7 @@ import {
   IconCircleCheck,
   IconMarkdown,
   IconFileTypography,
+  IconAlertTriangle,
 } from "@tabler/icons-vue";
 import type { ResearchReport } from "../api/client";
 import MarkdownContent from "./MarkdownContent.vue";
@@ -13,6 +14,17 @@ import CitationMarkdown from "./CitationMarkdown.vue";
 import "./workflow-artifacts.css";
 
 const props = defineProps<{ report: ResearchReport }>();
+
+const warningMessage = computed(() => {
+  const path = props.report.generation_path;
+  if (path === "budget_exhausted") {
+    return "Verification recommended to continue researching but the budget was insufficient. The answer below may be incomplete.";
+  }
+  if (path === "error") {
+    return "An error occurred during research. The answer below may be incomplete.";
+  }
+  return null;
+});
 const copiedAnswer = ref(false);
 const copiedFull = ref(false);
 const showRaw = ref(false);
@@ -103,6 +115,10 @@ function handleTooltipLeave() {
 
 <template>
   <div class="report-panel">
+    <div v-if="warningMessage" class="report-warning">
+      <IconAlertTriangle :size="16" class="warning-icon" />
+      <span>{{ warningMessage }}</span>
+    </div>
     <div
       v-if="!showRaw"
       class="report-answer"

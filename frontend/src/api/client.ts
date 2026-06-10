@@ -56,6 +56,7 @@ export interface ResearchReport {
   critiques: string[];
   unverified_claims: string[];
   budget_consumed: number;
+  generation_path?: "verified" | "budget_exhausted" | "error";
 }
 
 export interface RunAttemptSummary {

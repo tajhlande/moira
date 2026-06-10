@@ -422,6 +422,24 @@
   max-width: 80%;
 }
 
+.report-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border-radius: 6px;
+  font-size: 0.9em;
+  background-color: var(--n-warning-color-suppl, #fff3e0);
+  color: var(--n-warning-color, #e6a23c);
+  border-left: 3px solid var(--n-warning-color, #e6a23c);
+  font-weight: 500;
+}
+
+.report-warning .warning-icon {
+  flex-shrink: 0;
+}
+
 .report-answer {
   line-height: 1.5;
 }
