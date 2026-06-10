@@ -179,6 +179,154 @@ async def send_message(
     return {"run_id": run_id, "user_message_id": user_msg.id}
 
 
+@streaming_router.post("/conversations/{conversation_id}/messages/{user_message_id}/rerun")
+async def rerun_message(
+    conversation_id: str,
+    user_message_id: int,
+    body: dict[str, Any] | None = None,
+):
+    """Re-run from an existing user message. Truncates the conversation from
+    this message onward (deleting the old run and subsequent messages, but
+    keeping the user message itself), then starts a fresh run."""
+    conversations = _conversations()
+    conversation = await conversations.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Look up the user message to get its content
+    all_messages = await conversations.get_messages(conversation_id)
+    user_msg = next(
+        (m for m in all_messages if m.id == user_message_id and m.role == "user"),
+        None,
+    )
+    if user_msg is None:
+        raise HTTPException(status_code=404, detail="User message not found")
+
+    # Prevent starting a second run while one is in-flight
+    run_mgr = _run_manager()
+    if run_mgr.get_active_run(conversation_id) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A run is already in progress for this conversation",
+        )
+
+    # Truncate: delete runs >= this message and messages > this message
+    await conversations.truncate_from_message(conversation_id, user_message_id)
+
+    user_content = user_msg.content
+    config = _config()
+    budget_limit = config.budget.default_limit
+
+    try:
+        from moira.services.settings.settings_service import SettingsService
+
+        settings_svc = cast(SettingsService, service_provider("settings_service"))
+        resolved_budget = await settings_svc.get_typed("budget.default_limit")
+        if resolved_budget is not None:
+            budget_limit = int(resolved_budget)
+    except Exception:
+        logger.warning(
+            "Settings service unavailable, falling back to config for budget_limit",
+            exc_info=True,
+        )
+
+    settings = (body or {}).get("settings") or {}
+    raw_budget = settings.get("budget")
+    if isinstance(raw_budget, (int, float)):
+        budget_limit = max(35, min(150, int(raw_budget)))
+
+    cost_weights: dict[str, int] = {}
+    try:
+        from moira.services.settings.settings_service import SettingsService
+
+        settings_svc = cast(SettingsService, service_provider("settings_service"))
+        cost_weights = await settings_svc.get_typed_prefix(
+            "budget.cost.", scope=SCOPE_SYSTEM, scope_id=SYSTEM_SCOPE_ID
+        )  # pyright: ignore[reportAssignmentType]
+    except Exception:
+        logger.warning(
+            "Settings service unavailable, falling back to config for cost_weights",
+            exc_info=True,
+        )
+        cw = config.budget.cost_weights
+        cost_weights = {
+            "planning": cw.planning,
+            "tool_discovery": cw.tool_discovery,
+            "tool_selection": cw.tool_selection,
+            "research_execution": cw.research_execution,
+            "compression": cw.compression,
+            "draft_synthesis": cw.draft_synthesis,
+            "verification": cw.verification,
+            "report_generation": cw.report_generation,
+        }
+
+    # Re-read messages after truncation to get prior Q&A turns
+    remaining_messages = await conversations.get_messages(conversation_id)
+    prior_turns: list[dict[str, str]] = []
+    pending_question: str | None = None
+    for msg in remaining_messages:
+        if msg.role == "user":
+            pending_question = msg.content
+        elif msg.role == "assistant_report" and pending_question is not None:
+            try:
+                report = json.loads(msg.content)
+                prior_turns.append({
+                    "question": pending_question,
+                    "answer": report.get("answer", ""),
+                })
+            except (json.JSONDecodeError, TypeError):
+                pass
+            pending_question = None
+
+    prior_report = prior_turns[-1] if prior_turns else None
+    prior_question = prior_turns[-1]["question"] if prior_turns else None
+
+    initial_state = {
+        "question": user_content,
+        "plan": "",
+        "active_tools": [],
+        "findings": [],
+        "compressed_findings": [],
+        "draft": "",
+        "verification": "",
+        "report": None,
+        "budget_remaining": float(budget_limit),
+        "budget_limit": float(budget_limit),
+        "cost_weights": cost_weights,
+        "verification_history": [],
+        "unverified_claims": [],
+        "error": "",
+        "draft_retry_count": 0,
+    }
+
+    thread_id = str(uuid.uuid4())
+    graph_config = {
+        "configurable": {
+            "thread_id": thread_id,
+            "moira_config": config,
+            "prior_report": prior_report,
+            "prior_question": prior_question,
+            "prior_turns": prior_turns,
+        },
+    }
+
+    from langgraph.graph.state import CompiledStateGraph
+
+    graph = cast(CompiledStateGraph, service_provider("research_graph"))
+
+    run_id = await run_mgr.start_run(
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        graph=graph,
+        initial_state=initial_state,
+        graph_config=graph_config,
+        config=config,
+        conversation_repo=conversations,
+    )
+
+    return {"run_id": run_id, "user_message_id": user_message_id}
+
+
 @streaming_router.get("/conversations/{conversation_id}/stream")
 async def stream_events(conversation_id: str):
     """SSE endpoint that subscribes to the active run for a conversation.

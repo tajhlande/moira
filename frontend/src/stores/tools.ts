@@ -27,6 +27,7 @@ export interface ToolDefinition {
   argumentSchema: Record<string, unknown>;
   config: Record<string, unknown>;
   parameters: ToolParameter[];
+  originalDescription: string;
 }
 
 function extractParameters(schema: Record<string, unknown>): ToolParameter[] {
@@ -61,6 +62,7 @@ function apiToolToStore(
     argumentSchema: info.argument_schema,
     config: info.config,
     parameters: extractParameters(info.argument_schema),
+    originalDescription: info.original_description || "",
   };
 }
 

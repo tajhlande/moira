@@ -818,6 +818,67 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
+  async function rerunFromMessage(userMessageId: number) {
+    if (!currentConversationId.value) return;
+    const convId = currentConversationId.value;
+
+    loading.value = true;
+    error.value = null;
+    cancelStream();
+
+    try {
+      await loadDefaultBudget();
+      const { run_id, user_message_id } = await api.rerunMessage(
+        convId,
+        userMessageId,
+        runSettings.value,
+      );
+
+      // Truncate local messages: keep up to and including the rerun message
+      const msgIndex = messages.value.findIndex(
+        (m) => m.id === userMessageId,
+      );
+      if (msgIndex >= 0) {
+        messages.value = messages.value.slice(0, msgIndex + 1);
+      }
+
+      // Remove all runs at or after this message
+      const nextRuns = new Map<number, WorkflowRunInfo>();
+      for (const [id, run] of runs.value) {
+        if (id < userMessageId) {
+          nextRuns.set(id, run);
+        }
+      }
+      runs.value = nextRuns;
+      clearRunViewState();
+
+      upsertRunSnapshot(
+        {
+          id: run_id,
+          conversation_id: convId,
+          user_message_id,
+          execution_steps: [],
+          tool_executions: [],
+          report: null,
+          budget_limit: runSettings.value.budget ?? 50,
+          budget_consumed: 0,
+          error: "",
+          status: "running",
+          state_version: 0,
+          started_at: new Date().toISOString(),
+          completed_at: "",
+          updated_at: new Date().toISOString(),
+        },
+        user_message_id,
+      );
+
+      await connectStream(convId, user_message_id);
+    } catch (e: any) {
+      error.value = e.message;
+      loading.value = false;
+    }
+  }
+
   function getRunForMessage(
     messageId: number | undefined,
   ): WorkflowRunInfo | null {
@@ -847,6 +908,7 @@ export const useChatStore = defineStore("chat", () => {
     generateTitle,
     deleteConversation,
     getRunForMessage,
+    rerunFromMessage,
     loadStepDetail,
     getStepDetail,
     isStepDetailLoading,

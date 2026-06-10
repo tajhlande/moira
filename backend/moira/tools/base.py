@@ -23,6 +23,7 @@ class ToolDefinition:
     built_in: bool = False
     implementation: str = ""
     group_name: str = ""
+    original_description: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -37,6 +38,7 @@ class ToolDefinition:
             "built_in": self.built_in,
             "implementation": self.implementation,
             "group_name": self.group_name,
+            "original_description": self.original_description,
         }
 
 

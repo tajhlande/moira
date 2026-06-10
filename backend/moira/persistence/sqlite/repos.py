@@ -245,6 +245,50 @@ class SqliteConversationRepository(ConversationRepository):
         finally:
             conn.close()
 
+    async def truncate_from_message(
+        self, conversation_id: str, user_message_id: int
+    ) -> bool:
+        """Delete workflow run for user_message_id and all messages/runs with
+        id >= user_message_id. The user message itself is kept so it can be
+        re-submitted as a rerun."""
+        logger.debug(
+            "Truncating conversation %s from message %d",
+            conversation_id,
+            user_message_id,
+        )
+        conn = self._connect()
+        try:
+            # Find all runs associated with messages >= user_message_id
+            run_ids = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT id FROM workflow_runs "
+                    "WHERE conversation_id = ? AND user_message_id >= ?",
+                    (conversation_id, user_message_id),
+                ).fetchall()
+            ]
+            for run_id in run_ids:
+                conn.execute(
+                    "DELETE FROM workflow_steps WHERE workflow_run_id = ?",
+                    (run_id,),
+                )
+            conn.execute(
+                "DELETE FROM workflow_runs "
+                "WHERE conversation_id = ? AND user_message_id >= ?",
+                (conversation_id, user_message_id),
+            )
+            # Delete messages AFTER the user message (keep the user message itself)
+            cursor = conn.execute(
+                "DELETE FROM messages "
+                "WHERE conversation_id = ? AND id > ?",
+                (conversation_id, user_message_id),
+            )
+            deleted = cursor.rowcount > 0 or len(run_ids) > 0
+            conn.commit()
+            return deleted
+        finally:
+            conn.close()
+
     async def cleanup_stale_runs(self) -> int:
         """Mark any runs and steps with status='running' as 'stopped'.
 
@@ -359,6 +403,11 @@ class SqliteToolRepository(ToolRepository):
             built_in=bool(row["built_in"]),
             implementation=row["implementation"],
             group_name=row["group_name"],
+            original_description=(
+                row["original_description"]
+                if "original_description" in row.keys()
+                else ""
+            ),
         )
 
     async def get_all_tools(self) -> list[ToolDefinition]:
@@ -384,8 +433,8 @@ class SqliteToolRepository(ToolRepository):
                 """INSERT OR REPLACE INTO tools
                    (name, description, argument_schema, config, tags,
                     reliability, is_default, enabled, built_in,
-                    implementation, group_name)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    implementation, group_name, original_description)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     tool.name,
                     tool.description,
@@ -398,6 +447,7 @@ class SqliteToolRepository(ToolRepository):
                     int(tool.built_in),
                     tool.implementation,
                     tool.group_name,
+                    tool.original_description,
                 ),
             )
             conn.commit()

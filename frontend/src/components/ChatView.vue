@@ -13,9 +13,11 @@ import {
   IconCopy,
   IconAdjustments,
   IconHandStop,
+  IconRefresh,
 } from "@tabler/icons-vue";
 import { useRoute, useRouter } from "vue-router";
 import { useChatStore } from "../stores/chat";
+import { useDialog } from "naive-ui";
 import RunArtifacts from "./RunArtifacts.vue";
 import MarkdownContent from "./MarkdownContent.vue";
 import "./workflow-artifacts.css";
@@ -23,6 +25,7 @@ import "./workflow-artifacts.css";
 const store = useChatStore();
 const route = useRoute();
 const router = useRouter();
+const dialog = useDialog();
 const inputText = ref("");
 const showSettings = ref(false);
 const messagesScrollbar = ref<InstanceType<typeof NScrollbar> | null>(null);
@@ -98,6 +101,22 @@ async function copyMessage(content: string, index: number) {
     copiedMsgIndex.value = null;
   }, 1500);
 }
+
+function confirmRerun(msgId: number) {
+  const hasSubsequent =
+    store.messages.findIndex((m) => m.id === msgId) <
+    store.messages.length - 1;
+
+  dialog.warning({
+    title: "Rerun from this message?",
+    content: hasSubsequent
+      ? "This will delete all messages and results after this point and start a new research run. This cannot be undone."
+      : "This will discard the previous run and start a new research run from this message.",
+    positiveText: "Rerun",
+    negativeText: "Cancel",
+    onPositiveClick: () => { store.rerunFromMessage(msgId); },
+  });
+}
 </script>
 
 <template>
@@ -115,6 +134,19 @@ async function copyMessage(content: string, index: number) {
           </div>
           <MarkdownContent class="message-content" :content="msg.content" />
           <div class="message-actions">
+            <NButton
+              v-if="msg.role === 'user' && runForMessage(msg.id)"
+              quaternary
+              circle
+              size="tiny"
+              class="icon-action-btn"
+              title="Rerun from this message"
+              @click="confirmRerun(msg.id)"
+            >
+              <template #icon>
+                <IconRefresh :size="14" />
+              </template>
+            </NButton>
             <NButton
               quaternary
               circle

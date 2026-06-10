@@ -10,7 +10,7 @@ import {
   useMessage,
   useDialog,
 } from "naive-ui";
-import { IconArrowLeft, IconTrash } from "@tabler/icons-vue";
+import { IconArrowLeft, IconTrash, IconPencil, IconArrowBackUp } from "@tabler/icons-vue";
 import { useToolsStore } from "../stores/tools";
 import { useRoute, useRouter } from "vue-router";
 import { computed } from "vue";
@@ -25,6 +25,51 @@ const dialog = useDialog();
 const toolName = computed(() => route.params.name as string);
 const tool = computed(() => store.tools.find((t) => t.name === toolName.value));
 const isProtected = computed(() => tool.value?.groupName === "standard");
+
+const editingDesc = ref(false);
+const descEdit = ref("");
+const descSaving = ref(false);
+
+const hasOriginalDesc = computed(() => {
+  if (!tool.value) return false;
+  return (
+    tool.value.originalDescription !== "" &&
+    tool.value.description !== tool.value.originalDescription
+  );
+});
+
+function startEditDesc() {
+  if (!tool.value) return;
+  descEdit.value = tool.value.description;
+  editingDesc.value = true;
+}
+
+function cancelEditDesc() {
+  editingDesc.value = false;
+  descEdit.value = "";
+}
+
+async function saveDesc() {
+  if (!toolName.value || !descEdit.value.trim()) return;
+  descSaving.value = true;
+  try {
+    await store.patchTool(toolName.value, { description: descEdit.value.trim() });
+    editingDesc.value = false;
+    descEdit.value = "";
+  } finally {
+    descSaving.value = false;
+  }
+}
+
+async function resetDesc() {
+  if (!toolName.value) return;
+  descSaving.value = true;
+  try {
+    await store.patchTool(toolName.value, { description: null });
+  } finally {
+    descSaving.value = false;
+  }
+}
 
 const configSchema = ref<Record<string, unknown> | null>(null);
 const configSchemaLoading = ref(false);
@@ -208,7 +253,53 @@ const configEntries = computed(() => {
       </div>
     </div>
 
-    <NText class="detail-desc">{{ tool.description }}</NText>
+    <div v-if="!editingDesc" class="desc-section">
+      <div class="desc-display">
+        <NText class="detail-desc">{{ tool.description }}</NText>
+        <div class="desc-actions">
+          <NButton
+            quaternary
+            circle
+            size="tiny"
+            class="desc-edit-btn"
+            @click="startEditDesc"
+            title="Edit description"
+          >
+            <template #icon>
+              <IconPencil :size="18" />
+            </template>
+          </NButton>
+          <NButton
+            v-if="hasOriginalDesc"
+            quaternary
+            circle
+            size="tiny"
+            class="desc-edit-btn"
+            @click="resetDesc"
+            title="Reset to original"
+            :loading="descSaving"
+          >
+            <template #icon>
+              <IconArrowBackUp :size="18" />
+            </template>
+          </NButton>
+        </div>
+      </div>
+    </div>
+    <div v-else class="desc-edit-section">
+      <NInput
+        v-model:value="descEdit"
+        type="textarea"
+        :autosize="{ minRows: 3, maxRows: 10 }"
+        placeholder="Tool description"
+      />
+      <div class="desc-edit-actions">
+        <NButton size="small" type="primary" :loading="descSaving" @click="saveDesc">
+          Save
+        </NButton>
+        <NButton size="small" @click="cancelEditDesc">Cancel</NButton>
+      </div>
+    </div>
 
     <NDivider />
 
@@ -374,6 +465,44 @@ const configEntries = computed(() => {
   font-size: 1.05em;
   line-height: 1.5;
   display: block;
+}
+
+.desc-section {
+  margin-top: 8px;
+}
+
+.desc-display {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.desc-display .detail-desc {
+  flex: 1;
+}
+
+.desc-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.desc-edit-btn {
+  color: var(--n-text-color-3, #999);
+}
+
+.desc-edit-btn:hover {
+  color: var(--n-primary-color, #18a058);
+}
+
+.desc-edit-section {
+  margin-top: 8px;
+}
+
+.desc-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .param-section {

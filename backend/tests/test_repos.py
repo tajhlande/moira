@@ -127,3 +127,110 @@ async def test_update_model_preferences(prefs_repo):
     assert prefs.intelligence_model == "model-c"
     assert prefs.task_endpoint == "cloud"
     assert prefs.task_model == "model-d"
+
+
+@pytest.mark.asyncio
+async def test_truncate_from_message(conversation_repo):
+    """truncate_from_message keeps the user message, deletes everything after."""
+    from moira.persistence.interfaces import WorkflowRun
+
+    conv = await conversation_repo.create_conversation(DEFAULT_USER_ID, "Chat")
+    u1 = await conversation_repo.insert_message(conv.id, "user", "Q1")
+    a1 = await conversation_repo.insert_message(conv.id, "assistant_report", "A1")
+    u2 = await conversation_repo.insert_message(conv.id, "user", "Q2")
+    await conversation_repo.insert_message(conv.id, "assistant_report", "A2")
+
+    await conversation_repo.save_workflow_run(
+        WorkflowRun(
+            id="run-1",
+            conversation_id=conv.id,
+            user_message_id=u1.id,
+            thread_id="t1",
+            tool_executions="[]",
+            report=None,
+            budget_limit=50,
+            budget_consumed=10,
+            error="",
+            status="completed",
+            state_version=1,
+            started_at="2025-01-01",
+            completed_at="2025-01-01",
+            updated_at="2025-01-01",
+            total_elapsed_ms=100,
+        )
+    )
+    await conversation_repo.save_workflow_run(
+        WorkflowRun(
+            id="run-2",
+            conversation_id=conv.id,
+            user_message_id=u2.id,
+            thread_id="t2",
+            tool_executions="[]",
+            report=None,
+            budget_limit=50,
+            budget_consumed=20,
+            error="",
+            status="completed",
+            state_version=1,
+            started_at="2025-01-01",
+            completed_at="2025-01-01",
+            updated_at="2025-01-01",
+            total_elapsed_ms=200,
+        )
+    )
+
+    deleted = await conversation_repo.truncate_from_message(conv.id, u2.id)
+    assert deleted is True
+
+    messages = await conversation_repo.get_messages(conv.id)
+    assert len(messages) == 3
+    assert messages[0].id == u1.id
+    assert messages[1].id == a1.id
+    assert messages[2].id == u2.id
+    assert u2.content == "Q2"
+
+    runs = await conversation_repo.get_workflow_runs(conv.id)
+    assert len(runs) == 1
+    assert runs[0].id == "run-1"
+
+
+@pytest.mark.asyncio
+async def test_truncate_from_first_message(conversation_repo):
+    """Truncating from the first message removes both runs."""
+    from moira.persistence.interfaces import WorkflowRun
+
+    conv = await conversation_repo.create_conversation(DEFAULT_USER_ID, "Chat")
+    u1 = await conversation_repo.insert_message(conv.id, "user", "Q1")
+    await conversation_repo.insert_message(conv.id, "assistant_report", "A1")
+    await conversation_repo.insert_message(conv.id, "user", "Q2")
+
+    await conversation_repo.save_workflow_run(
+        WorkflowRun(
+            id="run-1",
+            conversation_id=conv.id,
+            user_message_id=u1.id,
+            thread_id="t1",
+            tool_executions="[]",
+            report=None,
+            budget_limit=50,
+            budget_consumed=10,
+            error="",
+            status="completed",
+            state_version=1,
+            started_at="2025-01-01",
+            completed_at="2025-01-01",
+            updated_at="2025-01-01",
+            total_elapsed_ms=100,
+        )
+    )
+
+    deleted = await conversation_repo.truncate_from_message(conv.id, u1.id)
+    assert deleted is True
+
+    messages = await conversation_repo.get_messages(conv.id)
+    assert len(messages) == 1
+    assert messages[0].id == u1.id
+    assert messages[0].content == "Q1"
+
+    runs = await conversation_repo.get_workflow_runs(conv.id)
+    assert len(runs) == 0

@@ -68,6 +68,11 @@ class FakeConversationRepo(ConversationRepository):
     async def delete_conversation(self, conversation_id: str) -> bool:
         return False
 
+    async def truncate_from_message(
+        self, conversation_id: str, user_message_id: int
+    ) -> bool:
+        return False
+
     async def cleanup_stale_runs(self) -> int:
         return 0
 
@@ -597,3 +602,69 @@ class TestDeleteTool:
         remaining = {t["name"] for t in tools_resp.json()["tools"]}
         assert names[0] not in remaining
         assert names[1] in remaining
+
+
+class TestToolDescriptionEdit:
+    """Tests for editing and resetting tool descriptions."""
+
+    def test_ingest_populates_original_description(self, app_client):
+        """Ingest sets both description and original_description."""
+        preview, _ = _ingest_tools(app_client)
+        tool_name = preview["operations"][0]["name"]
+
+        resp = app_client.get(f"/api/tools/{tool_name}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["original_description"] != ""
+        # original_description is the base spec text (no usage hint)
+        assert data["description"].startswith(data["original_description"])
+
+    def test_patch_description_updates_tool(self, app_client):
+        """PATCH /tools/{name} with description updates it."""
+        preview, _ = _ingest_tools(app_client)
+        tool_name = preview["operations"][0]["name"]
+
+        resp = app_client.patch(f"/api/tools/{tool_name}", json={
+            "description": "Custom description",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["description"] == "Custom description"
+
+        # Persisted
+        resp2 = app_client.get(f"/api/tools/{tool_name}")
+        assert resp2.json()["description"] == "Custom description"
+
+    def test_patch_description_null_resets_to_original(self, app_client):
+        """PATCH /tools/{name} with description=null resets to original."""
+        preview, _ = _ingest_tools(app_client)
+        tool_name = preview["operations"][0]["name"]
+
+        tool_resp = app_client.get(f"/api/tools/{tool_name}")
+        original = tool_resp.json()["original_description"]
+
+        # Edit first
+        app_client.patch(f"/api/tools/{tool_name}", json={
+            "description": "Edited",
+        })
+
+        # Reset
+        resp = app_client.patch(f"/api/tools/{tool_name}", json={
+            "description": None,
+        })
+        assert resp.status_code == 200
+        assert resp.json()["description"] == original
+
+    def test_original_description_unchanged_after_edit(self, app_client):
+        """Editing description does not change original_description."""
+        preview, _ = _ingest_tools(app_client)
+        tool_name = preview["operations"][0]["name"]
+
+        tool_resp = app_client.get(f"/api/tools/{tool_name}")
+        original = tool_resp.json()["original_description"]
+
+        app_client.patch(f"/api/tools/{tool_name}", json={
+            "description": "Something new",
+        })
+
+        tool_resp2 = app_client.get(f"/api/tools/{tool_name}")
+        assert tool_resp2.json()["original_description"] == original

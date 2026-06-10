@@ -484,6 +484,12 @@ async def update_tool(name: str, body: dict[str, Any]):
         }
     )
     updates = {k: v for k, v in body.items() if k in allowed}
+
+    # Special handling: description=null resets to original_description
+    if "description" in body and body["description"] is None:
+        if tool.original_description:
+            updates["description"] = tool.original_description
+
     if not updates:
         raise HTTPException(status_code=400, detail="No updatable fields provided")
 
@@ -492,6 +498,10 @@ async def update_tool(name: str, body: dict[str, Any]):
     await repo.save_tool(tool)
 
     if "enabled" in updates:
+        await _sync_tool_to_index(tool)
+
+    # Re-embed when description changes so LanceDB stays in sync
+    if "description" in updates:
         await _sync_tool_to_index(tool)
 
     return tool.to_dict()

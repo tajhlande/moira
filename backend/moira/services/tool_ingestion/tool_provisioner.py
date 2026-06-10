@@ -571,6 +571,7 @@ class ToolProvisioner:
             built_in=False,
             implementation=REST_TOOL_IMPL,
             group_name=group_slug,
+            original_description=base_desc,
         )
 
     async def _register_runtime(self, tools: list[ToolDefinition]) -> None:

@@ -196,6 +196,12 @@ export const api = {
       },
     ),
 
+  rerunMessage: (conversationId: string, userMessageId: number, settings?: RunSettings) =>
+    request<{ run_id: string; user_message_id: number }>(
+      `/conversations/${conversationId}/messages/${userMessageId}/rerun`,
+      { method: "POST", body: JSON.stringify({ settings }) },
+    ),
+
   stopRun: (conversationId: string) =>
     request<{ status: string }>(
       `/conversations/${conversationId}/runs/stop`,
@@ -393,6 +399,7 @@ export interface ToolInfo {
   built_in: boolean;
   implementation: string;
   group_name: string;
+  original_description: string;
 }
 
 export interface SettingDefinition {

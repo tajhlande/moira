@@ -137,6 +137,15 @@ class ConversationRepository(ABC):
     async def delete_conversation(self, conversation_id: str) -> bool: ...
 
     @abstractmethod
+    async def truncate_from_message(
+        self, conversation_id: str, user_message_id: int
+    ) -> bool:
+        """Delete the workflow run for the given user message and all messages
+        (and their runs) with id >= user_message_id. Keeps the user message
+        itself so it can be re-submitted. Returns True if anything was deleted."""
+        ...
+
+    @abstractmethod
     async def cleanup_stale_runs(self) -> int: ...
 
 
