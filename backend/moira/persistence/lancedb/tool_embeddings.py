@@ -123,6 +123,40 @@ class ToolEmbeddingRepository:
 
         return await asyncio.to_thread(_search)
 
+    async def search_raw(
+        self,
+        query_embedding: list[float],
+        top_k: int = 20,
+    ) -> list[dict]:
+        """Search for tools by embedding similarity. Returns raw result dicts
+        including name, description, enabled flag, and _distance score.
+        Used for debug/inspection purposes."""
+        assert self._db is not None
+        db = self._db
+        table_name = self._table_name
+
+        def _search():
+            try:
+                table = db.open_table(table_name)
+            except (FileNotFoundError, ValueError, Exception) as e:
+                logger.info("tool_embeddings table not available (%s)", e)
+                return []
+
+            query_array = np.array(query_embedding, dtype=np.float32)
+            results = table.search(query_array).limit(top_k).to_list()
+
+            out = []
+            for row in results:
+                out.append({
+                    "name": row["name"],
+                    "description": row["description"],
+                    "enabled": bool(row.get("enabled", True)),
+                    "distance": float(row.get("_distance", 0)),
+                })
+            return out
+
+        return await asyncio.to_thread(_search)
+
     async def delete(self, names: str | list[str]) -> None:
         """Remove one or more tools from the index by name."""
         assert self._db is not None
