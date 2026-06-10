@@ -104,4 +104,16 @@ SETTING_DEFINITIONS: dict[str, SettingDefinition] = {
         group="budget",
         constraints=BUDGET_STEP_CONSTRAINTS,
     ),
+    "tool_discovery.query_rewriting": SettingDefinition(
+        key="tool_discovery.query_rewriting",
+        type="boolean",
+        default="true",
+        label="Query Rewriting",
+        description=(
+            "Use the task model to rewrite the research plan into a "
+            "tool-oriented search query before embedding. Improves "
+            "semantic matching against tool descriptions."
+        ),
+        group="tool_discovery",
+    ),
 }

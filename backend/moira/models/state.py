@@ -39,6 +39,7 @@ class ResearchState(TypedDict):
     question: str
     plan: str
     active_tools: list[ToolDefinition]
+    default_tool_names: NotRequired[list[str]]
     findings: list[Finding]
     compressed_findings: list[Finding]
     draft: str

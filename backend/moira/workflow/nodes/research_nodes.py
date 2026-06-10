@@ -52,19 +52,27 @@ _PARSE_CORRECTION_PROMPT = (
 )
 
 
-def _format_tool_descriptions(tools: list) -> str:
+def _format_tool_descriptions(
+    tools: list,
+    discovered: list | None = None,
+    defaults: list | None = None,
+) -> str:
     """Format tool definitions with their argument schemas for LLM consumption.
 
     Produces a structured description including parameter names, types,
     required/optional status, defaults, and descriptions so the model knows
-    exactly what arguments to pass."""
+    exactly what arguments to pass.
+
+    When ``discovered`` and ``defaults`` are both provided, the output is
+    split into two labelled groups so the model can see which tools were
+    selected for the task and which are always available. Otherwise the
+    tools are rendered as a single flat list (back-compat).
+    """
     from moira.tools.base import ToolDefinition
 
-    parts: list[str] = []
-    for tool in tools:
+    def _render(tool) -> str:
         if not isinstance(tool, ToolDefinition):
-            parts.append(f"- {tool.name}: {getattr(tool, 'description', '')}")
-            continue
+            return f"- {tool.name}: {getattr(tool, 'description', '')}"
         entry = f"- {tool.name}: {tool.description}"
         schema = tool.argument_schema
         if schema and "properties" in schema:
@@ -83,8 +91,23 @@ def _format_tool_descriptions(tools: list) -> str:
                 param_lines.append("".join(segments))
             if param_lines:
                 entry += "\n  Parameters:\n" + "\n".join(param_lines)
-        parts.append(entry)
-    return "\n".join(parts)
+        return entry
+
+    if discovered is None and defaults is None:
+        return "\n".join(_render(t) for t in tools)
+
+    sections: list[str] = []
+    if discovered:
+        sections.append(
+            "[Tools you selected for this task at an earlier step]\n"
+            + "\n".join(_render(t) for t in discovered)
+        )
+    if defaults:
+        sections.append(
+            "[Standard tools that are always available to you]\n"
+            + "\n".join(_render(t) for t in defaults)
+        )
+    return "\n\n".join(sections)
 
 
 def _log_prompts(node: str, messages: list[dict[str, str]]) -> None:
@@ -386,8 +409,9 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
 
 async def tool_discovery(state: ResearchState, config: RunnableConfig) -> dict:
     """Tool Discovery node: embeds the plan and searches LanceDB for
-    relevant tools. Default tools are always included. No model call.
-    Cost weight: 1."""
+    relevant tools. Optionally uses the task model to rewrite the plan
+    into a tool-oriented search query for better semantic matching.
+    Default tools are always included. Cost weight: 1."""
     _check_stop("tool_discovery", config)
     cost_weights = state.get("cost_weights", {})
     budget = state.get("budget_remaining", 0.0)
@@ -409,7 +433,34 @@ async def tool_discovery(state: ResearchState, config: RunnableConfig) -> dict:
 
     discovery = _get_discovery(config)
     plan = state.get("plan", "")
-    discovered = await discovery.discover(plan, top_k=5)
+
+    # Resolve query rewriting setting. Falls back to true (enabled).
+    rewrite_enabled = True
+    try:
+        from moira.services.settings.settings_service import SettingsService
+
+        settings_svc = cast(SettingsService | None, service_provider("settings_service"))
+        if settings_svc is not None:
+            val = await settings_svc.get_typed("tool_discovery.query_rewriting")
+            if val is not None:
+                rewrite_enabled = bool(val)
+    except Exception:
+        logger.debug("Could not resolve query_rewriting setting, defaulting to true")
+
+    search_query = plan
+    rewrite_messages: list[dict[str, str]] = []
+
+    if rewrite_enabled and plan:
+        search_query, rewrite_messages = await _rewrite_discovery_query(plan, config)
+        if not search_query:
+            search_query = plan
+
+    logger.info(
+        "Tool discovery query: %s",
+        search_query[:100] if search_query else "(empty)",
+    )
+
+    discovered = await discovery.discover(search_query, top_k=5)
 
     # Discovery returns stub ToolDefinitions (name + description only)
     # from the vector index. Hydrate them with full definitions from
@@ -422,25 +473,24 @@ async def tool_discovery(state: ResearchState, config: RunnableConfig) -> dict:
         hydrated.append(full if isinstance(full, _TD) else tool)
     discovered = hydrated
 
-    # Merge: start with default tools, add any discovered tools not already
-    # in the list. Default tools always participate regardless of relevance.
+    # Merge: discovered (domain-specific) tools first, then defaults. The
+    # ordering biases the model toward domain-specific tools when picking
+    # from the list, with the standard tools available as a fallback.
     default_names = {t.name for t in default_tools}
-    active_tools = list(default_tools)
-    for tool in discovered:
-        if tool.name not in default_names:
-            active_tools.append(tool)
+    active_tools = [t for t in discovered if t.name not in default_names]
+    active_tools.extend(default_tools)
 
-    _emit_node_end(
-        writer,
-        node,
-        new_budget,
-        detail={
-            "structured_output": {
-                "default_tools": [t.name for t in default_tools],
-                "discovered_tools": [t.name for t in discovered if t.name not in default_names],
-            },
+    detail = _build_detail(
+        search_query if search_query != plan else "",
+        messages=rewrite_messages or None,
+        structured_output={
+            "search_query": search_query,
+            "query_rewritten": search_query != plan,
+            "default_tools": [t.name for t in default_tools],
+            "discovered_tools": [t.name for t in discovered if t.name not in default_names],
         },
     )
+    _emit_node_end(writer, node, new_budget, detail=detail)
 
     logger.info(
         "Tool discovery: %d defaults + %d discovered = %d active",
@@ -449,7 +499,11 @@ async def tool_discovery(state: ResearchState, config: RunnableConfig) -> dict:
         len(active_tools),
     )
     logger.debug("TOOL DISCOVERY Complete")
-    return {"active_tools": active_tools, "budget_remaining": new_budget}
+    return {
+        "active_tools": active_tools,
+        "default_tool_names": [t.name for t in default_tools],
+        "budget_remaining": new_budget,
+    }
 
 
 async def tool_selection(state: ResearchState, config: RunnableConfig) -> dict:
@@ -470,13 +524,18 @@ async def tool_selection(state: ResearchState, config: RunnableConfig) -> dict:
     new_budget = deduct_cost(cost_weights, node, budget)
 
     active_tools = state.get("active_tools", [])
+    default_tool_names = set(state.get("default_tool_names") or [])
     if not active_tools:
         _emit_node_end(writer, node, new_budget)
         return {"budget_remaining": new_budget}
 
     question = state.get("question", "")
     plan = state.get("plan", "")
-    tool_descriptions = _format_tool_descriptions(active_tools)
+    tool_descriptions = _format_tool_descriptions(
+        active_tools,
+        discovered=[t for t in active_tools if t.name not in default_tool_names],
+        defaults=[t for t in active_tools if t.name in default_tool_names],
+    )
 
     messages = [
         {
@@ -546,6 +605,7 @@ async def research_execution(state: ResearchState, config: RunnableConfig) -> di
     new_budget = deduct_cost(cost_weights, node, budget)
 
     active_tools = state.get("active_tools", [])
+    default_tool_names = set(state.get("default_tool_names") or [])
     question = state.get("question", "")
     plan = state.get("plan", "")
 
@@ -556,7 +616,11 @@ async def research_execution(state: ResearchState, config: RunnableConfig) -> di
     executor = _get_executor(config)
     registry = _get_registry(config)
 
-    tool_descriptions = _format_tool_descriptions(active_tools)
+    tool_descriptions = _format_tool_descriptions(
+        active_tools,
+        discovered=[t for t in active_tools if t.name not in default_tool_names],
+        defaults=[t for t in active_tools if t.name in default_tool_names],
+    )
 
     messages = [
         {
@@ -787,6 +851,7 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
     question = state.get("question", "")
     draft = state.get("draft", "")
     active_tools = state.get("active_tools", [])
+    default_tool_names = set(state.get("default_tool_names") or [])
 
     # Phase 1: Fact-checking with tools (if tools are available).
     # The model investigates specific claims using the same tool set
@@ -801,7 +866,11 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
     if active_tools:
         executor = _get_executor(config)
         registry = _get_registry(config)
-        tool_descriptions = _format_tool_descriptions(active_tools)
+        tool_descriptions = _format_tool_descriptions(
+            active_tools,
+            discovered=[t for t in active_tools if t.name not in default_tool_names],
+            defaults=[t for t in active_tools if t.name in default_tool_names],
+        )
 
         fact_check_messages = [
             {
@@ -1185,6 +1254,49 @@ def _get_registry(config: RunnableConfig):
     from moira.service_setup import service_provider
 
     return service_provider("model_registry")
+
+
+async def _rewrite_discovery_query(
+    plan: str, config: RunnableConfig
+) -> tuple[str, list[dict[str, str]]]:
+    """Use the task model to rewrite a research plan into a concise,
+    tool-oriented search query optimized for semantic matching against
+    tool descriptions in LanceDB. Returns (rewritten_query, messages)
+    or ("", []) on failure."""
+    registry = _get_registry(config)
+    try:
+        resolved = await registry.resolve("task")
+    except (ValueError, KeyError):
+        logger.debug("Task model not available for query rewriting")
+        return "", []
+
+    messages = [
+        {
+            "role": "system",
+            "content": get_prompt("tool_discovery.query_rewrite.system"),
+        },
+        {
+            "role": "user",
+            "content": get_prompt("tool_discovery.query_rewrite.user").format(
+                plan=plan
+            ),
+        },
+    ]
+    _log_prompts("tool_discovery.rewrite", messages)
+
+    try:
+        raw = await resolved.client.chat_completion(
+            model=resolved.model_id, messages=messages, temperature=0.3
+        )
+        text, _ = _extract("tool_discovery.rewrite", raw)
+        for line in text.strip().splitlines():
+            cleaned = line.strip().lstrip("0123456789.-) ")
+            if cleaned:
+                return cleaned, messages
+        return "", messages
+    except Exception as e:
+        logger.debug("Query rewriting failed: %s", e)
+        return "", []
 
 
 def _get_discovery(config: RunnableConfig):
