@@ -183,6 +183,9 @@ function fmt(n: number): string {
       v-if="run.execution_steps.length > 0 || needsStopMarker()"
       class="steps-and-resume-wrapper"
     >
+      <div class="initial-budget" v-if="run.budget_limit">
+        Budget: {{ run.budget_limit }}
+      </div>
       <div class="steps-container">
         <div v-for="row in timelineRows" :key="row.key">
           <div v-if="row.kind === 'boundary'" class="attempt-boundary-row">

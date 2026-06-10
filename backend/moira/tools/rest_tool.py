@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import time
@@ -58,7 +59,10 @@ class RESTTool(BaseTool):
                 )
                 resp.raise_for_status()
                 elapsed_ms = int((time.monotonic() - start) * 1000)
-                output = resp.text[:10000]
+                try:
+                    output = json.dumps(resp.json(), indent=2)[:10000]
+                except Exception:
+                    output = resp.text[:10000]
                 return ToolResult(
                     tool_name=self.name,
                     output=output,

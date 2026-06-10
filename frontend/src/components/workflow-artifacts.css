@@ -369,6 +369,16 @@
   visibility: hidden;
 }
 
+.initial-budget {
+  font-family: monospace;
+  font-size: 0.8em;
+  opacity: 0.6;
+  text-align: right;
+  margin: 12px;
+  max-width: 80%;
+  padding: 0 16px;
+}
+
 .step-budget {
   font-family: monospace;
   font-size: 0.8em;

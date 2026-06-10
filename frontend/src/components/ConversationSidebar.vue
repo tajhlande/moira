@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { NButton, NScrollbar, NInput } from "naive-ui";
+import { NButton, NScrollbar, NInput, useDialog } from "naive-ui";
 import { IconPencil, IconCheck, IconSparkles, IconTrash, IconHandStop } from "@tabler/icons-vue";
 import { useChatStore } from "../stores/chat";
 import { useRouter } from "vue-router";
@@ -7,6 +7,7 @@ import { ref, nextTick } from "vue";
 
 const store = useChatStore();
 const router = useRouter();
+const dialog = useDialog();
 
 const editingId = ref<string | null>(null);
 const editTitle = ref("");
@@ -52,12 +53,19 @@ async function handleGenerateTitle(conversationId: string) {
 }
 
 async function handleDelete(conversationId: string) {
-  if (!window.confirm("Delete this conversation?")) return;
-  const wasCurrent = store.currentConversationId === conversationId;
-  await store.deleteConversation(conversationId);
-  if (wasCurrent) {
-    router.push({ name: "new-conversation" });
-  }
+  dialog.error({
+    title: "Delete conversation?",
+    content: "This will permanently delete the conversation and all its messages. This cannot be undone.",
+    positiveText: "Delete",
+    negativeText: "Cancel",
+    onPositiveClick: async () => {
+      const wasCurrent = store.currentConversationId === conversationId;
+      await store.deleteConversation(conversationId);
+      if (wasCurrent) {
+        router.push({ name: "new-conversation" });
+      }
+    },
+  });
 }
 
 function hasMessages(conversationId: string): boolean {
