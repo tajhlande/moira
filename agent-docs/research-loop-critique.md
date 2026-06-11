@@ -393,13 +393,20 @@ one live benchmark that reflects the real failure mode.
 Implement the new graph behind a feature flag, alternate run type, or shadow mode. That
 will let the project compare outputs directly and reduce migration risk.
 
+Solution:
 
+Keep a separate copy of moira.db with the current implementation's data, and 
+keep a separate checkout of the git repo with that moira.db copy, where a branch can 
+have eval harness commits on it, but not the other changes. 
+
+Eval can be done manually, following the recommendation #1 above.
 
 ### 3. Split knowledge state from execution state
 
 Keep the knowledge artifact small and semantically clean. Move planning and routing
 machinery into a separate execution structure.
 
+Solution:
 To do this, take the existing state and separate the knowledge and the execution state
 into two sub objects, like this: 
 
@@ -436,6 +443,8 @@ extrapolate this general idea to correct them.
 
 If facts and conclusions have stable IDs, every downstream node should reference those
 IDs directly. Avoid description-based joins unless there is no better option.
+
+Solution: do as is described here.
 
 ### 5. Add hard guardrails on generic search
 
