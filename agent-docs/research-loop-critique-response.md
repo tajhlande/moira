@@ -1,0 +1,23 @@
+# Response to critiques in research-loop-critique.md
+
+The following is the direct response to the critiques. 
+The ones listed under "Accept and adopt" have been reflected in research-loop-overhaul-plan.md
+The ones listed under "Accept with modifications" have been addressed as written.
+The ones listed under "Push back" have not been addressed, with the comments given below. 
+
+## Accept and adopt
+1. Evaluation harness (Rec 1). The canary benchmark with the Tyranitar question and scoring rubric is excellent. This should be added as a pre-implementation step. The offline fixtures (verification stress, tool routing, synthesis trap) are also valuable and can be written as pytest fixtures. I'd add this as a Phase 0 in the implementation strategy.
+2. Split knowledge state from execution state (Rec 3). The critique is right that mixing budget counters, retry counts, and tool plans into the knowledge model makes it harder to reason about. The two-subobject structure proposed (knowledge and execution_state) is clean and easy to adopt. LangGraph doesn't care about nested structure in state — it just serializes the whole thing. This is a schema change, not an architectural one.
+3. Per-tool call limits (Rec 5, Solution 1). Adding call_limit_per_run to tool metadata is simple and directly addresses the search abuse problem. It's a hard guardrail that works alongside cost. The tool executor checks the count before executing and returns a limit-reached message if exceeded. This is a few lines of code in the executor and a new column on the tools table.
+4. Define "enough evidence" in prompts (Rec 6). The distinction between "all facts about the domain" and "facts materially required to answer the question" should be explicit in the decomposition and verification prompts. The decomposition prompt should say: identify the facts materially needed to answer the question, not every fact about the domain. The verification prompt should say: the goal is met when material facts are verified and support the conclusion, not when every decomposed fact is resolved. This is a prompt wording change, not a structural one.
+5. Use IDs end to end (Rec 4). Already adopted in the plan. But the critique correctly notes that some prompts still use description-based matching. The synthesis and verification prompts should reference facts by ID in their input and ask the model to reference IDs in output. I'll update the relevant prompts.
+
+## Accept with modifications
+
+6. Keep old graph alive (Rec 2). The proposed solution — separate checkout and moira.db copy — is pragmatic and low-effort. I agree with this approach. No feature flag needed; just tag the current codebase before starting and keep a separate database file for baseline runs. Add this to Phase 0.
+
+## Push back
+
+7. Incremental improvements before the rewrite (Rec 7). The critique suggests landing tool costs, description enrichment, and claim-level verification before the graph rewrite. I disagree. These changes touch the same files (graph, nodes, state, prompts, executor) and would need to be ripped out and redone when the full rewrite lands. The cost of building them on the old graph and then rebuilding them on the new one is higher than building the new graph with them from the start. Phase A (skeleton) + Phase B (prompts) already gets us to a testable state quickly. The evaluation harness in Phase 0 gives us the comparison point the critique wants without needing to incrementally patch the old system.
+8. Verification split into separate passes (Weakness 5). The critique argues verification does too much in one node. But splitting it into separate nodes adds routing complexity (what if facts pass but conclusions fail? another routing branch?) and doubles the budget cost (two node executions instead of one). The current design already has two phases within one node (fact-check with tools, then verdict). The model prompt clearly separates the three tasks. This is sufficient — the tasks share context and should produce one coherent routing decision.
+9. Parallel graph path (Weakness 1 / internal inconsistency 4). The critique flags that the phased implementation says "build alongside" but Phase A removes old code. The critique's solution (separate checkout) resolves this. I don't think we need a feature flag or parallel graph in the same codebase — that's maintenance burden for a single-user system. A git tag and a separate database file are sufficient.

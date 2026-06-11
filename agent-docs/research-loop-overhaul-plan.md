@@ -48,8 +48,6 @@ class Conclusion(TypedDict):
     verification_note: NotRequired[str]  # set by verification: why it failed or what evidence was found
 
 
-class ToolCallPlan(TypedDict):
-    tool_name: str                 # which tool to call
     args: dict                     # arguments for the call
     target_fact_ids: list[str]     # which facts this call aims to resolve, e.g. ["f001", "f002"]
     cost: float                    # cost of this specific call
@@ -66,8 +64,19 @@ class VerificationOutcome(TypedDict):
 
 ### 1.2 Knowledge model (graph state)
 
+The graph state is a single TypedDict with two sub-objects: `knowledge` (the
+research artifact) and `execution_state` (orchestration mechanics). This
+separation keeps the knowledge artifact semantically clean — it contains only
+the research content that flows through the pipeline — while execution concerns
+(budget, routing, tool plans) live in their own namespace.
+
+LangGraph serializes the entire state as one object for checkpointing. The
+sub-object structure is for conceptual clarity and prompt construction: nodes
+that need only knowledge content receive `state["knowledge"]` or subparts within it, while orchestration
+logic accesses `state["execution_state"]` or subparts within it.
+
 ```python
-class KnowledgeModel(TypedDict):
+class Knowledge(TypedDict):
     # --- Set at decomposition, immutable thereafter ---
     question: str
     user_goal: str
@@ -79,29 +88,35 @@ class KnowledgeModel(TypedDict):
     facts: list[Fact]              # grows during research, statuses updated during verification
     conclusions: list[Conclusion]  # set at synthesis, statuses updated during verification
     citations: list[Citation]      # grows during research and verification
+    verification_history: list[VerificationOutcome]
 
+    # --- Report (terminal output) ---
+    report: NotRequired[ResearchReport]
+    generation_path: NotRequired[str]  # "verified" | "budget_exhausted" | "error"
+
+
+class ExecutionState(TypedDict):
     # --- Set per-step, consumed by downstream ---
     candidate_tools: list[ToolDefinition]  # set by tool identification
     tool_call_plan: list[ToolCallPlan]     # set by planning
-
-    # --- Verification ---
-    verification_history: list[VerificationOutcome]
-    verification_attempts: int
 
     # --- Budget ---
     budget_remaining: float
     budget_limit: float
     step_costs: dict[str, float]           # per-node step costs
     tool_costs: dict[str, float]           # per-tool invocation costs
+    tool_call_counts: dict[str, int]       # per-tool calls made this run (for call limits)
     total_tool_cost_consumed: float
 
-    # --- Error and routing ---
+    # --- Routing and retry ---
     error: str
     synthesis_retry_count: int
+    verification_attempts: int
 
-    # --- Report (terminal output) ---
-    report: NotRequired[ResearchReport]
-    generation_path: NotRequired[str]  # "verified" | "budget_exhausted" | "error"
+
+class ResearchState(TypedDict):
+    knowledge: Knowledge
+    execution_state: ExecutionState
 ```
 
 ### 1.3 Report output (what the user sees)
@@ -119,7 +134,8 @@ class ResearchReport(TypedDict):
     contradicted: list[dict]         # facts and conclusions that were contradicted
     unknown_facts: list[dict]        # facts still in status "unknown"
     critiques: list[str]             # weaknesses and limitations
-    budget_consumed: float
+    total_cost: float                # total budget consumed (step costs + tool costs)
+    tool_call_total_cost: float      # portion of total_cost from tool invocations only
     generation_path: str             # "verified" | "budget_exhausted" | "error"
 ```
 
@@ -261,7 +277,7 @@ tools are preserved in `candidate_tools`.
 
 | Property                        | Value                                                                                                                          |
 |---------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
-| **Inputs from knowledge model** | `facts` (unknown facts), `candidate_tools` (with costs), `budget_remaining`, `tool_costs`, `entities`, `concepts`, `user_goal` |
+| **Inputs from knowledge model** | `facts` (unknown facts), `candidate_tools` (with costs), `execution_state.budget_remaining`, `execution_state.tool_costs`, `knowledge.entities`, `knowledge.concepts`, `knowledge.user_goal` |
 | **Tool calling**                | No                                                                                                                             |
 | **Intelligence model**          | Yes — needs to reason about tool capabilities and cost tradeoffs                                                               |
 | **Task model**                  | No                                                                                                                             |
@@ -291,18 +307,20 @@ tools (by adding new unknown facts to the model).
 
 | Property | Value |
 |----------|-------|
-| **Inputs from knowledge model** | `facts` (unknown facts), `tool_call_plan`, `candidate_tools`, `tool_costs`, `budget_remaining` |
+| **Inputs from knowledge model** | `facts` (unknown facts), `tool_call_plan`, `candidate_tools`, `execution_state.tool_costs`, `execution_state.budget_remaining` |
 | **Tool calling** | Yes — executes tools from the plan |
 | **Intelligence model** | Yes — interprets tool results, decides follow-up calls |
 | **Task model** | No |
-| **Outputs added** | Updates `facts` (claims, statuses, citation_ids), appends to `citations`, updates `budget_remaining`, updates `total_tool_cost_consumed` |
-| **Step cost** | 2 |
-| **Tool call costs** | Deducted from `budget_remaining` per call, using `tool_costs[tool_name]` |
+| **Outputs added** | Updates `facts` (claims, statuses, citation_ids), appends to `citations`, updates `execution_state.budget_remaining`, updates `execution_state.total_tool_cost_consumed`, updates `execution_state.tool_call_counts` |
+| **Step cost** | 10 |
+| **Tool call costs** | Deducted from `execution_state.budget_remaining` per call, using `execution_state.tool_costs[tool_name]`. Call limits enforced via `execution_state.tool_call_counts`. |
 | **Can be followed by** | `synthesis` |
 
 Notes: The research step executes the tool call plan. For each call:
 
-1. Check that `budget_remaining >= tool_costs[tool_name]`. If not, skip the call.
+1. Check that `execution_state.budget_remaining >= execution_state.tool_costs[tool_name]`
+   and that the tool's `call_limit_per_run` has not been reached. If either check fails,
+   skip the call and inform the model.
 2. Execute the tool call.
 3. The model interprets the result and produces: updated claims for target facts,
    new citations, and optionally new unknown facts.
@@ -329,7 +347,7 @@ skip so it can work with whatever facts were gathered.
 | **Intelligence model** | Yes — derives conclusions from facts |
 | **Task model** | No |
 | **Outputs added** | `conclusions` (replaced on retry, not appended) |
-| **Step cost** | 3 |
+| **Step cost** | 5 |
 | **Can be followed by** | `verification`, or `report_generation` on error |
 
 Notes: Synthesis receives the full set of facts (with claims, statuses, and
@@ -352,13 +370,13 @@ Instead, note what additional facts would be needed."
 
 | Property | Value |
 |----------|-------|
-| **Inputs from knowledge model** | `user_goal`, `facts`, `conclusions`, `citations`, `budget_remaining` |
+| **Inputs from knowledge model** | `knowledge.user_goal`, `knowledge.facts`, `knowledge.conclusions`, `knowledge.citations`, `execution_state.budget_remaining` |
 | **Tool calling** | Yes — re-checks claims and logic against tools/sources |
 | **Intelligence model** | Yes — evaluates fact accuracy, conclusion logic, and goal attainment |
 | **Task model** | No |
-| **Outputs added** | Appends to `verification_history`, updates fact and conclusion statuses, may add new unknown facts, updates `budget_remaining` |
-| **Step cost** | 3 |
-| **Tool call costs** | Deducted per verification tool call |
+| **Outputs added** | Appends to `verification_history`, updates fact and conclusion statuses, may add new unknown facts, updates `execution_state.budget_remaining` |
+| **Step cost** | 8 |
+| **Tool call costs** | Deducted per verification tool call from `execution_state.budget_remaining`. Call limits enforced. |
 | **Can be followed by** | `report_generation` (accept or budget exhausted), `synthesis` (retry_synthesis), `tool_identification` (retry_research) |
 
 Notes: Verification performs three tasks in a single model call:
@@ -399,9 +417,9 @@ else:
 
 The cost check for retry includes: the step cost of the retry target + remaining
 pipeline steps + one more verification pass. For `retry_research`:
-tool_identification(1) + planning(2) + research(2) + synthesis(3) + verification(3)
-= 11 step-cost minimum, plus estimated tool costs. For `retry_synthesis`:
-synthesis(3) + verification(3) = 6 step-cost minimum.
+tool_identification(1) + planning(2) + research(10) + synthesis(5) + verification(8)
+= 26 step-cost minimum, plus estimated tool costs. For `retry_synthesis`:
+synthesis(5) + verification(8) = 13 step-cost minimum.
 
 `synthesis_retry_count` limits synthesis retries (default: 1). If already
 exhausted, route to `report_generation` instead of `retry_synthesis`.
@@ -427,7 +445,9 @@ fact is contradicted or unknown, say so explicitly."
 
 Three paths converge here, as in the current system:
 
-1. **Verified** — verification passed, all facts and conclusions verified
+1. **Verified** — verification judged that materially required facts are verified
+   and conclusions adequately answer the user's question. Some non-material facts
+   may remain unknown.
 2. **Budget exhausted** — verification found problems but budget is insufficient
    for retry
 3. **Error** — a node failed and the error handler routed here
@@ -456,16 +476,23 @@ The budget has two layers:
 **Tool invocation costs** (per-call, deducted from budget during research and
 verification):
 
-| Tool               | Cost        |
-|--------------------|-------------|
-| web_search         | 5           |
-| url_content        | 3           |
-| calculator         | 0.1         |
-| datetime           | 0.1         |
-| ingested API tools | 1 (default) |
+| Tool               | Cost        | Call limit per run |
+|--------------------|-------------|-------------------|
+| web_search         | 5           | 10                |
+| url_content        | 3           | 15                |
+| calculator         | 0.1         | —                 |
+| datetime           | 0.1         | —                 |
+| ingested API tools | 1 (default) | —                 |
 
-Tool costs are stored in the `tools` table (new column: `invocation_cost`) and
-also loaded into `tool_costs` on the knowledge model so the planner can see them.
+Tool costs and call limits are stored in the `tools` table (new columns:
+`invocation_cost` and `call_limit_per_run`) and also loaded into
+`execution_state` so the planner and executor can see them.
+
+The tool executor enforces call limits: before each tool call, it checks the
+count in `execution_state.tool_call_counts` against the tool's
+`call_limit_per_run`. If the limit is reached, the executor returns a
+limit-reached message instead of executing the call. The model is informed of
+the limit so it can choose a different tool or approach.
 
 **Repeat cycle cost** for retry_research: 1 + 2 + 10 + 5 + 8 = 26 (step costs only,
 tool costs are additional).
@@ -505,13 +532,13 @@ CREATE TABLE workflow_runs (
     user_message_id INTEGER NOT NULL REFERENCES messages(id),
     status TEXT NOT NULL DEFAULT 'running',
     budget_limit REAL NOT NULL,
-    budget_consumed REAL NOT NULL DEFAULT 0,
+    total_cost REAL NOT NULL DEFAULT 0,
     generation_path TEXT,
     started_at TEXT NOT NULL DEFAULT (datetime('now')),
     completed_at TEXT,
     total_elapsed_ms INTEGER,
     updated_at TEXT,
-    knowledge_snapshot TEXT        -- JSON: full knowledge model
+    knowledge_snapshot TEXT        -- JSON: full ResearchState (knowledge + execution_state)
 );
 ```
 
@@ -543,14 +570,24 @@ CREATE TABLE workflow_steps (
 );
 ```
 
-**`tools`** — add invocation cost column:
+**`tools`** — add invocation cost and call limit columns:
 
 ```sql
 -- Migration adds:
 ALTER TABLE tools ADD COLUMN invocation_cost REAL NOT NULL DEFAULT 1.0;
+ALTER TABLE tools ADD COLUMN call_limit_per_run INTEGER;
 -- Then update specific tools:
--- web_search: 5.0, url_content: 3.0, calculator: 0.1, datetime: 0.1
+-- web_search: invocation_cost=5.0, call_limit_per_run=10
+-- url_content: invocation_cost=3.0, call_limit_per_run=15
+-- calculator: invocation_cost=0.1
+-- datetime: invocation_cost=0.1
 ```
+
+The `call_limit_per_run` column is nullable — tools without a limit have `NULL`,
+meaning unlimited. The tool executor checks the current call count from
+`execution_state.tool_call_counts` before executing and returns a limit-reached
+message if the count equals or exceeds the limit. The model is informed so it
+can choose a different tool.
 
 **Tables preserved unchanged:** `users`, `conversations`, `messages`,
 `model_preferences`, `tool_groups`, `credentials`, `tool_metrics`,
@@ -563,12 +600,14 @@ ALTER TABLE tools ADD COLUMN invocation_cost REAL NOT NULL DEFAULT 1.0;
 The knowledge model is serialized as JSON and stored in two ways:
 
 1. **LangGraph checkpoint** — the standard LangGraph checkpoint mechanism stores
-   the full state (knowledge model) after each node. This enables resume/reconnect.
+   the full `ResearchState` (including both `knowledge` and `execution_state`
+   sub-objects) after each node. This enables resume/reconnect.
    Uses `AsyncSqliteSaver` as currently.
 
-2. **Run-level snapshot** — on run completion, the full knowledge model is
-   serialized to `workflow_runs.knowledge_snapshot`. This provides a queryable
-   record of the final state without needing to reconstruct from checkpoints.
+2. **Run-level snapshot** — on run completion, the full `ResearchState`
+   (both `knowledge` and `execution_state`) is serialized to
+   `workflow_runs.knowledge_snapshot`. This provides a queryable record of the
+   final state without needing to reconstruct from checkpoints.
 
 3. **Step-level detail** — each node produces a detail JSON object stored in
    `workflow_steps.detail`. This contains the node-specific operational data
@@ -604,8 +643,8 @@ interface RunSnapshot {
     user_message_id: number;
     status: "running" | "completed" | "error" | "stopped";
     budget_limit: number;
-    budget_consumed: number;
-    tool_cost_consumed: number;        // NEW: total tool invocation cost
+    total_cost: number;
+    tool_call_total_cost: number;        // NEW: total tool invocation cost
     total_elapsed_ms: number | null;
     error: string;
     report: ResearchReport | null;
@@ -660,8 +699,8 @@ interface ResearchReport {
     contradicted: (FactRecord | ConclusionRecord)[];
     unknown_facts: FactRecord[];
     critiques: string[];
-    budget_consumed: number;
-    tool_cost_consumed: number;
+    total_cost: number;
+    tool_call_total_cost: number;
     generation_path: string;
 }
 
@@ -701,7 +740,8 @@ interface ConclusionRecord {
 GET /api/conversations/{id}/runs/{run_id}/knowledge
 ```
 
-Returns the full knowledge model JSON from `workflow_runs.knowledge_snapshot`.
+Returns the full `ResearchState` JSON (both `knowledge` and `execution_state`
+sub-objects) from `workflow_runs.knowledge_snapshot`.
 Only available for completed runs. Used by the UI detail view.
 
 **Step detail endpoint remains:**
@@ -729,7 +769,7 @@ Response includes `invocation_cost` field.
 
 | File | Purpose |
 |------|---------|
-| `moira/models/knowledge.py` | `KnowledgeModel`, `Fact`, `Conclusion`, `Citation`, `VerificationOutcome`, `ToolCallPlan`, `ResearchReport` TypedDicts |
+| `moira/models/knowledge.py` | `ResearchState`, `Knowledge`, `ExecutionState`, `Fact`, `Conclusion`, `Citation`, `VerificationOutcome`, `ToolCallPlan`, `ResearchReport` TypedDicts |
 | `moira/workflow/nodes/decomposition.py` | Decomposition node |
 | `moira/workflow/nodes/tool_identification.py` | Tool identification node |
 | `moira/workflow/nodes/planning.py` | Planning node |
@@ -753,7 +793,7 @@ Response includes `invocation_cost` field.
 | `moira/resources/prompts.md` | Replace all prompt sections for new workflow |
 | `moira/persistence/sqlite/schema.py` | Add migration for table changes |
 | `moira/persistence/sqlite/migrations/` | New migration file |
-| `moira/api/streaming.py` | Update initial state construction for `KnowledgeModel` |
+| `moira/api/streaming.py` | Update initial state construction for `ResearchState` |
 
 ### 5.3 Files to remove
 
@@ -800,7 +840,7 @@ The knowledge model state changes are separate from this detail.
     "thinking": "...",
     "structured_output": {
         "planned_calls": [
-            {"tool": "pokeapi", "args": {"query": "Tyranitar"}, "target_facts": [1, 2, 3], "cost": 1.0}
+            {"tool": "pokeapi", "args": {"query": "Tyranitar"}, "target_facts": ["f001", "f002", "f003"], "cost": 1.0}
         ]
     },
     "budget_snapshot": {
@@ -819,8 +859,8 @@ The knowledge model state changes are separate from this detail.
     "tool_calls": [
         {"tool": "pokeapi", "args": {"query": "Tyranitar"}, "output": "...", "duration_ms": 340, "success": true}
     ],
-    "facts_resolved": [1, 2, 3],
-    "facts_newly_unknown": [13, 14],
+    "facts_resolved": ["f001", "f002", "f003"],
+    "facts_newly_unknown": ["f013", "f014"],
     "rounds_used": 2
 }
 ```
@@ -921,10 +961,14 @@ discovered to answer the question.
 You must NOT answer the question. You must NOT draw conclusions. Your only job is to
 identify what facts would need to be known to answer the user's question.
 
-Think carefully about what specific, verifiable facts are needed. Each fact should
-be narrow enough that a single tool call or source could provide it. Avoid vague
-facts like "general information about X" — instead, enumerate the specific data
-points needed.
+Focus on facts that are MATERIALLY REQUIRED to answer the question — facts without
+which the answer would be incomplete or incorrect. Do not enumerate every possible
+fact about the domain. Instead, identify the specific, verifiable facts that are
+directly necessary to address what the user is asking.
+
+Each fact should be narrow enough that a single tool call or source could provide it.
+Avoid vague facts like "general information about X" — instead, enumerate the specific
+data points needed.
 
 Respond with a JSON object with these keys:
 - "user_goal": a one-sentence description of what the user wants to accomplish, written in plain language
@@ -935,8 +979,8 @@ Respond with a JSON object with these keys:
   - "subject": what entity or topic this fact is about
   - "fact_needed": a specific description of what needs to be known (e.g., "Tyranitar's typing", "OU legality rules for Gen9")
 
-Produce as many specific facts as are needed to thoroughly answer the question. It is
-better to over-specify than to miss important facts.
+Produce enough specific facts to materially answer the question. Do not pad the list
+with facts that are merely interesting about the domain but not needed for the answer.
 ```
 
 #### decomposition.user
@@ -953,24 +997,28 @@ Research question: {question}
 You are a research planning assistant. Your job is to design a set of tool calls that
 will discover the facts needed to answer a research question.
 
-You have access to a set of candidate tools. Each tool has a cost per invocation.
-You also know the remaining budget and the cost of the remaining pipeline steps
-after research. Your plan must fit within the available budget.
+You have access to a set of candidate tools. Each tool has a cost per invocation and
+may have a call limit per run. You also know the remaining budget and the cost of the
+remaining pipeline steps after research. Your plan must fit within the available budget.
 
 Rules:
-- Each tool call should target one or more specific unknown facts
+- Each tool call should target one or more specific unknown facts, referenced by ID
 - Prefer specialized tools over generic ones (e.g., a Pokemon API over web_search)
 - Do not plan calls that exceed the available budget
+- Respect call limits — if a tool has already been called up to its limit this run,
+  do not plan additional calls to that tool
 - If you cannot afford to resolve all facts, prioritize facts most central to the
   user's goal
 - Multiple facts can be resolved by a single well-chosen tool call if the tool
   returns structured data about a subject
 
+You will receive unknown facts in the format: ID | subject | fact_needed
+Reference facts by their IDs in your plan.
+
 Respond with a JSON object with key "calls": a list of objects, each with:
 - "tool": the tool name
 - "args": an object of arguments for the tool call
-- "target_fact_descriptions": a list of descriptions matching the unknown facts this
-  call aims to resolve (used by orchestration code to match to fact IDs)
+- "target_fact_ids": a list of fact IDs this call aims to resolve (e.g., ["f001", "f003"])
 - "rationale": one sentence explaining why this call was chosen
 ```
 
@@ -983,11 +1031,11 @@ Topic: {topic}
 Entities: {entities}
 Concepts: {concepts}
 
-Unknown facts to resolve:
+Unknown facts to resolve (ID | subject | fact_needed):
 {unknown_facts}
 
-Available tools (name, description, cost per call):
-{tool_descriptions_with_costs}
+Available tools (name | description | cost per call | calls remaining):
+{tool_descriptions_with_costs_and_limits}
 
 Budget remaining: {budget_remaining}
 Cost reserved for remaining pipeline steps (synthesis + verification + report): {reserved_budget}
@@ -1040,8 +1088,8 @@ You are a research assistant performing fact discovery. Your job is to call tool
 find the specific facts identified in the research plan, interpret the results, and
 record what you learned.
 
-You will receive a tool call plan and a list of unknown facts. Execute the plan by
-calling tools. After each round of results, you may:
+You will receive a tool call plan and a list of unknown facts with their IDs. Execute
+the plan by calling tools. After each round of results, you may:
 - Record discovered facts (updating claims for target facts)
 - Request additional tool calls if results were incomplete
 - Identify new facts that need to be discovered
@@ -1053,8 +1101,12 @@ Rules:
 - If a specialized tool is available for the domain, prefer it over web_search
 - You may make up to {max_extra_rounds} additional rounds of tool calls beyond the
   plan if needed to fill gaps
+- Respect tool call limits — if a tool returns a limit-reached message, do not call it
+  again
 
 For each fact you discover, record:
+- The ID of the fact this resolves (e.g., "f001") — or if this is a newly identified
+  fact, describe it
 - The subject it is about
 - A specific, precise claim (e.g., "Tyranitar is Rock/Dark type", not "Tyranitar has
   a type")
@@ -1064,9 +1116,10 @@ For each fact you discover, record:
 Respond with a JSON object with these keys:
 - "tool_calls": an array of tool call objects, each with "tool" and "args". Use an
   empty array when you are done.
-- "discovered_facts": an array of objects, each with "subject", "fact_needed",
-  "claim", and optionally "relation" and "value". The fact_needed should match an
-  existing unknown fact description, or describe a newly identified fact.
+- "discovered_facts": an array of objects, each with "fact_id" (the ID of the fact
+  this resolves, e.g., "f001"), "subject", "claim", and optionally "relation" and
+  "value". For newly identified facts not in the original list, use "fact_id": null
+  and include "fact_needed" describing what the new fact is about.
 - "sources": an array of objects with "source" (tool name), "url" (if applicable),
   "title", and "excerpt" (relevant snippet from the tool output). These become
   citations.
@@ -1077,10 +1130,10 @@ Respond with a JSON object with these keys:
 ```
 User goal: {user_goal}
 
-Unknown facts:
+Unknown facts (ID | subject | fact_needed):
 {unknown_facts}
 
-Tool call plan:
+Tool call plan (tool | args | target fact IDs):
 {tool_call_plan}
 
 Available tools:
@@ -1098,21 +1151,24 @@ provided to you.
 
 Rules:
 - Derive conclusions ONLY from the provided facts
-- Each conclusion must reference the specific facts that support it
+- Each conclusion must reference the specific facts that support it by ID
 - Show your reasoning chain: how do the supporting facts lead to the conclusion?
 - If the facts are insufficient to support a conclusion, do NOT draw that conclusion.
   Instead, note what additional facts would be needed.
 - Do not combine facts in ways that introduce new information not present in the
-  facts themselves. For example, if fact A says "X is weak to Y" and fact B says
-  "Z resists Y", you may conclude "Z covers X's weakness to Y" but you may NOT
+  facts themselves. For example, if fact f005 says "X is weak to Y" and fact f008
+  says "Z resists Y", you may conclude "Z covers X's weakness to Y" but you may NOT
   conclude "Z is a good teammate for X" without additional facts about team
   evaluation criteria.
 - Be precise. Avoid vague conclusions that could be interpreted multiple ways.
 
+You will receive facts in the format: ID | subject | fact_needed | claim | status
+Only use facts with status "verified" or "unverified" as support. Do not draw
+conclusions from facts with status "unknown" or "contradicted".
+
 Respond with a JSON object with key "conclusions": a list of objects, each with:
 - "conclusion": the derived conclusion (one clear statement)
-- "supporting_fact_descriptions": list of fact_needed strings that support this
-  conclusion (used by orchestration to resolve to fact IDs)
+- "supporting_fact_ids": list of fact IDs that support this conclusion (e.g., ["f001", "f005"])
 - "reasoning": step-by-step explanation of how the supporting facts lead to this
   conclusion
 ```
@@ -1189,17 +1245,20 @@ A conclusion is:
 
 TASK 3: GOAL ASSESSMENT
 Evaluate whether the verified facts and conclusions together sufficiently address
-the user's goal. Consider:
-- Are there major gaps in the evidence?
-- Are key facts still unknown or contradicted?
-- Would the user's question be adequately answered by what is known?
+the user's goal. The goal is met when the MATERIALLY REQUIRED facts are verified
+and support conclusions that answer the user's question. Not every decomposed fact
+must be resolved — only the facts necessary to support the answer. Consider:
+- Are the material facts verified, or are key ones still unknown or contradicted?
+- Do the conclusions drawn from verified facts adequately answer what the user asked?
+- Would resolving remaining unknown facts meaningfully improve the answer?
 
 For all three tasks together, respond with a single JSON object with these keys:
-- "fact_results": list of objects with "subject", "fact_needed", "result"
-  (verified/contradicted/unverified), and "evidence" (brief note on what confirmed
-  or contradicted it)
-- "conclusion_results": list of objects with "conclusion" (the conclusion text),
-  "result" (verified/contradicted/unverified), and "reason" (explanation)
+- "fact_results": list of objects with "fact_id" (the fact's ID, e.g. "f001"),
+  "result" (verified/contradicted/unverified), and "evidence" (brief note on
+  what confirmed or contradicted it)
+- "conclusion_results": list of objects with "conclusion_id" (the conclusion's
+  ID, e.g. "c001"), "result" (verified/contradicted/unverified), and "reason"
+  (explanation)
 - "new_unknown_facts": list of strings describing additional facts that should be
   researched to improve the answer (empty if none needed)
 - "goal_met": true/false — does the evidence sufficiently answer the user's question?
@@ -1215,16 +1274,16 @@ For all three tasks together, respond with a single JSON object with these keys:
 #### verification.user
 
 ```
-User goal: 
+User goal:
 {user_goal}
 
-Question: 
+Question:
 {question}
 
-Facts to verify:
+Facts to verify (ID | subject | fact_needed | claim | status | citations):
 {facts_with_claims_and_sources}
 
-Conclusions to verify:
+Conclusions to verify (ID | conclusion | supporting fact IDs | reasoning | status):
 {conclusions_with_supporting_facts}
 
 Available tools for re-checking:
@@ -1549,8 +1608,86 @@ Each node gets its own test file with mocked model responses. Tests verify:
 
 Each phase produces a testable, runnable system. The key constraint is that the
 knowledge model and new graph structure are a breaking change — the old graph
-and state model cannot coexist with the new one. The strategy is to build the
-new graph alongside the old one, validate it, then cut over.
+and state model cannot coexist with the new one. The strategy is to capture a
+baseline before starting, then replace the system completely.
+
+**Before starting Phase A:**
+
+1. Tag the current codebase: `git tag pre-overhaul-baseline`
+2. Copy `data/moira.db` to `data/moira-baseline.db` for baseline runs
+3. Run the evaluation harness (Phase 0) against the baseline and save results
+
+The old system remains accessible via the tagged commit and separate database.
+No feature flag or parallel graph path is needed — just a git checkout and a
+different database file.
+
+### Phase 0: Evaluation harness and baseline
+
+**Goal:** Define success metrics and capture baseline behavior before making any
+changes. This phase produces no code changes to the application — only test
+fixtures and a benchmark script.
+
+**What to build:**
+
+1. **Canary benchmark** — the Tyranitar Gen9 OU question:
+
+   ```
+   What Pokemon synergize well with Tyranitar in Gen9 OU? Please pay special
+   attention to verifying the type strengths and weaknesses, typical abilities,
+   typical moves, and OU eligibility.
+   ```
+
+2. **Artifact capture script** — a script or manual procedure that, for a given
+   run, captures and saves to a JSON file:
+   - full tool-call trace
+   - total tool calls and total `web_search` calls
+   - candidate tools or tool-ranking output
+   - final answer
+   - citations
+   - verification output
+   - final report status and budget consumption
+
+3. **Scoring rubric** — score each run on 8 categories (0/1/2 each, total 16):
+
+   | Category | Pass (2) | Fail (0) |
+   |----------|----------|----------|
+   | Tool choice | Pokemon-specific tools used first for species, abilities, moves, legality | `web_search` used first for facts specialized tools should cover |
+   | Search discipline | Generic search limited, only for facts structured tools don't cover | Most effort on generic search |
+   | Type correctness | No material type matchup errors | Recommendation depends on incorrect type claim |
+   | Ability correctness | Abilities correctly attributed and described | Wrong ability, wrong description, or niche treated as typical |
+   | Typical-move discipline | Distinguishes learnset from typical OU moves | Overclaims from species data alone |
+   | OU legality and metagame | Separates legal from credible/common in OU | Treats legality as relevance |
+   | Synthesis discipline | Synergy claims are modest and fact-backed | Jumps from isolated facts to broad team advice |
+   | Verification quality | Flags weak support, contradictions, overreach | Rubber-stamps a draft with shaky claims |
+
+   Hard-fail categories (must score 2): type correctness, ability correctness,
+   OU legality and metagame, verification quality. A run that fails any hard-fail
+   category is not a success regardless of total score.
+
+4. **Offline test fixtures** (pytest):
+
+   - **Verification stress fixture:** a short Tyranitar-partner draft with
+     planted mistakes in type, ability, typical moves, legality, and synergy
+     reasoning. The verifier should catch them.
+   - **Tool-routing fixture:** the decomposed facts from the canary question,
+     run against a fixed tool catalog. The system should rank Pokemon-specific
+     tools ahead of `web_search` for structured facts.
+   - **Synthesis trap fixture:** a fixed fact bundle containing individually
+     true facts that tempt an unjustified recommendation. The system should
+     qualify the claim or refuse to overstate it.
+
+**Testability:** Run the canary benchmark against the current system 1-2 times
+(same model, same tools, same budget, same credentials). Save artifacts. Score
+using the rubric. This establishes the baseline that the overhaul must beat.
+
+**Exit criteria:**
+- Baseline artifacts saved
+- Baseline score recorded
+- All three offline test fixtures defined (they will fail against the current
+  system — that's expected)
+- `uv run pytest` passes for existing tests (no application code changed)
+
+---
 
 ### Phase A: Knowledge model and new graph skeleton
 
@@ -1560,19 +1697,20 @@ replaced.
 
 **What to build:**
 
-1. `moira/models/knowledge.py` — all TypedDicts (Fact, Conclusion, Citation,
-   VerificationOutcome, ToolCallPlan, KnowledgeModel, ResearchReport)
+1. `moira/models/knowledge.py` — all TypedDicts (ResearchState, Knowledge,
+   ExecutionState, Fact, Conclusion, Citation, VerificationOutcome,
+   ToolCallPlan, ResearchReport)
 2. `moira/workflow/nodes/` — one file per node, each with a function that
-   accepts `KnowledgeModel` and returns partial state updates. Nodes use stub
+   accepts `ResearchState` and returns partial state updates. Nodes use stub
    prompts initially — enough to produce valid structured output for testing.
 3. `moira/workflow/graph.py` — new `build_graph()` that wires the 7 nodes with
    the conditional routing described in section 2.2.
-4. `moira/workflow/budget.py` — updated cost weights and tool invocation cost
-   deduction logic.
+4. `moira/workflow/budget.py` — updated cost weights, tool invocation cost
+   deduction logic, and call limit enforcement.
 5. `moira/models/state.py` — removed.
 6. `moira/workflow/nodes/research_nodes.py` — removed.
 7. Database migration — drop and recreate `workflow_runs` and `workflow_steps`,
-   add `invocation_cost` to `tools`.
+   add `invocation_cost` and `call_limit_per_run` to `tools`.
 
 **Testability:** Unit tests for each node with mocked model responses. Full
 graph integration test with mock inference that runs start to end and produces
@@ -1602,7 +1740,7 @@ decomposition, research, synthesis, and reports.
    substitution. Handle prompt composition (base system + retry/context
    appendices).
 4. `moira/api/streaming.py` — update initial state construction to build a
-   `KnowledgeModel` with `question` and budget fields.
+   `ResearchState` with `question` and budget fields.
 
 **Testability:** Prompt validation tests (all required sections present, all
 template variables used by node code are provided). Run the graph with a real
@@ -1626,21 +1764,24 @@ plans.
 
 1. Update `tool_identification` node to embed each `fact_needed` + `subject`
    and search LanceDB, merging and deduplicating results across all facts.
-2. Update `tools` table loading to include `invocation_cost`.
-3. Update `planning` node to include tool costs and budget information in its
-   prompt.
-4. Update `research` node to deduct tool invocation costs from budget per call.
+2. Update `tools` table loading to include `invocation_cost` and
+   `call_limit_per_run`.
+3. Update `planning` node to include tool costs, call limits, and budget
+   information in its prompt.
+4. Update `research` node to deduct tool invocation costs from budget per call
+   and enforce call limits.
 5. Update `verification` node to deduct tool invocation costs from budget per
-   call.
+   call and enforce call limits.
 
 **Testability:** Tool identification unit tests with a test LanceDB fixture.
 Planning tests verify cost-aware plans. Research and verification tests verify
-budget deduction per tool call.
+budget deduction per tool call. Call limit enforcement tests.
 
 **Exit criteria:**
 - LanceDB search with fact queries returns relevant tools
 - Planner produces cost-aware plans that respect budget
 - Tool invocation costs are deducted and tracked
+- Call limits are enforced (executor returns limit-reached message)
 - `uv run pytest` passes, `uv run ruff check .` clean
 
 ---
@@ -1722,16 +1863,22 @@ navigable object.
 ### Dependency order
 
 ```
-Phase A (knowledge model + graph skeleton)
-  └── Phase B (prompts + real model execution)
-       └── Phase C (tool identification + budget)
-            └── Phase D (run manager + SSE + API)
-                 ├── Phase E (tool ingest enrichment)
-                 └── Phase F (knowledge panel + frontend)
+Phase 0 (evaluation harness + baseline)
+  └── Phase A (knowledge model + graph skeleton)
+       └── Phase B (prompts + real model execution)
+            └── Phase C (tool identification + budget)
+                 └── Phase D (run manager + SSE + API)
+                      ├── Phase E (tool ingest enrichment)
+                      └── Phase F (knowledge panel + frontend)
 ```
 
 Phases E and F are independent of each other once D is complete. Phase A is
 the only phase that breaks the existing system — after A, the old graph and
 state model are gone. This is intentional: the new system replaces the old one
 completely, and there is no migration path for old run data.
+
+The baseline captured in Phase 0 provides the comparison point. After Phase B,
+run the canary benchmark against the new system and score it. The overhaul is
+successful if the new system scores higher than the baseline on the rubric,
+with no hard-fail categories failing.
   
