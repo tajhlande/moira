@@ -93,7 +93,7 @@ async def send_message(
         settings_svc = cast(SettingsService, service_provider("settings_service"))
         cost_weights = await settings_svc.get_typed_prefix(
             "budget.cost.", scope=SCOPE_SYSTEM, scope_id=SYSTEM_SCOPE_ID
-        ) # pyright: ignore[reportAssignmentType]
+        )  # pyright: ignore[reportAssignmentType]
     except Exception:
         logger.warning(
             "Settings service unavailable, falling back to config for cost_weights",
@@ -122,10 +122,12 @@ async def send_message(
         elif msg.role == "assistant_report" and pending_question is not None:
             try:
                 report = json.loads(msg.content)
-                prior_turns.append({
-                    "question": pending_question,
-                    "answer": report.get("answer", ""),
-                })
+                prior_turns.append(
+                    {
+                        "question": pending_question,
+                        "answer": report.get("answer", ""),
+                    }
+                )
             except (json.JSONDecodeError, TypeError):
                 pass
             pending_question = None
@@ -270,10 +272,12 @@ async def rerun_message(
         elif msg.role == "assistant_report" and pending_question is not None:
             try:
                 report = json.loads(msg.content)
-                prior_turns.append({
-                    "question": pending_question,
-                    "answer": report.get("answer", ""),
-                })
+                prior_turns.append(
+                    {
+                        "question": pending_question,
+                        "answer": report.get("answer", ""),
+                    }
+                )
             except (json.JSONDecodeError, TypeError):
                 pass
             pending_question = None

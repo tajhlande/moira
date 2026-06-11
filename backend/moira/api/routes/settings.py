@@ -169,9 +169,7 @@ async def list_settings(
     svc = _settings_service()
     pfx = prefix or ""
     entries = await svc.get_prefix(pfx, scope=scope, scope_id=scope_id)
-    return {
-        "settings": [_enriched_setting(e.key, e.value, e.scope, e.scope_id) for e in entries]
-    }
+    return {"settings": [_enriched_setting(e.key, e.value, e.scope, e.scope_id) for e in entries]}
 
 
 @router.put("/settings")
@@ -202,9 +200,7 @@ async def batch_set_settings(body: dict[str, Any]):
             raise HTTPException(status_code=422, detail=str(e.message))
         raise HTTPException(status_code=422, detail=str(e))
 
-    return {
-        "settings": [_enriched_setting(e.key, e.value, e.scope, e.scope_id) for e in entries]
-    }
+    return {"settings": [_enriched_setting(e.key, e.value, e.scope, e.scope_id) for e in entries]}
 
 
 @router.delete("/settings")
@@ -229,11 +225,7 @@ async def reset_settings(
         }
 
     entries = await svc.get_prefix("", scope=scope, scope_id=scope_id)
-    return {
-        "settings": [
-            _enriched_setting(e.key, e.value, e.scope, e.scope_id) for e in entries
-        ]
-    }
+    return {"settings": [_enriched_setting(e.key, e.value, e.scope, e.scope_id) for e in entries]}
 
 
 # --- Credentials endpoints ---

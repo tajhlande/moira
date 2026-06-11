@@ -5,7 +5,7 @@ Returns the current date and time in the user's timezone if available
 The response indicates which source was used."""
 
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from moira.tools.base import BaseTool, ToolResult
@@ -51,9 +51,7 @@ class DateTimeTool(BaseTool):
             offset_hours = -utc_offset_sec // 3600
             offset_sign = "+" if offset_hours >= 0 else "-"
             tz_name = time.tzname[time.daylight] or "local"
-            source = (
-                f"server local time ({tz_name}, UTC{offset_sign}{abs(offset_hours):02d}00)"
-            )
+            source = f"server local time ({tz_name}, UTC{offset_sign}{abs(offset_hours):02d}00)"
 
         elapsed = int((time.monotonic() - start) * 1000)
 

@@ -247,11 +247,7 @@ def _extract_parameters(
     op_params = operation.get("parameters", [])
 
     # Operation params override path params with same name+location
-    op_param_keys = {
-        (p.get("name"), p.get("in"))
-        for p in op_params
-        if isinstance(p, dict)
-    }
+    op_param_keys = {(p.get("name"), p.get("in")) for p in op_params if isinstance(p, dict)}
     for p in raw_params:
         if isinstance(p, dict) and (p.get("name"), p.get("in")) not in op_param_keys:
             op_params.append(p)

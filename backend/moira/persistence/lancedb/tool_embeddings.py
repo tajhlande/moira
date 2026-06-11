@@ -147,12 +147,14 @@ class ToolEmbeddingRepository:
 
             out = []
             for row in results:
-                out.append({
-                    "name": row["name"],
-                    "description": row["description"],
-                    "enabled": bool(row.get("enabled", True)),
-                    "distance": float(row.get("_distance", 0)),
-                })
+                out.append(
+                    {
+                        "name": row["name"],
+                        "description": row["description"],
+                        "enabled": bool(row.get("enabled", True)),
+                        "distance": float(row.get("_distance", 0)),
+                    }
+                )
             return out
 
         return await asyncio.to_thread(_search)

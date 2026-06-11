@@ -182,9 +182,7 @@ class ToolProvisioner:
                 param_names = [p.get("name", "?") for p in params[:5]]
                 params_desc = f" Parameters: {', '.join(param_names)}"
             desc = op.get("description", "")[:200]
-            tool_list_parts.append(
-                f"- {op['name']}: {desc}{params_desc}"
-            )
+            tool_list_parts.append(f"- {op['name']}: {desc}{params_desc}")
 
         prompt = _HINT_GENERATION_PROMPT.format(
             tool_list="\n".join(tool_list_parts),
@@ -293,6 +291,7 @@ class ToolProvisioner:
         auth_type = None
         if parsed.security_schemes:
             from moira.services.tool_ingestion.auth_analyzer import get_auth_type_for_spec
+
             auth_type = get_auth_type_for_spec(spec_dict)
 
         return {
@@ -333,7 +332,9 @@ class ToolProvisioner:
                         "schema_def": op.request_body.schema_def,
                         "required": op.request_body.required,
                         "description": op.request_body.description,
-                    } if op.request_body else None,
+                    }
+                    if op.request_body
+                    else None,
                     "tags": op.tags,
                     "deprecated": op.deprecated,
                     "security_requirements": op.security_requirements,
@@ -396,15 +397,15 @@ class ToolProvisioner:
         )
 
         # Save the tool group first — tools table has FK to tool_groups.
-        await self._tool_repo.save_group({
-            "name": group_slug,
-            "display_name": group_name,
-        })
+        await self._tool_repo.save_group(
+            {
+                "name": group_slug,
+                "display_name": group_name,
+            }
+        )
 
         # Generate usage hints via the task model (best-effort, non-blocking)
-        selected_op_data = [
-            op_map[n] for n in selected_operations if n in op_map
-        ]
+        selected_op_data = [op_map[n] for n in selected_operations if n in op_map]
         hints = await self._generate_usage_hints(selected_op_data)
         if hints:
             logger.info("Generated usage hints for %d tools", len(hints))
@@ -412,10 +413,12 @@ class ToolProvisioner:
         for tool_name in selected_operations:
             op_data = op_map.get(tool_name)
             if op_data is None:
-                result.failed.append({
-                    "name": tool_name,
-                    "reason": "Operation not found in preview data",
-                })
+                result.failed.append(
+                    {
+                        "name": tool_name,
+                        "reason": "Operation not found in preview data",
+                    }
+                )
                 continue
 
             try:
@@ -467,10 +470,7 @@ class ToolProvisioner:
 
         # Find all tools belonging to this source
         all_tools = await self._tool_repo.get_all_tools()
-        source_tools = [
-            t for t in all_tools
-            if t.config.get("source_id") == source_id
-        ]
+        source_tools = [t for t in all_tools if t.config.get("source_id") == source_id]
 
         deleted_names: list[str] = []
         for defn in source_tools:

@@ -187,16 +187,22 @@ class TestSqliteCredentialRepository:
 
     async def test_upsert_preserves_created_at(self, cred_repo):
         await cred_repo.save(
-            owner="system", name="test.key",
-            encrypted_data="first", salt="salt1", encryption_version=1,
+            owner="system",
+            name="test.key",
+            encrypted_data="first",
+            salt="salt1",
+            encryption_version=1,
         )
         first = await cred_repo.get_by_name("system", "test.key")
         assert first is not None
         created_at = first.created_at
 
         await cred_repo.save(
-            owner="system", name="test.key",
-            encrypted_data="second", salt="salt2", encryption_version=1,
+            owner="system",
+            name="test.key",
+            encrypted_data="second",
+            salt="salt2",
+            encryption_version=1,
         )
         updated = await cred_repo.get_by_name("system", "test.key")
         assert updated is not None
@@ -207,8 +213,11 @@ class TestSqliteCredentialRepository:
 
     async def test_delete(self, cred_repo):
         await cred_repo.save(
-            owner="system", name="to.delete",
-            encrypted_data="data", salt="salt", encryption_version=1,
+            owner="system",
+            name="to.delete",
+            encrypted_data="data",
+            salt="salt",
+            encryption_version=1,
         )
         deleted = await cred_repo.delete("system", "to.delete")
         assert deleted is True
@@ -260,9 +269,7 @@ class TestSqliteCredentialRepository:
 @pytest.mark.asyncio
 class TestCredentialServiceEncrypted:
     async def test_store_and_get(self, cred_service):
-        info = await cred_service.store_credential(
-            "brave.api_key", {"key": "BSA-secret-key"}
-        )
+        info = await cred_service.store_credential("brave.api_key", {"key": "BSA-secret-key"})
         assert info.name == "brave.api_key"
         assert info.owner == "system"
         assert info.encryption_version == 1
@@ -275,9 +282,7 @@ class TestCredentialServiceEncrypted:
         assert value is None
 
     async def test_store_with_custom_owner(self, cred_service):
-        info = await cred_service.store_credential(
-            "my.key", {"token": "abc"}, owner="custom"
-        )
+        info = await cred_service.store_credential("my.key", {"token": "abc"}, owner="custom")
         assert info.owner == "custom"
         value = await cred_service.get_credential("my.key", owner="custom")
         assert value == {"token": "abc"}

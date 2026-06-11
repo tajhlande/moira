@@ -754,9 +754,7 @@ class TestSSEStreamingEndpoint:
         assert snapshots, "Expected at least one run_snapshot"
         final = snapshots[-1]
 
-        completed_steps = [
-            s for s in final["execution_steps"] if s.get("status") == "completed"
-        ]
+        completed_steps = [s for s in final["execution_steps"] if s.get("status") == "completed"]
         budgets = [s["budget_remaining"] for s in completed_steps]
 
         assert len(budgets) >= 2, f"Expected >= 2 completed steps, got {len(budgets)}"
@@ -940,7 +938,6 @@ class TestGraphVerificationRouting:
         events = await _send_and_stream(
             client, conversation_id, "Question that needs verification retry"
         )
-        event_types = [e["event"] for e in events]
 
         snapshots = [e["data"] for e in events if e["event"] == "run_snapshot"]
         assert snapshots, "Expected at least one run_snapshot"
@@ -1018,15 +1015,10 @@ class TestStreamReplay:
         )
         first_snapshot = events[0]["data"]
         planning_steps = [
-            s for s in first_snapshot.get("execution_steps", [])
-            if s.get("node") == "planning"
+            s for s in first_snapshot.get("execution_steps", []) if s.get("node") == "planning"
         ]
-        assert planning_steps, (
-            "Expected 'planning' step in replayed run_snapshot"
-        )
+        assert planning_steps, "Expected 'planning' step in replayed run_snapshot"
 
         # Final snapshot should have completed status
-        final_snapshots = [
-            e["data"] for e in events if e["event"] == "run_snapshot"
-        ]
+        final_snapshots = [e["data"] for e in events if e["event"] == "run_snapshot"]
         assert final_snapshots[-1]["status"] == "completed"

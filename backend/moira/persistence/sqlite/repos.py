@@ -200,9 +200,7 @@ class SqliteConversationRepository(ConversationRepository):
             for r in rows:
                 d = dict(r)
                 te = d["tool_executions"]
-                d["tool_executions"] = (
-                    json.loads(te) if te else []
-                )
+                d["tool_executions"] = json.loads(te) if te else []
                 d["report"] = json.loads(d["report"]) if d["report"] else None
                 d["state_version"] = d.get("state_version") or 1
                 d["updated_at"] = d.get("updated_at") or d.get("completed_at") or d["started_at"]
@@ -245,9 +243,7 @@ class SqliteConversationRepository(ConversationRepository):
         finally:
             conn.close()
 
-    async def truncate_from_message(
-        self, conversation_id: str, user_message_id: int
-    ) -> bool:
+    async def truncate_from_message(self, conversation_id: str, user_message_id: int) -> bool:
         """Delete workflow run for user_message_id and all messages/runs with
         id >= user_message_id. The user message itself is kept so it can be
         re-submitted as a rerun."""
@@ -273,14 +269,12 @@ class SqliteConversationRepository(ConversationRepository):
                     (run_id,),
                 )
             conn.execute(
-                "DELETE FROM workflow_runs "
-                "WHERE conversation_id = ? AND user_message_id >= ?",
+                "DELETE FROM workflow_runs WHERE conversation_id = ? AND user_message_id >= ?",
                 (conversation_id, user_message_id),
             )
             # Delete messages AFTER the user message (keep the user message itself)
             cursor = conn.execute(
-                "DELETE FROM messages "
-                "WHERE conversation_id = ? AND id > ?",
+                "DELETE FROM messages WHERE conversation_id = ? AND id > ?",
                 (conversation_id, user_message_id),
             )
             deleted = cursor.rowcount > 0 or len(run_ids) > 0
@@ -404,9 +398,7 @@ class SqliteToolRepository(ToolRepository):
             implementation=row["implementation"],
             group_name=row["group_name"],
             original_description=(
-                row["original_description"]
-                if "original_description" in row.keys()
-                else ""
+                row["original_description"] if "original_description" in row.keys() else ""
             ),
         )
 
@@ -497,9 +489,7 @@ class SqliteToolRepository(ToolRepository):
     async def delete_group(self, name: str) -> bool:
         conn = self._connect()
         try:
-            cursor = conn.execute(
-                "DELETE FROM tool_groups WHERE name = ?", (name,)
-            )
+            cursor = conn.execute("DELETE FROM tool_groups WHERE name = ?", (name,))
             conn.commit()
             return cursor.rowcount > 0
         finally:
@@ -643,9 +633,19 @@ class SqliteToolMetricsRepository(ToolMetricsRepository):
                 "low_duration_ms = MIN(low_duration_ms, ?), "
                 "high_duration_ms = MAX(high_duration_ms, ?)",
                 (
-                    tool_name, call_type, period_hour,
-                    success_inc, error_inc, duration_ms, duration_ms, duration_ms,
-                    success_inc, error_inc, duration_ms, duration_ms, duration_ms,
+                    tool_name,
+                    call_type,
+                    period_hour,
+                    success_inc,
+                    error_inc,
+                    duration_ms,
+                    duration_ms,
+                    duration_ms,
+                    success_inc,
+                    error_inc,
+                    duration_ms,
+                    duration_ms,
+                    duration_ms,
                 ),
             )
             conn.commit()
@@ -733,7 +733,7 @@ class SqliteWorkflowStepRepository(WorkflowStepRepository):
                 ),
             )
             conn.commit()
-            assert (cursor.lastrowid is not None)
+            assert cursor.lastrowid is not None
             return cursor.lastrowid
         finally:
             conn.close()
@@ -966,9 +966,7 @@ class SqliteApiSourceRepository(ApiSourceRepository):
     async def get(self, source_id: str) -> ApiSource | None:
         conn = self._connect()
         try:
-            row = conn.execute(
-                "SELECT * FROM api_sources WHERE id = ?", (source_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM api_sources WHERE id = ?", (source_id,)).fetchone()
             return self._row_to_source(row) if row else None
         finally:
             conn.close()
@@ -976,9 +974,7 @@ class SqliteApiSourceRepository(ApiSourceRepository):
     async def get_all(self) -> list[ApiSource]:
         conn = self._connect()
         try:
-            rows = conn.execute(
-                "SELECT * FROM api_sources ORDER BY created_at DESC"
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM api_sources ORDER BY created_at DESC").fetchall()
             return [self._row_to_source(r) for r in rows]
         finally:
             conn.close()
@@ -1033,9 +1029,7 @@ class SqliteApiSourceRepository(ApiSourceRepository):
     async def delete(self, source_id: str) -> bool:
         conn = self._connect()
         try:
-            cursor = conn.execute(
-                "DELETE FROM api_sources WHERE id = ?", (source_id,)
-            )
+            cursor = conn.execute("DELETE FROM api_sources WHERE id = ?", (source_id,))
             conn.commit()
             return cursor.rowcount > 0
         finally:

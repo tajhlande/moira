@@ -109,7 +109,7 @@ class AsyncWriteQueue:
                     last_exc = exc
                     msg = str(exc).lower()
                     if ("locked" in msg or "busy" in msg) and attempt < _MAX_RETRIES - 1:
-                        delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                        delay = _RETRY_BASE_DELAY * (2**attempt)
                         logger.debug(
                             "Write queue retry %d/%d after %.3fs (SQLite lock)",
                             attempt + 1,

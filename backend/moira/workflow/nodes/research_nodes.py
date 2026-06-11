@@ -44,6 +44,7 @@ def _check_stop(node: str, config: RunnableConfig) -> None:
     logger.info("Stop requested at node %s, calling interrupt()", node)
     interrupt("user_stop")
 
+
 _PARSE_CORRECTION_PROMPT = (
     "Your previous response did not contain a valid JSON array of tool calls. "
     "Respond ONLY with a raw JSON array, no markdown fences. "
@@ -379,7 +380,11 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
     prior_turns = config.get("configurable", {}).get("prior_turns")
 
     messages = _build_planning_messages(
-        question, verification_history, prior_report, prior_question, prior_turns,
+        question,
+        verification_history,
+        prior_report,
+        prior_question,
+        prior_turns,
     )
     _log_prompts(node, messages)
     resolved = await registry.resolve("intelligence")
@@ -1277,9 +1282,7 @@ async def _rewrite_discovery_query(
         },
         {
             "role": "user",
-            "content": get_prompt("tool_discovery.query_rewrite.user").format(
-                plan=plan
-            ),
+            "content": get_prompt("tool_discovery.query_rewrite.user").format(plan=plan),
         },
     ]
     _log_prompts("tool_discovery.rewrite", messages)

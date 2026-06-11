@@ -3,9 +3,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from moira.persistence.interfaces import CredentialRepository
-
-from moira.persistence.interfaces import CredentialRow
+from moira.persistence.interfaces import CredentialRepository, CredentialRow
 from moira.services.credentials.credential_types import (
     CredentialValue,
     validate_credential_name,
@@ -69,9 +67,7 @@ class CredentialService:
         else:
             logger.info("Credential service running with encryption enabled")
 
-    async def get_credential(
-        self, name: str, owner: str | None = None
-    ) -> CredentialValue | None:
+    async def get_credential(self, name: str, owner: str | None = None) -> CredentialValue | None:
         owner = owner or self.DEFAULT_OWNER
         row = await self._repo.get_by_name(owner, name)
         if row is None:
@@ -111,22 +107,20 @@ class CredentialService:
         owner = owner or self.DEFAULT_OWNER
         return await self._repo.delete(owner, name)
 
-    async def list_credentials(
-        self, owner: str | None = None
-    ) -> list[CredentialInfo]:
+    async def list_credentials(self, owner: str | None = None) -> list[CredentialInfo]:
         rows = await self._repo.list_all(owner=owner)
         return [self._row_to_info(r) for r in rows]
 
     def _encrypt(self, plaintext: str, salt: str) -> str:
         if self._plaintext:
             return plaintext
-        assert(self._master_key)
+        assert self._master_key
         return encrypt_value(plaintext, self._master_key, salt)
 
     def _decrypt(self, row: CredentialRow) -> CredentialValue:
         if self._plaintext:
             return json.loads(row.encrypted_data)
-        assert(self._master_key)
+        assert self._master_key
         decrypted = decrypt_value(row.encrypted_data, self._master_key, row.salt)
         return json.loads(decrypted)
 

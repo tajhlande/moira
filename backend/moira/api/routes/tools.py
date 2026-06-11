@@ -139,12 +139,8 @@ async def debug_embedding_search(q: str = "", top_k: int = 20):
     if not q:
         raise HTTPException(status_code=400, detail="q parameter is required")
 
-    embedding_provider = cast(
-        LocalEmbeddingProvider, service_provider("embedding_provider")
-    )
-    embedding_repo = cast(
-        ToolEmbeddingRepository, service_provider("tool_embedding_repo")
-    )
+    embedding_provider = cast(LocalEmbeddingProvider, service_provider("embedding_provider"))
+    embedding_repo = cast(ToolEmbeddingRepository, service_provider("tool_embedding_repo"))
 
     if embedding_provider is None or embedding_repo is None:
         raise HTTPException(status_code=503, detail="Embedding services not available")
@@ -190,6 +186,10 @@ async def update_tool(name: str, body: dict[str, Any]):
     for k, v in updates.items():
         setattr(tool, k, v)
     await repo.save_tool(tool)
+
+    catalog = service_provider("tool_catalog")
+    if catalog:
+        catalog.add(tool)
 
     if "enabled" in updates:
         await _sync_tool_to_index(tool)
@@ -247,6 +247,10 @@ async def bulk_update_tools(body: dict[str, Any]):
         for k, v in fields.items():
             setattr(tool, k, v)
         await repo.save_tool(tool)
+
+        catalog = service_provider("tool_catalog")
+        if catalog:
+            catalog.add(tool)
 
         if "enabled" in fields:
             await _sync_tool_to_index(tool)

@@ -70,14 +70,11 @@ def _apply_migration_009(conn: sqlite3.Connection) -> None:
 
     if "execution_steps" not in columns:
         logger.info(
-            "Migration 009: execution_steps column already absent, "
-            "skipping data migration"
+            "Migration 009: execution_steps column already absent, skipping data migration"
         )
         return
 
-    rows = conn.execute(
-        "SELECT id, execution_steps FROM workflow_runs"
-    ).fetchall()
+    rows = conn.execute("SELECT id, execution_steps FROM workflow_runs").fetchall()
 
     step_count = 0
     for run_id, steps_json in rows:
@@ -121,8 +118,7 @@ def _apply_migration_009(conn: sqlite3.Connection) -> None:
             logger.info("Migration 009: dropped workflow_runs.%s", col)
         except sqlite3.OperationalError:
             logger.info(
-                "Migration 009: could not drop %s "
-                "(SQLite < 3.35 does not support DROP COLUMN)",
+                "Migration 009: could not drop %s (SQLite < 3.35 does not support DROP COLUMN)",
                 col,
             )
 
@@ -138,8 +134,7 @@ def _apply_migration_011(conn: sqlite3.Connection) -> None:
     run_columns = {row[1] for row in conn.execute("PRAGMA table_info(workflow_runs)").fetchall()}
     if "state_version" not in run_columns:
         conn.execute(
-            "ALTER TABLE workflow_runs "
-            "ADD COLUMN state_version INTEGER NOT NULL DEFAULT 1"
+            "ALTER TABLE workflow_runs ADD COLUMN state_version INTEGER NOT NULL DEFAULT 1"
         )
         logger.info("Added workflow_runs.state_version")
     if "updated_at" not in run_columns:
@@ -152,14 +147,12 @@ def _apply_migration_011(conn: sqlite3.Connection) -> None:
     step_columns = {row[1] for row in conn.execute("PRAGMA table_info(workflow_steps)").fetchall()}
     if "step_version" not in step_columns:
         conn.execute(
-            "ALTER TABLE workflow_steps "
-            "ADD COLUMN step_version INTEGER NOT NULL DEFAULT 1"
+            "ALTER TABLE workflow_steps ADD COLUMN step_version INTEGER NOT NULL DEFAULT 1"
         )
         logger.info("Added workflow_steps.step_version")
     if "tool_call_count" not in step_columns:
         conn.execute(
-            "ALTER TABLE workflow_steps "
-            "ADD COLUMN tool_call_count INTEGER NOT NULL DEFAULT 0"
+            "ALTER TABLE workflow_steps ADD COLUMN tool_call_count INTEGER NOT NULL DEFAULT 0"
         )
         logger.info("Added workflow_steps.tool_call_count")
 
@@ -220,10 +213,7 @@ def _backfill_inference_metrics(conn: sqlite3.Connection) -> None:
     buckets. Safe to call multiple times — only processes runs that have
     steps not yet reflected in inference_metrics."""
     existing_tables = {
-        r[0]
-        for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
+        r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     }
     if "inference_metrics" not in existing_tables or "workflow_steps" not in existing_tables:
         return
@@ -286,10 +276,7 @@ def _repair_migration_009(conn: sqlite3.Connection) -> None:
     # Ensure the table exists (handles databases where CREATE TABLE
     # was rolled back due to a later failure in _apply_migration_009).
     existing_tables = {
-        r[0]
-        for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
+        r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     }
     if "workflow_steps" not in existing_tables:
         sql_file = sorted(Path(MIGRATIONS_DIR).glob("009_*.sql"))[0]

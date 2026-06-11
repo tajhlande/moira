@@ -20,6 +20,7 @@ class SettingDefinition:
             return raw.lower() in ("true", "1", "yes")
         return raw
 
+
 BUDGET_STEP_CONSTRAINTS = {"type": "integer", "minimum": 0, "maximum": 25}
 
 SETTING_DEFINITIONS: dict[str, SettingDefinition] = {

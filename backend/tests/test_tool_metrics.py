@@ -244,6 +244,7 @@ class TestExecutorMetricsIntegration:
 
             async def execute(self, args):
                 import asyncio
+
                 await asyncio.sleep(10)
                 return ToolResult(tool_name="slow", output="ok", success=True)
 

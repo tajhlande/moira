@@ -91,9 +91,7 @@ class TestFullCycleCost:
     def test_full_cycle_excludes_compression_and_report_generation(self, cost_weights):
         total_all = sum(cost_weights.values())
         assert full_cycle_cost(cost_weights) == (
-            total_all
-            - cost_weights["report_generation"]
-            - cost_weights["compression"]
+            total_all - cost_weights["report_generation"] - cost_weights["compression"]
         )
 
 

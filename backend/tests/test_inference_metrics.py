@@ -78,14 +78,26 @@ class TestRecordStep:
 
     async def test_separates_by_model(self, metrics_repo):
         await metrics_repo.record_step(
-            model="llama3", purpose="intelligence", period_hour="2026-06-03T14:00",
-            call_count=1, input_tokens=100, output_tokens=50,
-            thinking_tokens=0, prompt_time_ms=0.0, gen_time_ms=0.0,
+            model="llama3",
+            purpose="intelligence",
+            period_hour="2026-06-03T14:00",
+            call_count=1,
+            input_tokens=100,
+            output_tokens=50,
+            thinking_tokens=0,
+            prompt_time_ms=0.0,
+            gen_time_ms=0.0,
         )
         await metrics_repo.record_step(
-            model="qwen2", purpose="intelligence", period_hour="2026-06-03T14:00",
-            call_count=2, input_tokens=200, output_tokens=100,
-            thinking_tokens=0, prompt_time_ms=0.0, gen_time_ms=0.0,
+            model="qwen2",
+            purpose="intelligence",
+            period_hour="2026-06-03T14:00",
+            call_count=2,
+            input_tokens=200,
+            output_tokens=100,
+            thinking_tokens=0,
+            prompt_time_ms=0.0,
+            gen_time_ms=0.0,
         )
 
         rows = await metrics_repo.get_metrics()
@@ -93,14 +105,26 @@ class TestRecordStep:
 
     async def test_separates_by_purpose(self, metrics_repo):
         await metrics_repo.record_step(
-            model="llama3", purpose="intelligence", period_hour="2026-06-03T14:00",
-            call_count=1, input_tokens=100, output_tokens=50,
-            thinking_tokens=0, prompt_time_ms=0.0, gen_time_ms=0.0,
+            model="llama3",
+            purpose="intelligence",
+            period_hour="2026-06-03T14:00",
+            call_count=1,
+            input_tokens=100,
+            output_tokens=50,
+            thinking_tokens=0,
+            prompt_time_ms=0.0,
+            gen_time_ms=0.0,
         )
         await metrics_repo.record_step(
-            model="llama3", purpose="task", period_hour="2026-06-03T14:00",
-            call_count=1, input_tokens=50, output_tokens=25,
-            thinking_tokens=0, prompt_time_ms=0.0, gen_time_ms=0.0,
+            model="llama3",
+            purpose="task",
+            period_hour="2026-06-03T14:00",
+            call_count=1,
+            input_tokens=50,
+            output_tokens=25,
+            thinking_tokens=0,
+            prompt_time_ms=0.0,
+            gen_time_ms=0.0,
         )
 
         rows = await metrics_repo.get_metrics()
@@ -111,9 +135,15 @@ class TestGetMetrics:
     async def test_filter_by_period(self, metrics_repo):
         for hour in ("2026-06-03T13:00", "2026-06-03T14:00", "2026-06-03T15:00"):
             await metrics_repo.record_step(
-                model="llama3", purpose="intelligence", period_hour=hour,
-                call_count=1, input_tokens=100, output_tokens=50,
-                thinking_tokens=0, prompt_time_ms=0.0, gen_time_ms=0.0,
+                model="llama3",
+                purpose="intelligence",
+                period_hour=hour,
+                call_count=1,
+                input_tokens=100,
+                output_tokens=50,
+                thinking_tokens=0,
+                prompt_time_ms=0.0,
+                gen_time_ms=0.0,
             )
 
         rows = await metrics_repo.get_metrics(
@@ -125,14 +155,26 @@ class TestGetMetrics:
 
     async def test_filter_by_model(self, metrics_repo):
         await metrics_repo.record_step(
-            model="llama3", purpose="intelligence", period_hour="2026-06-03T14:00",
-            call_count=1, input_tokens=100, output_tokens=50,
-            thinking_tokens=0, prompt_time_ms=0.0, gen_time_ms=0.0,
+            model="llama3",
+            purpose="intelligence",
+            period_hour="2026-06-03T14:00",
+            call_count=1,
+            input_tokens=100,
+            output_tokens=50,
+            thinking_tokens=0,
+            prompt_time_ms=0.0,
+            gen_time_ms=0.0,
         )
         await metrics_repo.record_step(
-            model="qwen2", purpose="intelligence", period_hour="2026-06-03T14:00",
-            call_count=1, input_tokens=100, output_tokens=50,
-            thinking_tokens=0, prompt_time_ms=0.0, gen_time_ms=0.0,
+            model="qwen2",
+            purpose="intelligence",
+            period_hour="2026-06-03T14:00",
+            call_count=1,
+            input_tokens=100,
+            output_tokens=50,
+            thinking_tokens=0,
+            prompt_time_ms=0.0,
+            gen_time_ms=0.0,
         )
 
         rows = await metrics_repo.get_metrics(model="llama3")
@@ -141,14 +183,26 @@ class TestGetMetrics:
 
     async def test_filter_by_purpose(self, metrics_repo):
         await metrics_repo.record_step(
-            model="llama3", purpose="intelligence", period_hour="2026-06-03T14:00",
-            call_count=1, input_tokens=100, output_tokens=50,
-            thinking_tokens=0, prompt_time_ms=0.0, gen_time_ms=0.0,
+            model="llama3",
+            purpose="intelligence",
+            period_hour="2026-06-03T14:00",
+            call_count=1,
+            input_tokens=100,
+            output_tokens=50,
+            thinking_tokens=0,
+            prompt_time_ms=0.0,
+            gen_time_ms=0.0,
         )
         await metrics_repo.record_step(
-            model="llama3", purpose="task", period_hour="2026-06-03T14:00",
-            call_count=1, input_tokens=100, output_tokens=50,
-            thinking_tokens=0, prompt_time_ms=0.0, gen_time_ms=0.0,
+            model="llama3",
+            purpose="task",
+            period_hour="2026-06-03T14:00",
+            call_count=1,
+            input_tokens=100,
+            output_tokens=50,
+            thinking_tokens=0,
+            prompt_time_ms=0.0,
+            gen_time_ms=0.0,
         )
 
         rows = await metrics_repo.get_metrics(purpose="task")

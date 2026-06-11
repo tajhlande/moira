@@ -110,7 +110,7 @@ class SettingsService:
             defn = SETTING_DEFINITIONS.get(entry.key)
             if defn is None:
                 continue
-            short_key = entry.key[len(prefix):]
+            short_key = entry.key[len(prefix) :]
             if short_key.startswith("."):
                 short_key = short_key[1:]
             result[short_key] = defn.parse(entry.value)
@@ -131,9 +131,7 @@ class SettingsService:
         parsed = defn.parse(value)
         jsonschema.validate(instance=parsed, schema=defn.constraints)
 
-        await self._repo.set(
-            SettingEntry(key=key, value=value, scope=scope, scope_id=scope_id)
-        )
+        await self._repo.set(SettingEntry(key=key, value=value, scope=scope, scope_id=scope_id))
 
     async def set_batch(self, entries: list[SettingEntry]) -> None:
         """Validate all entries, then persist atomically.

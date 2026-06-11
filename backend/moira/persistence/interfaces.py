@@ -137,9 +137,7 @@ class ConversationRepository(ABC):
     async def delete_conversation(self, conversation_id: str) -> bool: ...
 
     @abstractmethod
-    async def truncate_from_message(
-        self, conversation_id: str, user_message_id: int
-    ) -> bool:
+    async def truncate_from_message(self, conversation_id: str, user_message_id: int) -> bool:
         """Delete the workflow run for the given user message and all messages
         (and their runs) with id >= user_message_id. Keeps the user message
         itself so it can be re-submitted. Returns True if anything was deleted."""
@@ -241,6 +239,7 @@ class SystemSettingsRepository(ABC):
     (conversation > project > user > system) is handled by SettingsService,
     not by the repo. The repo is scope-unaware beyond filtering rows by
     (scope, scope_id)."""
+
     @abstractmethod
     async def get(self, key: str, scope: str, scope_id: str) -> SettingEntry | None: ...
 
@@ -265,9 +264,9 @@ class ParameterSpec:
     """A single parameter extracted from an OpenAPI operation."""
 
     name: str
-    location: str       # "query", "path", "header", "cookie"
+    location: str  # "query", "path", "header", "cookie"
     required: bool
-    schema_def: dict    # JSON Schema for this parameter
+    schema_def: dict  # JSON Schema for this parameter
     description: str
 
 
@@ -275,8 +274,8 @@ class ParameterSpec:
 class RequestBodySpec:
     """The request body schema extracted from an OpenAPI operation."""
 
-    content_type: str   # e.g., "application/json"
-    schema_def: dict    # JSON Schema for request body
+    content_type: str  # e.g., "application/json"
+    schema_def: dict  # JSON Schema for request body
     required: bool
     description: str
 
@@ -285,9 +284,9 @@ class RequestBodySpec:
 class SecuritySchemeInfo:
     """A security scheme extracted from an OpenAPI spec's components."""
 
-    scheme_type: str    # "api_key_header", "api_key_query", "bearer", "basic", "none"
-    name: str           # Header name, query param name, etc.
-    location: str       # "header", "query" — for API key types
+    scheme_type: str  # "api_key_header", "api_key_query", "bearer", "basic", "none"
+    name: str  # Header name, query param name, etc.
+    location: str  # "header", "query" — for API key types
     description: str
 
 
@@ -296,16 +295,16 @@ class ToolCandidate:
     """Intermediate representation of a tool extracted from an API spec.
     Presented to the user for selection before provisioning."""
 
-    name: str                          # Generated tool name (e.g., "weather_api__get_current")
-    description: str                   # From operation.summary + description
-    method: str                        # GET, POST, etc.
-    path: str                          # e.g., "/weather/current"
-    parameters: list[ParameterSpec]    # Path, query, header parameters
+    name: str  # Generated tool name (e.g., "weather_api__get_current")
+    description: str  # From operation.summary + description
+    method: str  # GET, POST, etc.
+    path: str  # e.g., "/weather/current"
+    parameters: list[ParameterSpec]  # Path, query, header parameters
     request_body: RequestBodySpec | None
-    responses: dict[str, str]          # Status code → description
-    security_requirements: list[str]   # Names of required security schemes
-    tags: list[str]                    # From the spec's tags field
-    operation_id: str | None           # Original operationId from spec
+    responses: dict[str, str]  # Status code → description
+    security_requirements: list[str]  # Names of required security schemes
+    tags: list[str]  # From the spec's tags field
+    operation_id: str | None  # Original operationId from spec
     deprecated: bool
 
 
@@ -315,11 +314,11 @@ class ParsedSpec:
 
     title: str
     description: str
-    version: str                      # "openapi_3_0", "openapi_3_1", "swagger_2"
+    version: str  # "openapi_3_0", "openapi_3_1", "swagger_2"
     server_urls: list[str]
     security_schemes: dict[str, SecuritySchemeInfo]
     operations: list[ToolCandidate]
-    spec_url: str | None              # For re-fetch
+    spec_url: str | None  # For re-fetch
 
 
 @dataclass
@@ -330,8 +329,8 @@ class ApiSource:
     name: str
     base_url: str
     spec_url: str | None
-    spec_format: str                  # "openapi_3_0", "openapi_3_1", "swagger_2"
-    auth_type: str | None             # "api_key_header", "bearer", "basic", "none", None
+    spec_format: str  # "openapi_3_0", "openapi_3_1", "swagger_2"
+    auth_type: str | None  # "api_key_header", "bearer", "basic", "none", None
     group_name: str
     tool_count: int
     enabled: bool

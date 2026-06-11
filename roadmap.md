@@ -18,6 +18,7 @@ These are roughly organized by area and not in a plan order.
 
 ## Content and intelligence
 
+- Reduce tool calling volume
 - Native tool calling
 - Thinking budgets
 - Better citation formatting and referencing

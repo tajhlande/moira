@@ -24,7 +24,4 @@ CredentialValue = dict[str, Any]
 
 def validate_credential_name(name: str) -> None:
     if not CREDENTIAL_NAME_PATTERN.match(name):
-        raise ValueError(
-            f"Invalid credential name '{name}'. "
-            "Must match [a-zA-Z_][a-zA-Z0-9_.]*"
-        )
+        raise ValueError(f"Invalid credential name '{name}'. Must match [a-zA-Z_][a-zA-Z0-9_.]*")

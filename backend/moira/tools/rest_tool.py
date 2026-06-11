@@ -43,9 +43,7 @@ class RESTTool(BaseTool):
             else:
                 url = path_template
 
-            query_params, body, extra_headers = self._categorize_args(
-                args, config
-            )
+            query_params, body, extra_headers = self._categorize_args(args, config)
 
             headers = {**extra_headers}
 
@@ -80,36 +78,28 @@ class RESTTool(BaseTool):
                 error=str(e),
             )
 
-    def _resolve_path(
-        self, url: str, args: dict[str, Any], config: dict[str, Any]
-    ) -> str:
+    def _resolve_path(self, url: str, args: dict[str, Any], config: dict[str, Any]) -> str:
         """Substitute path parameters like {city} with actual values from args.
 
         Consumed path parameters are removed from args so they are not also
         sent as query/body parameters."""
         param_specs = config.get("parameters", [])
         path_param_names = {
-            p["name"]
-            for p in param_specs
-            if isinstance(p, dict) and p.get("location") == "path"
+            p["name"] for p in param_specs if isinstance(p, dict) and p.get("location") == "path"
         }
 
         consumed: set[str] = set()
         for name in path_param_names:
             if name in args:
                 # URL-encode the value for safe substitution
-                url = url.replace(
-                    f"{{{name}}}", str(args[name])
-                )
+                url = url.replace(f"{{{name}}}", str(args[name]))
                 consumed.add(name)
 
         # Also handle any remaining {param} placeholders not in specs
         for match in re.finditer(r"\{(\w+)\}", url):
             param_name = match.group(1)
             if param_name in args:
-                url = url.replace(
-                    f"{{{param_name}}}", str(args[param_name])
-                )
+                url = url.replace(f"{{{param_name}}}", str(args[param_name]))
                 consumed.add(param_name)
 
         for name in consumed:

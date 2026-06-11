@@ -38,9 +38,11 @@ async def lifespan(app: FastAPI):
     await init_services(config)
 
     # clean up stale data in the database
+    from typing import cast
+
     from moira.persistence.interfaces import ConversationRepository
     from moira.service_setup import service_provider
-    from typing import cast
+
     repo = cast(ConversationRepository, service_provider("conversation_repository"))
     await repo.cleanup_stale_runs()
 

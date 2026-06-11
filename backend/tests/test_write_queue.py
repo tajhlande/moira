@@ -45,6 +45,7 @@ async def test_await_gives_result(queue):
 
 async def test_write_failure_isolated(queue):
     """A failing write stores exception on future; consumer keeps running."""
+
     async def bad_write():
         raise ValueError("boom")
 

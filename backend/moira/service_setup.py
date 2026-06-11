@@ -279,10 +279,11 @@ async def shutdown_services() -> None:
     if write_queue is not None:
         await write_queue.stop()
 
-    from moira.inference.client import InferenceClient
-
     # Clean up the async aiosqlite connection used by the checkpoint saver.
     import aiosqlite
+
+    from moira.inference.client import InferenceClient
+
     conn = cast(aiosqlite.Connection, _services.pop("_checkpointer_conn", None))
     if conn is not None:
         try:

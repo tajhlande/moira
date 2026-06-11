@@ -81,9 +81,7 @@ class FakeConversationRepo(ConversationRepository):
             return True
         return False
 
-    async def truncate_from_message(
-        self, conversation_id: str, user_message_id: int
-    ) -> bool:
+    async def truncate_from_message(self, conversation_id: str, user_message_id: int) -> bool:
         return False
 
     async def cleanup_stale_runs(self) -> int:

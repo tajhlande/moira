@@ -68,8 +68,7 @@ async def resolve_spec(
         return _parsed_to_tuple(parsed, resolved_url)
 
     raise SpecResolutionError(
-        "No spec source provided "
-        "(base_url, spec_url, or spec_content required)"
+        "No spec source provided (base_url, spec_url, or spec_content required)"
     )
 
 
@@ -79,9 +78,7 @@ async def _fetch_text(url: str) -> str:
         async with httpx.AsyncClient(timeout=PROBE_TIMEOUT) as client:
             resp = await client.get(
                 url,
-                headers={
-                    "Accept": "application/json, application/yaml, text/yaml"
-                },
+                headers={"Accept": "application/json, application/yaml, text/yaml"},
             )
             resp.raise_for_status()
             return resp.text

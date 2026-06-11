@@ -115,13 +115,9 @@ class ActiveRun:
             for idx, step in enumerate(self.execution_steps)
         ]
         if self._current_step:
-            step_summaries.append(
-                self._step_summary(self._current_step, f"{self.run_id}:current")
-            )
+            step_summaries.append(self._step_summary(self._current_step, f"{self.run_id}:current"))
 
-        all_steps = self.execution_steps + (
-            [self._current_step] if self._current_step else []
-        )
+        all_steps = self.execution_steps + ([self._current_step] if self._current_step else [])
         input_tokens = sum(s.get("input_tokens") or 0 for s in all_steps)
         output_tokens = sum(s.get("output_tokens") or 0 for s in all_steps)
         thinking_tokens = sum(s.get("thinking_tokens") or 0 for s in all_steps)
@@ -645,7 +641,9 @@ class ActiveRun:
         )
         await write_queue.enqueue(
             lambda: self._conversation_repo.insert_message(
-                self.conversation_id, role, content,
+                self.conversation_id,
+                role,
+                content,
             )
         )
 
@@ -824,9 +822,7 @@ class RunManager:
             for cid in self.active_conversation_ids():
                 yield {
                     "event": "run_status",
-                    "data": json.dumps(
-                        {"conversation_id": cid, "status": "running"}
-                    ),
+                    "data": json.dumps({"conversation_id": cid, "status": "running"}),
                 }
             while True:
                 event = await queue.get()
@@ -887,9 +883,7 @@ class RunManager:
         self._broadcast_global(
             {
                 "event": "run_status",
-                "data": json.dumps(
-                    {"conversation_id": conversation_id, "status": "running"}
-                ),
+                "data": json.dumps({"conversation_id": conversation_id, "status": "running"}),
             }
         )
         return run_id
@@ -995,9 +989,7 @@ class RunManager:
         self._broadcast_global(
             {
                 "event": "run_status",
-                "data": json.dumps(
-                    {"conversation_id": conversation_id, "status": "running"}
-                ),
+                "data": json.dumps({"conversation_id": conversation_id, "status": "running"}),
             }
         )
         return run_id

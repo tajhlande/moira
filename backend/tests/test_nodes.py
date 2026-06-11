@@ -87,9 +87,7 @@ class TestPlanning:
     async def test_produces_plan_and_deducts_budget(
         self, config, mock_writer, mock_model, base_state
     ):
-        mock_model[
-            "client"
-        ].chat_completion.return_value = ChatResponse(
+        mock_model["client"].chat_completion.return_value = ChatResponse(
             content="1. Look up the speed of light\n2. Verify with multiple sources"
         )
         _inject_services(config, mock_model)
@@ -240,9 +238,7 @@ class TestToolSelection:
     async def test_selects_tools_from_model_response(
         self, config, mock_writer, mock_model, base_state
     ):
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content='["web_search"]'
-        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content='["web_search"]')
         _inject_services(config, mock_model)
         base_state["active_tools"] = [
             ToolDefinition(name="web_search", description="Search the web"),
@@ -293,9 +289,7 @@ class TestResearchExecution:
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
             ChatResponse(
-                content=json.dumps(
-                    [{"tool": "web_search", "args": {"query": "speed of light"}}]
-                )
+                content=json.dumps([{"tool": "web_search", "args": {"query": "speed of light"}}])
             ),
             ChatResponse(content="Research complete."),
         ]
@@ -330,9 +324,7 @@ class TestResearchExecution:
     async def test_emits_tool_result_events(self, config, mock_writer, mock_model, base_state):
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(
-                content=json.dumps([{"tool": "web_search", "args": {"query": "test"}}])
-            ),
+            ChatResponse(content=json.dumps([{"tool": "web_search", "args": {"query": "test"}}])),
             ChatResponse(content="Done."),
         ]
         mock_executor = AsyncMock()
@@ -370,9 +362,7 @@ class TestResearchExecution:
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
             ChatResponse(
-                content=json.dumps(
-                    [{"tool": "web_search", "args": {"query": "speed of light"}}]
-                )
+                content=json.dumps([{"tool": "web_search", "args": {"query": "speed of light"}}])
             ),
             ChatResponse(
                 content=json.dumps(
@@ -384,9 +374,7 @@ class TestResearchExecution:
                     ]
                 )
             ),
-            ChatResponse(
-                content="Research complete. The speed of light is 299,792,458 m/s."
-            ),
+            ChatResponse(content="Research complete. The speed of light is 299,792,458 m/s."),
         ]
 
         mock_executor = AsyncMock()
@@ -433,9 +421,7 @@ class TestCompression:
     async def test_compresses_findings_to_summary(
         self, config, mock_writer, mock_model, base_state
     ):
-        mock_model[
-            "client"
-        ].chat_completion.return_value = ChatResponse(
+        mock_model["client"].chat_completion.return_value = ChatResponse(
             content="Key findings: speed of light is ~3e8 m/s"
         )
         _inject_services(config, mock_model)
@@ -476,9 +462,7 @@ class TestCompression:
 
 class TestDraftSynthesis:
     async def test_produces_draft_from_evidence(self, config, mock_writer, mock_model, base_state):
-        mock_model[
-            "client"
-        ].chat_completion.return_value = ChatResponse(
+        mock_model["client"].chat_completion.return_value = ChatResponse(
             content="The speed of light is approximately 3 x 10^8 m/s [web_search]."
         )
         _inject_services(config, mock_model)
@@ -714,9 +698,7 @@ class TestVerification:
 
         mock_model["client"].chat_completion.side_effect = [
             ChatResponse(
-                content=json.dumps(
-                    [{"tool": "web_search", "args": {"query": "speed of light"}}]
-                )
+                content=json.dumps([{"tool": "web_search", "args": {"query": "speed of light"}}])
             ),
             ChatResponse(content="Found contradiction."),
             ChatResponse(

@@ -137,9 +137,7 @@ class ToolExecutor:
         await self._record_metrics(tool_name, args, last_result)
         return last_result
 
-    async def _record_metrics(
-        self, tool_name: str, args: dict, result: ToolResult
-    ) -> None:
+    async def _record_metrics(self, tool_name: str, args: dict, result: ToolResult) -> None:
         """Record metrics for a tool call. Silently skipped when no
         metrics_repo is configured. Exceptions from report_call_type() are
         swallowed so metrics never break execution."""
@@ -160,7 +158,7 @@ class ToolExecutor:
 
             write_queue = cast(AsyncWriteQueue, service_provider("write_queue"))
             write_queue.enqueue(
-                lambda: self._metrics_repo.record_call( # type: ignore
+                lambda: self._metrics_repo.record_call(  # type: ignore
                     tool_name=tool_name,
                     call_type=call_type,
                     period_hour=period_hour,
@@ -178,9 +176,7 @@ class ToolExecutor:
                     duration_ms=result.duration_ms,
                 )
             except Exception:
-                logger.debug(
-                    "Failed to record metrics for %s", tool_name, exc_info=True
-                )
+                logger.debug("Failed to record metrics for %s", tool_name, exc_info=True)
 
     async def execute_batch(
         self,

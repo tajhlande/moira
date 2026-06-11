@@ -1,9 +1,11 @@
 """Tests for spec_parser, auth_analyzer, spec_resolver, and RESTTool."""
 
 import json
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from moira.persistence.interfaces import ApiSource
 from moira.services.tool_ingestion.auth_analyzer import (
     extract_security_schemes,
     get_auth_type_for_spec,
@@ -16,6 +18,11 @@ from moira.services.tool_ingestion.spec_parser import (
     parse_spec_content,
 )
 from moira.services.tool_ingestion.spec_resolver import _validate_spec_text
+from moira.services.tool_ingestion.tool_provisioner import (
+    REST_TOOL_IMPL,
+    ToolProvisioner,
+    build_argument_schema,
+)
 from moira.tools.base import ToolDefinition
 from moira.tools.rest_tool import RESTTool
 
@@ -67,69 +74,81 @@ class TestExtractSecuritySchemes:
         assert extract_security_schemes(spec) == {}
 
     def test_bearer_scheme(self):
-        spec = _openapi_spec(security_schemes={
-            "bearerAuth": {
-                "type": "http",
-                "scheme": "bearer",
-                "description": "JWT auth",
+        spec = _openapi_spec(
+            security_schemes={
+                "bearerAuth": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "description": "JWT auth",
+                }
             }
-        })
+        )
         schemes = extract_security_schemes(spec)
         assert "bearerAuth" in schemes
         assert schemes["bearerAuth"].scheme_type == "bearer"
         assert schemes["bearerAuth"].location == "header"
 
     def test_api_key_header(self):
-        spec = _openapi_spec(security_schemes={
-            "apiKey": {
-                "type": "apiKey",
-                "in": "header",
-                "name": "X-API-Key",
+        spec = _openapi_spec(
+            security_schemes={
+                "apiKey": {
+                    "type": "apiKey",
+                    "in": "header",
+                    "name": "X-API-Key",
+                }
             }
-        })
+        )
         schemes = extract_security_schemes(spec)
         assert schemes["apiKey"].scheme_type == "api_key_header"
         assert schemes["apiKey"].name == "X-API-Key"
 
     def test_api_key_query(self):
-        spec = _openapi_spec(security_schemes={
-            "queryKey": {
-                "type": "apiKey",
-                "in": "query",
-                "name": "api_key",
+        spec = _openapi_spec(
+            security_schemes={
+                "queryKey": {
+                    "type": "apiKey",
+                    "in": "query",
+                    "name": "api_key",
+                }
             }
-        })
+        )
         schemes = extract_security_schemes(spec)
         assert schemes["queryKey"].scheme_type == "api_key_query"
         assert schemes["queryKey"].name == "api_key"
 
     def test_basic_auth(self):
-        spec = _openapi_spec(security_schemes={
-            "basicAuth": {
-                "type": "http",
-                "scheme": "basic",
+        spec = _openapi_spec(
+            security_schemes={
+                "basicAuth": {
+                    "type": "http",
+                    "scheme": "basic",
+                }
             }
-        })
+        )
         schemes = extract_security_schemes(spec)
         assert schemes["basicAuth"].scheme_type == "basic"
 
     def test_oauth2_ignored(self):
-        spec = _openapi_spec(security_schemes={
-            "oauth": {
-                "type": "oauth2",
-                "flows": {"clientCredentials": {"tokenUrl": "/token", "scopes": {}}},
+        spec = _openapi_spec(
+            security_schemes={
+                "oauth": {
+                    "type": "oauth2",
+                    "flows": {"clientCredentials": {"tokenUrl": "/token", "scopes": {}}},
+                }
             }
-        })
+        )
         assert extract_security_schemes(spec) == {}
 
     def test_swagger_2_security_definitions(self):
-        spec = _swagger_spec(security_definitions={
-            "apiKey": {
-                "type": "apiKey",
-                "in": "header",
-                "name": "X-Api-Key",
+        spec = _swagger_spec(
+            security_definitions={
+                "apiKey": {
+                    "type": "apiKey",
+                    "in": "header",
+                    "name": "X-Api-Key",
+                }
             }
-        })
+        )
         schemes = extract_security_schemes(spec)
         assert "apiKey" in schemes
         assert schemes["apiKey"].scheme_type == "api_key_header"
@@ -148,9 +167,11 @@ class TestGetAuthTypeForSpec:
         assert get_auth_type_for_spec(spec) == "bearer"
 
     def test_no_global_security_returns_none(self):
-        spec = _openapi_spec(security_schemes={
-            "apiKey": {"type": "apiKey", "in": "header", "name": "X-Key"},
-        })
+        spec = _openapi_spec(
+            security_schemes={
+                "apiKey": {"type": "apiKey", "in": "header", "name": "X-Key"},
+            }
+        )
         assert get_auth_type_for_spec(spec) is None
 
 
@@ -226,14 +247,16 @@ class TestSanitizeOperationId:
 
 class TestParseSpecContent:
     def test_minimal_openapi(self):
-        spec = _openapi_spec(paths={
-            "/status": {
-                "get": {
-                    "summary": "Health check",
-                    "responses": {"200": {"description": "OK"}},
+        spec = _openapi_spec(
+            paths={
+                "/status": {
+                    "get": {
+                        "summary": "Health check",
+                        "responses": {"200": {"description": "OK"}},
+                    }
                 }
             }
-        })
+        )
         parsed = parse_spec_content(json.dumps(spec))
         assert parsed.title == "Test API"
         assert parsed.version == "openapi_3_0"
@@ -243,44 +266,48 @@ class TestParseSpecContent:
         assert parsed.operations[0].description == "Health check"
 
     def test_swagger_2(self):
-        spec = _swagger_spec(paths={
-            "/pets": {
-                "get": {
-                    "summary": "List pets",
-                    "responses": {"200": {"description": "OK"}},
+        spec = _swagger_spec(
+            paths={
+                "/pets": {
+                    "get": {
+                        "summary": "List pets",
+                        "responses": {"200": {"description": "OK"}},
+                    }
                 }
             }
-        })
+        )
         parsed = parse_spec_content(json.dumps(spec))
         assert parsed.version == "swagger_2"
         assert len(parsed.operations) == 1
         assert parsed.server_urls == ["https://api.example.com/v1"]
 
     def test_parameters_extracted(self):
-        spec = _openapi_spec(paths={
-            "/weather": {
-                "get": {
-                    "summary": "Get weather",
-                    "parameters": [
-                        {
-                            "name": "city",
-                            "in": "query",
-                            "required": True,
-                            "schema": {"type": "string"},
-                            "description": "City name",
-                        },
-                        {
-                            "name": "unit",
-                            "in": "query",
-                            "required": False,
-                            "schema": {"type": "string", "default": "celsius"},
-                            "description": "Temperature unit",
-                        },
-                    ],
-                    "responses": {"200": {"description": "OK"}},
+        spec = _openapi_spec(
+            paths={
+                "/weather": {
+                    "get": {
+                        "summary": "Get weather",
+                        "parameters": [
+                            {
+                                "name": "city",
+                                "in": "query",
+                                "required": True,
+                                "schema": {"type": "string"},
+                                "description": "City name",
+                            },
+                            {
+                                "name": "unit",
+                                "in": "query",
+                                "required": False,
+                                "schema": {"type": "string", "default": "celsius"},
+                                "description": "Temperature unit",
+                            },
+                        ],
+                        "responses": {"200": {"description": "OK"}},
+                    }
                 }
             }
-        })
+        )
         parsed = parse_spec_content(json.dumps(spec))
         op = parsed.operations[0]
         assert len(op.parameters) == 2
@@ -291,26 +318,28 @@ class TestParseSpecContent:
         assert op.parameters[1].required is False
 
     def test_request_body_extracted(self):
-        spec = _openapi_spec(paths={
-            "/orders": {
-                "post": {
-                    "summary": "Create order",
-                    "requestBody": {
-                        "required": True,
-                        "description": "Order payload",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {"item": {"type": "string"}},
+        spec = _openapi_spec(
+            paths={
+                "/orders": {
+                    "post": {
+                        "summary": "Create order",
+                        "requestBody": {
+                            "required": True,
+                            "description": "Order payload",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {"item": {"type": "string"}},
+                                    }
                                 }
-                            }
+                            },
                         },
-                    },
-                    "responses": {"201": {"description": "Created"}},
+                        "responses": {"201": {"description": "Created"}},
+                    }
                 }
             }
-        })
+        )
         parsed = parse_spec_content(json.dumps(spec))
         op = parsed.operations[0]
         assert op.request_body is not None
@@ -319,20 +348,27 @@ class TestParseSpecContent:
         assert "item" in op.request_body.schema_def.get("properties", {})
 
     def test_path_level_parameters_merged(self):
-        spec = _openapi_spec(paths={
-            "/items/{id}": {
-                "parameters": [
-                    {"name": "id", "in": "path", "required": True, "schema": {"type": "string"}},
-                ],
-                "get": {
-                    "summary": "Get item",
+        spec = _openapi_spec(
+            paths={
+                "/items/{id}": {
                     "parameters": [
-                        {"name": "fields", "in": "query", "schema": {"type": "string"}},
+                        {
+                            "name": "id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string"},
+                        },
                     ],
-                    "responses": {"200": {"description": "OK"}},
-                },
+                    "get": {
+                        "summary": "Get item",
+                        "parameters": [
+                            {"name": "fields", "in": "query", "schema": {"type": "string"}},
+                        ],
+                        "responses": {"200": {"description": "OK"}},
+                    },
+                }
             }
-        })
+        )
         parsed = parse_spec_content(json.dumps(spec))
         op = parsed.operations[0]
         param_names = [p.name for p in op.parameters]
@@ -340,15 +376,17 @@ class TestParseSpecContent:
         assert "fields" in param_names
 
     def test_deprecated_flag(self):
-        spec = _openapi_spec(paths={
-            "/old": {
-                "get": {
-                    "summary": "Deprecated endpoint",
-                    "deprecated": True,
-                    "responses": {"200": {"description": "OK"}},
+        spec = _openapi_spec(
+            paths={
+                "/old": {
+                    "get": {
+                        "summary": "Deprecated endpoint",
+                        "deprecated": True,
+                        "responses": {"200": {"description": "OK"}},
+                    }
                 }
             }
-        })
+        )
         parsed = parse_spec_content(json.dumps(spec))
         assert parsed.operations[0].deprecated is True
 
@@ -369,22 +407,32 @@ class TestParseSpecContent:
         assert "bearerAuth" in parsed.operations[0].security_requirements
 
     def test_multiple_operations(self):
-        spec = _openapi_spec(paths={
-            "/items": {
-                "get": {"summary": "List", "responses": {"200": {"description": "OK"}}},
-                "post": {"summary": "Create", "responses": {"201": {"description": "Created"}}},
-            },
-            "/items/{id}": {
-                "parameters": [
-                    {"name": "id", "in": "path", "required": True, "schema": {"type": "string"}},
-                ],
-                "get": {"summary": "Get", "responses": {"200": {"description": "OK"}}},
-                "delete": {
-                    "summary": "Delete",
-                    "responses": {"204": {"description": "No content"}},
+        spec = _openapi_spec(
+            paths={
+                "/items": {
+                    "get": {"summary": "List", "responses": {"200": {"description": "OK"}}},
+                    "post": {
+                        "summary": "Create",
+                        "responses": {"201": {"description": "Created"}},
+                    },
                 },
-            },
-        })
+                "/items/{id}": {
+                    "parameters": [
+                        {
+                            "name": "id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string"},
+                        },
+                    ],
+                    "get": {"summary": "Get", "responses": {"200": {"description": "OK"}}},
+                    "delete": {
+                        "summary": "Delete",
+                        "responses": {"204": {"description": "No content"}},
+                    },
+                },
+            }
+        )
         parsed = parse_spec_content(json.dumps(spec))
         assert len(parsed.operations) == 4
         methods = {op.method for op in parsed.operations}
@@ -496,14 +544,16 @@ def _rest_tool(
 
 class TestRESTToolPathResolution:
     def test_single_path_param(self):
-        tool = _rest_tool({
-            "base_url": "https://api.example.com",
-            "endpoint": "/weather/{city}",
-            "method": "GET",
-            "parameters": [
-                {"name": "city", "location": "path", "required": True},
-            ],
-        })
+        tool = _rest_tool(
+            {
+                "base_url": "https://api.example.com",
+                "endpoint": "/weather/{city}",
+                "method": "GET",
+                "parameters": [
+                    {"name": "city", "location": "path", "required": True},
+                ],
+            }
+        )
         args = {"city": "London"}
         url = tool._resolve_path(
             "https://api.example.com/weather/{city}", args, tool.definition.config
@@ -512,15 +562,17 @@ class TestRESTToolPathResolution:
         assert "city" not in args
 
     def test_multiple_path_params(self):
-        tool = _rest_tool({
-            "base_url": "https://api.example.com",
-            "endpoint": "/repos/{owner}/{repo}/issues",
-            "method": "GET",
-            "parameters": [
-                {"name": "owner", "location": "path", "required": True},
-                {"name": "repo", "location": "path", "required": True},
-            ],
-        })
+        tool = _rest_tool(
+            {
+                "base_url": "https://api.example.com",
+                "endpoint": "/repos/{owner}/{repo}/issues",
+                "method": "GET",
+                "parameters": [
+                    {"name": "owner", "location": "path", "required": True},
+                    {"name": "repo", "location": "path", "required": True},
+                ],
+            }
+        )
         args = {"owner": "octocat", "repo": "hello-world"}
         url = tool._resolve_path(
             "https://api.example.com/repos/{owner}/{repo}/issues",
@@ -532,12 +584,14 @@ class TestRESTToolPathResolution:
 
     def test_undocumented_path_param_substituted(self):
         """Placeholders not in spec parameters are still substituted."""
-        tool = _rest_tool({
-            "base_url": "https://api.example.com",
-            "endpoint": "/items/{id}",
-            "method": "GET",
-            "parameters": [],
-        })
+        tool = _rest_tool(
+            {
+                "base_url": "https://api.example.com",
+                "endpoint": "/items/{id}",
+                "method": "GET",
+                "parameters": [],
+            }
+        )
         args = {"id": "42"}
         url = tool._resolve_path(
             "https://api.example.com/items/{id}", args, tool.definition.config
@@ -548,15 +602,17 @@ class TestRESTToolPathResolution:
 
 class TestRESTToolArgCategorization:
     def test_query_params_isolated(self):
-        tool = _rest_tool({
-            "base_url": "https://api.example.com",
-            "endpoint": "/search",
-            "method": "GET",
-            "parameters": [
-                {"name": "q", "location": "query", "required": True},
-                {"name": "limit", "location": "query", "required": False},
-            ],
-        })
+        tool = _rest_tool(
+            {
+                "base_url": "https://api.example.com",
+                "endpoint": "/search",
+                "method": "GET",
+                "parameters": [
+                    {"name": "q", "location": "query", "required": True},
+                    {"name": "limit", "location": "query", "required": False},
+                ],
+            }
+        )
         args = {"q": "cats", "limit": 10}
         query, body, headers = tool._categorize_args(args, tool.definition.config)
         assert query == {"q": "cats", "limit": 10}
@@ -564,15 +620,17 @@ class TestRESTToolArgCategorization:
         assert headers == {}
 
     def test_header_params_isolated(self):
-        tool = _rest_tool({
-            "base_url": "https://api.example.com",
-            "endpoint": "/data",
-            "method": "GET",
-            "parameters": [
-                {"name": "X-Custom-Header", "location": "header", "required": True},
-                {"name": "page", "location": "query", "required": False},
-            ],
-        })
+        tool = _rest_tool(
+            {
+                "base_url": "https://api.example.com",
+                "endpoint": "/data",
+                "method": "GET",
+                "parameters": [
+                    {"name": "X-Custom-Header", "location": "header", "required": True},
+                    {"name": "page", "location": "query", "required": False},
+                ],
+            }
+        )
         args = {"X-Custom-Header": "value123", "page": 2}
         query, body, headers = tool._categorize_args(args, tool.definition.config)
         assert query == {"page": 2}
@@ -580,14 +638,16 @@ class TestRESTToolArgCategorization:
         assert headers == {"X-Custom-Header": "value123"}
 
     def test_body_params_for_post(self):
-        tool = _rest_tool({
-            "base_url": "https://api.example.com",
-            "endpoint": "/orders",
-            "method": "POST",
-            "parameters": [
-                {"name": "item", "location": "query", "required": False},
-            ],
-        })
+        tool = _rest_tool(
+            {
+                "base_url": "https://api.example.com",
+                "endpoint": "/orders",
+                "method": "POST",
+                "parameters": [
+                    {"name": "item", "location": "query", "required": False},
+                ],
+            }
+        )
         args = {"item": "widget", "quantity": 5, "price": 9.99}
         query, body, headers = tool._categorize_args(args, tool.definition.config)
         assert query == {"item": "widget"}
@@ -595,24 +655,28 @@ class TestRESTToolArgCategorization:
         assert headers == {}
 
     def test_no_location_defaults_to_query_for_get(self):
-        tool = _rest_tool({
-            "base_url": "https://api.example.com",
-            "endpoint": "/search",
-            "method": "GET",
-            "parameters": [],
-        })
+        tool = _rest_tool(
+            {
+                "base_url": "https://api.example.com",
+                "endpoint": "/search",
+                "method": "GET",
+                "parameters": [],
+            }
+        )
         args = {"q": "test"}
         query, body, headers = tool._categorize_args(args, tool.definition.config)
         assert query == {"q": "test"}
         assert body == {}
 
     def test_no_location_defaults_to_body_for_post(self):
-        tool = _rest_tool({
-            "base_url": "https://api.example.com",
-            "endpoint": "/items",
-            "method": "POST",
-            "parameters": [],
-        })
+        tool = _rest_tool(
+            {
+                "base_url": "https://api.example.com",
+                "endpoint": "/items",
+                "method": "POST",
+                "parameters": [],
+            }
+        )
         args = {"name": "widget"}
         query, body, headers = tool._categorize_args(args, tool.definition.config)
         assert query == {}
@@ -641,15 +705,17 @@ class TestRESTToolArgCategorization:
         assert headers == {"X-Token": "abc"}
 
     def test_path_params_excluded_from_categorization(self):
-        tool = _rest_tool({
-            "base_url": "https://api.example.com",
-            "endpoint": "/items/{id}",
-            "method": "GET",
-            "parameters": [
-                {"name": "id", "location": "path", "required": True},
-                {"name": "fields", "location": "query", "required": False},
-            ],
-        })
+        tool = _rest_tool(
+            {
+                "base_url": "https://api.example.com",
+                "endpoint": "/items/{id}",
+                "method": "GET",
+                "parameters": [
+                    {"name": "id", "location": "path", "required": True},
+                    {"name": "fields", "location": "query", "required": False},
+                ],
+            }
+        )
         args = {"fields": "name,price"}
         query, body, headers = tool._categorize_args(args, tool.definition.config)
         assert "id" not in query
@@ -658,17 +724,6 @@ class TestRESTToolArgCategorization:
 
 
 # ---- Tool Provisioner tests ----
-
-
-from unittest.mock import AsyncMock, MagicMock, patch
-
-from moira.services.tool_ingestion.tool_provisioner import (
-    REST_TOOL_IMPL,
-    ProvisionResult,
-    ToolProvisioner,
-    build_argument_schema,
-)
-from moira.persistence.interfaces import ApiSource
 
 
 class TestBuildArgumentSchema:
@@ -680,8 +735,20 @@ class TestBuildArgumentSchema:
 
     def test_params_with_locations(self):
         params = [
-            {"name": "city", "location": "query", "required": True, "schema_def": {"type": "string"}, "description": "City name"},
-            {"name": "X-Api-Key", "location": "header", "required": True, "schema_def": {"type": "string"}, "description": "API key"},
+            {
+                "name": "city",
+                "location": "query",
+                "required": True,
+                "schema_def": {"type": "string"},
+                "description": "City name",
+            },
+            {
+                "name": "X-Api-Key",
+                "location": "header",
+                "required": True,
+                "schema_def": {"type": "string"},
+                "description": "API key",
+            },
         ]
         schema = build_argument_schema(params, None)
         assert schema["properties"]["city"]["x-parameter-location"] == "query"
@@ -705,7 +772,13 @@ class TestBuildArgumentSchema:
     def test_param_takes_precedence_over_body(self):
         """If a param and body property share a name, param wins."""
         params = [
-            {"name": "name", "location": "query", "required": False, "schema_def": {"type": "string"}, "description": "Name"},
+            {
+                "name": "name",
+                "location": "query",
+                "required": False,
+                "schema_def": {"type": "string"},
+                "description": "Name",
+            },
         ]
         body_schema = {
             "properties": {"name": {"type": "integer"}},
@@ -744,7 +817,13 @@ def _sample_operations():
             "method": "GET",
             "path": "/items",
             "parameters": [
-                {"name": "limit", "location": "query", "required": False, "schema_def": {"type": "integer"}, "description": "Max items"},
+                {
+                    "name": "limit",
+                    "location": "query",
+                    "required": False,
+                    "schema_def": {"type": "integer"},
+                    "description": "Max items",
+                },
             ],
             "request_body": None,
             "tags": ["items"],
@@ -758,7 +837,13 @@ def _sample_operations():
             "method": "GET",
             "path": "/items/{id}",
             "parameters": [
-                {"name": "id", "location": "path", "required": True, "schema_def": {"type": "string"}, "description": "Item ID"},
+                {
+                    "name": "id",
+                    "location": "path",
+                    "required": True,
+                    "schema_def": {"type": "string"},
+                    "description": "Item ID",
+                },
             ],
             "request_body": None,
             "tags": ["items"],
@@ -797,10 +882,12 @@ class TestToolProvisionerCommit:
         assert result.failed == []
         assert result.disabled == []
         assert tool_repo.save_tool.call_count == 1
-        tool_repo.save_group.assert_called_once_with({
-            "name": "test_api",
-            "display_name": "Test API",
-        })
+        tool_repo.save_group.assert_called_once_with(
+            {
+                "name": "test_api",
+                "display_name": "Test API",
+            }
+        )
         source_repo.save.assert_called_once()
 
     @pytest.mark.asyncio
@@ -916,32 +1003,36 @@ class TestToolProvisionerDelete:
     @pytest.mark.asyncio
     async def test_delete_source_removes_tools(self):
         source_repo = _mock_source_repo()
-        source_repo.get = AsyncMock(return_value=ApiSource(
-            id="src-del",
-            name="Delete API",
-            base_url="https://api.example.com",
-            spec_url=None,
-            spec_format="openapi_3_0",
-            auth_type=None,
-            group_name="Delete API",
-            tool_count=1,
-            enabled=True,
-            created_at="2025-01-01T00:00:00",
-            updated_at="2025-01-01T00:00:00",
-        ))
+        source_repo.get = AsyncMock(
+            return_value=ApiSource(
+                id="src-del",
+                name="Delete API",
+                base_url="https://api.example.com",
+                spec_url=None,
+                spec_format="openapi_3_0",
+                auth_type=None,
+                group_name="Delete API",
+                tool_count=1,
+                enabled=True,
+                created_at="2025-01-01T00:00:00",
+                updated_at="2025-01-01T00:00:00",
+            )
+        )
         tool_repo = _mock_tool_repo()
-        tool_repo.get_all_tools = AsyncMock(return_value=[
-            ToolDefinition(
-                name="delete_api__get_items",
-                description="Get items",
-                config={"source_id": "src-del"},
-            ),
-            ToolDefinition(
-                name="other_api__get_items",
-                description="Other items",
-                config={"source_id": "src-other"},
-            ),
-        ])
+        tool_repo.get_all_tools = AsyncMock(
+            return_value=[
+                ToolDefinition(
+                    name="delete_api__get_items",
+                    description="Get items",
+                    config={"source_id": "src-del"},
+                ),
+                ToolDefinition(
+                    name="other_api__get_items",
+                    description="Other items",
+                    config={"source_id": "src-other"},
+                ),
+            ]
+        )
 
         with patch("moira.services.tool_ingestion.tool_provisioner.service_provider") as mock_sp:
             mock_sp.return_value = None
