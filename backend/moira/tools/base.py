@@ -24,6 +24,8 @@ class ToolDefinition:
     implementation: str = ""
     group_name: str = ""
     original_description: str = ""
+    invocation_cost: float = 1.0
+    call_limit_per_run: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -39,6 +41,8 @@ class ToolDefinition:
             "implementation": self.implementation,
             "group_name": self.group_name,
             "original_description": self.original_description,
+            "invocation_cost": self.invocation_cost,
+            "call_limit_per_run": self.call_limit_per_run,
         }
 
 

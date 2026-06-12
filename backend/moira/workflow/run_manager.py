@@ -14,13 +14,13 @@ from moira.persistence.interfaces import ConversationRepository, WorkflowRun
 logger = logging.getLogger(__name__)
 
 STAGE_LABELS = {
-    "decomposition": "Decomposing question",
+    "decomposition": "Analyzing question",
     "tool_identification": "Identifying tools",
-    "planning": "Planning research",
+    "planning": "Planning research approach",
     "research": "Researching",
     "synthesis": "Synthesizing conclusions",
-    "verification": "Verifying",
-    "report_generation": "Generating Report",
+    "verification": "Verifying facts and conclusions",
+    "report_generation": "Generating report",
 }
 
 # Sentinel value placed in subscriber queues to signal end-of-stream.

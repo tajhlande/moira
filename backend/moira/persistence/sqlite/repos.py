@@ -382,6 +382,8 @@ class SqliteToolRepository(ToolRepository):
 
     @staticmethod
     def _row_to_defn(row: sqlite3.Row) -> ToolDefinition:
+        invocation_cost = row["invocation_cost"] if "invocation_cost" in row.keys() else 1.0
+        call_limit = row["call_limit_per_run"] if "call_limit_per_run" in row.keys() else 0
         return ToolDefinition(
             name=row["name"],
             description=row["description"],
@@ -397,6 +399,8 @@ class SqliteToolRepository(ToolRepository):
             original_description=(
                 row["original_description"] if "original_description" in row.keys() else ""
             ),
+            invocation_cost=float(invocation_cost),
+            call_limit_per_run=int(call_limit) if call_limit is not None else 0,
         )
 
     async def get_all_tools(self) -> list[ToolDefinition]:
@@ -422,8 +426,9 @@ class SqliteToolRepository(ToolRepository):
                 """INSERT OR REPLACE INTO tools
                    (name, description, argument_schema, config, tags,
                     reliability, is_default, enabled, built_in,
-                    implementation, group_name, original_description)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    implementation, group_name, original_description,
+                    invocation_cost, call_limit_per_run)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     tool.name,
                     tool.description,
@@ -437,6 +442,8 @@ class SqliteToolRepository(ToolRepository):
                     tool.implementation,
                     tool.group_name,
                     tool.original_description,
+                    tool.invocation_cost,
+                    tool.call_limit_per_run if tool.call_limit_per_run else None,
                 ),
             )
             conn.commit()

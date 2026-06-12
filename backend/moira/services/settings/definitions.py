@@ -27,7 +27,7 @@ SETTING_DEFINITIONS: dict[str, SettingDefinition] = {
     "budget.default_limit": SettingDefinition(
         key="budget.default_limit",
         type="integer",
-        default="60",
+        default="100",
         label="Default Budget",
         description="Default budget allocated to each research run.",
         group="budget",

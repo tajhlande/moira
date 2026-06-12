@@ -28,6 +28,24 @@ def _run_manager() -> RunManager:
     return cast(RunManager, service_provider("run_manager"))
 
 
+async def _build_tool_cost_and_limits() -> tuple[dict[str, float], dict[str, int]]:
+    """Load tool_costs and tool_call_limits from the tool catalog."""
+    from moira.persistence.interfaces import ToolRepository
+
+    repo = cast(ToolRepository, service_provider("tool_repository"))
+    tools = await repo.get_all_tools()
+
+    tool_costs: dict[str, float] = {}
+    tool_call_limits: dict[str, int] = {}
+    for t in tools:
+        if not t.enabled:
+            continue
+        tool_costs[t.name] = t.invocation_cost
+        if t.call_limit_per_run and t.call_limit_per_run > 0:
+            tool_call_limits[t.name] = t.call_limit_per_run
+    return tool_costs, tool_call_limits
+
+
 @streaming_router.post("/conversations/{conversation_id}/messages")
 async def send_message(
     conversation_id: str,
@@ -134,6 +152,8 @@ async def send_message(
     prior_report = prior_turns[-1] if prior_turns else None
     prior_question = prior_turns[-1]["question"] if prior_turns else None
 
+    tool_costs, tool_call_limits = await _build_tool_cost_and_limits()
+
     initial_state = {
         "knowledge": {
             "question": user_content,
@@ -152,7 +172,8 @@ async def send_message(
             "budget_remaining": float(budget_limit),
             "budget_limit": float(budget_limit),
             "step_costs": cost_weights,
-            "tool_costs": {},
+            "tool_costs": tool_costs,
+            "tool_call_limits": tool_call_limits,
             "tool_call_counts": {},
             "total_tool_cost_consumed": 0.0,
             "error": "",
@@ -292,6 +313,8 @@ async def rerun_message(
     prior_report = prior_turns[-1] if prior_turns else None
     prior_question = prior_turns[-1]["question"] if prior_turns else None
 
+    tool_costs, tool_call_limits = await _build_tool_cost_and_limits()
+
     initial_state = {
         "knowledge": {
             "question": user_content,
@@ -310,7 +333,8 @@ async def rerun_message(
             "budget_remaining": float(budget_limit),
             "budget_limit": float(budget_limit),
             "step_costs": cost_weights,
-            "tool_costs": {},
+            "tool_costs": tool_costs,
+            "tool_call_limits": tool_call_limits,
             "tool_call_counts": {},
             "total_tool_cost_consumed": 0.0,
             "error": "",

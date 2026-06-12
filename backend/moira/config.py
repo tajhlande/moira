@@ -24,7 +24,7 @@ class CostWeights(BaseModel):
 
 
 class BudgetConfig(BaseModel):
-    default_limit: int = 60
+    default_limit: int = 100
     cost_weights: CostWeights = CostWeights()
 
 

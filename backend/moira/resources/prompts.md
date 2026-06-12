@@ -65,6 +65,7 @@ Rules:
   user's goal
 - Multiple facts can be resolved by a single well-chosen tool call if the tool
   returns structured data about a subject
+- Do not skip a fact because you believe you already know the answer. Every fact in the unknown list must be resolved through tool calls. The system requires evidence, not prior knowledge.
 
 You will receive unknown facts in the format: ID | subject | fact_needed
 Reference facts by their IDs in your plan.

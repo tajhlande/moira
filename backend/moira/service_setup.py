@@ -162,10 +162,13 @@ async def init_services(
         if existing is None:
             await tool_repo.save_tool(tool_def)
         elif existing.built_in:
-            # Preserve user's enabled preference and config values,
-            # update everything else (description, schema, implementation, etc.)
+            # Preserve user's enabled preference, config values, and
+            # cost/limit settings, update everything else (description,
+            # schema, implementation, etc.)
             tool_def.enabled = existing.enabled
             tool_def.config = existing.config
+            tool_def.invocation_cost = existing.invocation_cost
+            tool_def.call_limit_per_run = existing.call_limit_per_run
             await tool_repo.save_tool(tool_def)
 
     catalog = ToolCatalog()

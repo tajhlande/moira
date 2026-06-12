@@ -11,16 +11,16 @@ import {
   type WorkflowRunInfo,
 } from "../api/client";
 
-export const DEFAULT_BUDGET = 60;
+export const DEFAULT_BUDGET = 100;
 
 const STAGE_LABELS: Record<string, string> = {
-  decomposition: "Decomposing question",
+  decomposition: "Analyzing question",
   tool_identification: "Identifying tools",
-  planning: "Planning research",
+  planning: "Planning research approach",
   research: "Researching",
   synthesis: "Synthesizing conclusions",
-  verification: "Verifying",
-  report_generation: "Generating Report",
+  verification: "Verifying facts and conclusions",
+  report_generation: "Generating report",
 };
 
 type RunSnapshotInput = Partial<WorkflowRunInfo> &
@@ -529,7 +529,6 @@ export const useChatStore = defineStore("chat", () => {
     clearRunViewState();
 
     try {
-      await loadDefaultBudget();
       let createdNewConversation = false;
       if (!currentConversationId.value) {
         const conversation = await api.createConversation();
@@ -828,7 +827,6 @@ export const useChatStore = defineStore("chat", () => {
     cancelStream();
 
     try {
-      await loadDefaultBudget();
       const { run_id, user_message_id } = await api.rerunMessage(
         convId,
         userMessageId,

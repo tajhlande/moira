@@ -15,7 +15,7 @@ from moira.tools.builtin.web_search import WebSearchTool
 DEFAULT_GROUP = {"name": "standard", "display_name": "Standard"}
 
 STANDARD_TOOLS: list[ToolDefinition] = [
-    DateTimeTool.make_definition(),
+    DateTimeTool.make_definition(invocation_cost=0.1),
     ToolDefinition(
         name="user_question",
         description=(
@@ -28,6 +28,7 @@ STANDARD_TOOLS: list[ToolDefinition] = [
         is_default=True,
         enabled=True,
         built_in=True,
+        invocation_cost=0.1,
         argument_schema={
             "type": "object",
             "properties": {
@@ -44,7 +45,7 @@ STANDARD_TOOLS: list[ToolDefinition] = [
             "required": ["question", "options"],
         },
     ),
-    WebSearchTool.make_definition(),
-    UrlContentTool.make_definition(),
-    CalculatorTool.make_definition(),
+    WebSearchTool.make_definition(invocation_cost=5.0, call_limit_per_run=10),
+    UrlContentTool.make_definition(invocation_cost=3.0, call_limit_per_run=15),
+    CalculatorTool.make_definition(invocation_cost=0.1),
 ]

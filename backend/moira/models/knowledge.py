@@ -105,6 +105,7 @@ class ExecutionState(TypedDict):
     step_costs: dict[str, float]
     step_temperatures: dict[str, float]
     tool_costs: dict[str, float]
+    tool_call_limits: dict[str, int]
     tool_call_counts: dict[str, int]
     total_tool_cost_consumed: float
     error: str

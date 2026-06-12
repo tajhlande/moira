@@ -45,9 +45,9 @@ def _format_tools_with_costs_and_limits(
         used = call_counts.get(t.name, 0)
         limit = tool_call_limits.get(t.name, 0)
         remaining = max(limit - used, 0) if limit > 0 else "unlimited"
+        desc = t.description[:120].replace("\n", " ").strip()
         lines.append(
-            f"- {t.name} | cost: {cost} | calls remaining: {remaining} | "
-            f"{t.description[:120]}"
+            f"{t.name} | {desc} | cost per call: {cost} | calls remaining: {remaining}"
         )
     return "\n".join(lines)
 

@@ -48,6 +48,16 @@ _PARSE_CORRECTION_PROMPT = (
     '{{"tool_calls": [], "discovered_facts": [...], "sources": [...]}}'
 )
 
+_SUMMARY_PROMPT = (
+    "You have exhausted your available tool call rounds. Do NOT request any more "
+    "tool calls. Instead, summarize the facts you have gathered so far.\n\n"
+    "Respond with a JSON object:\n"
+    '- "tool_calls": [] (must be empty)\n'
+    '- "discovered_facts": list all factual claims you can extract from the '
+    "tool results above\n"
+    '- "sources": list the tools and URLs that provided evidence'
+)
+
 
 def _format_tool_descriptions(tools: list[ToolDefinition]) -> str:
     """Format tool definitions with argument schemas for LLM consumption."""
@@ -437,12 +447,20 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
         {"role": "user", "content": user_prompt},
     ]
 
+    # Build required-params lookup from candidate tools for arg validation
+    _required_params: dict[str, set[str]] = {}
+    for t in candidate_tools:
+        schema = t.argument_schema
+        if schema and "required" in schema:
+            _required_params[t.name] = set(schema["required"])
+
     # --- Multi-round tool loop ---
     tool_results_log: list[dict] = []
     total_call_count = 0
     last_response = None
     last_thinking = ""
     last_model_id = ""
+    exhausted_rounds = False
 
     registry = _get_model(config)
     resolved = await registry.resolve("intelligence")
@@ -544,18 +562,47 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
                 if parsed_calls or raw.strip() in ("[]", "[]\n"):
                     break
 
-        # Filter to allowed tools
-        valid_calls = [(n, a) for n, a in parsed_calls if n in allowed_names]
-        rejected = [(n, a) for n, a in parsed_calls if n not in allowed_names]
-        if rejected:
+        # Filter to allowed tools, enforce call limits, validate required args
+        call_limits = es.get("tool_call_limits", {})
+        valid_calls = []
+        rejected: list[tuple[str, dict]] = []
+        for n, a in parsed_calls:
+            if n not in allowed_names:
+                rejected.append((n, a))
+                continue
+            limit = call_limits.get(n, 0)
+            used = call_counts.get(n, 0)
+            if limit > 0 and used >= limit:
+                logger.warning(
+                    "Tool %s hit call limit (%d/%d), skipping",
+                    n, used, limit,
+                )
+                continue
+            required = _required_params.get(n)
+            if required:
+                args_dict = a if isinstance(a, dict) else {}
+                missing = [
+                    p for p in required
+                    if p not in args_dict or not str(args_dict[p]).strip()
+                ]
+                if missing:
+                    logger.warning(
+                        "Tool %s missing required params: %s, skipping",
+                        n, missing,
+                    )
+                    continue
+            valid_calls.append((n, a))
+        rejected_names = [n for n, _ in rejected]
+        if rejected_names:
             logger.warning(
                 "Model requested disallowed tools: %s",
-                [n for n, _ in rejected],
+                rejected_names,
             )
 
         # No tool calls means model is done
         if not valid_calls:
             logger.info("RESEARCH: model signaled completion (round %d)", round_num + 1)
+            exhausted_rounds = False
             break
 
         # Execute tool calls
@@ -563,6 +610,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             results = await executor.execute_batch(valid_calls)
         except Exception as e:
             logger.error("Tool execution batch error: %s", e, exc_info=True)
+            exhausted_rounds = False
             break
 
         # Process results and build summary for next round
@@ -637,6 +685,34 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             len(results),
         )
 
+        # If the loop continues to the next iteration (or exhausts),
+        # mark as exhausted so we do a final summary round.
+        exhausted_rounds = True
+
+    # --- Final summary round if loop exhausted max rounds ---
+    # If the loop ended because we ran out of rounds (not because the model
+    # signaled completion), do one more model call asking it to summarize
+    # what it has gathered without requesting more tools.
+    if exhausted_rounds and tool_results_log:
+        logger.info("RESEARCH: max rounds exhausted, requesting final summary")
+        messages.append({"role": "user", "content": _SUMMARY_PROMPT})
+        try:
+            summary_response = await resolved.client.chat_completion(
+                messages=messages,
+                model=resolved.model_id,
+                temperature=DEFAULT_TEMPERATURE,
+            )
+            total_call_count += 1
+            summary_raw = summary_response.content or ""
+            if summary_raw.strip():
+                last_response = summary_response
+                last_thinking = getattr(summary_response, "thinking", "") or ""
+                summary_parsed = _parse_json_object(summary_raw)
+                _apply_discovered_facts(summary_parsed, facts)
+                _apply_sources(summary_parsed, citations)
+        except Exception:
+            logger.warning("RESEARCH: final summary round failed", exc_info=True)
+
     # --- Post-loop: extract discovered facts if model never produced them ---
     resolved_facts = [f for f in facts if f["status"] != "unknown" and f.get("claim")]
     if tool_results_log and not resolved_facts:
@@ -652,9 +728,20 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
         )
         total_call_count += 1
 
+        if resolved_facts:
+            fact_text = "\n".join(
+                f"- {f['id']}: {f.get('claim', '')}" for f in resolved_facts
+            )
+            last_response = type(
+                "ChatResponse", (), {"content": fact_text, "thinking": ""}
+            )()
+            last_thinking = ""
+
     # --- Build detail and emit ---
-    detail = {
-        "tool_results": tool_results_log,
+    # NOTE: tool_results are NOT included here. The run_manager accumulates
+    # them from tool_result events with full output. Including them in
+    # node_end would overwrite with truncated copies.
+    detail: dict = {
         "facts_resolved": [f["id"] for f in facts if f["status"] == "unverified"],
         "facts_newly_unknown": [f["id"] for f in facts if f["status"] == "unknown"],
         "tool_plan_size": len(tool_plan),

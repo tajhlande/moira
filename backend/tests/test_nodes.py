@@ -94,6 +94,7 @@ def _build_state(config, question="Test question", facts=None, conclusions=None)
             "budget_limit": float(config.budget.default_limit),
             "step_costs": step_costs,
             "tool_costs": {},
+            "tool_call_limits": {},
             "tool_call_counts": {},
             "total_tool_cost_consumed": 0.0,
             "error": "",
@@ -1268,3 +1269,734 @@ class TestReportGeneration:
         result = await report_generation(state, _make_run_config(config))
 
         assert result["knowledge"]["report"]["tool_call_total_cost"] == 7.5
+
+
+# ===========================================================================
+# PHASE C: Tool costs, call limits, and per-fact discovery
+# ===========================================================================
+
+
+class TestToolIdentificationPhaseC:
+
+    @pytest.mark.asyncio
+    async def test_per_fact_discovery_queries(self, config, mock_writer, mock_model):
+        """Each unknown fact should trigger its own discover() call."""
+        _inject_services(config, mock_model)
+
+        mock_discovery = AsyncMock()
+        mock_discovery.discover = AsyncMock(return_value=[])
+        _services["tool_discovery"] = mock_discovery
+
+        mock_catalog = MagicMock()
+        mock_catalog.get_default_tools.return_value = []
+        _services["tool_catalog"] = mock_catalog
+
+        from moira.workflow.nodes.tool_identification import tool_identification
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="pokemon", fact_needed="typing", status="unknown"),
+            Fact(id="f002", subject="pokemon", fact_needed="base stats", status="unknown"),
+            Fact(id="f003", subject="pokemon", fact_needed="evolution", status="unknown"),
+        ]
+
+        await tool_identification(state, _make_run_config(config))
+
+        assert mock_discovery.discover.call_count == 3
+        calls = mock_discovery.discover.call_args_list
+        assert calls[0][0][0] == "pokemon typing"
+        assert calls[1][0][0] == "pokemon base stats"
+        assert calls[2][0][0] == "pokemon evolution"
+
+    @pytest.mark.asyncio
+    async def test_per_fact_discovery_merges_across_facts(self, config, mock_writer, mock_model):
+        """Different facts may discover different tools; all should be merged."""
+        _inject_services(config, mock_model)
+
+        mock_discovery = AsyncMock()
+        mock_discovery.discover = AsyncMock(side_effect=[
+            [ToolDefinition(name="pokeapi", description="Pokemon API")],
+            [ToolDefinition(name="web_search", description="Search")],
+            [ToolDefinition(name="pokeapi", description="Pokemon API again")],
+        ])
+        _services["tool_discovery"] = mock_discovery
+
+        mock_catalog = MagicMock()
+        mock_catalog.get_default_tools.return_value = [
+            ToolDefinition(name="calculator", description="Math", is_default=True),
+        ]
+        _services["tool_catalog"] = mock_catalog
+
+        from moira.workflow.nodes.tool_identification import tool_identification
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="a", fact_needed="x", status="unknown"),
+            Fact(id="f002", subject="b", fact_needed="y", status="unknown"),
+            Fact(id="f003", subject="c", fact_needed="z", status="unknown"),
+        ]
+
+        result = await tool_identification(state, _make_run_config(config))
+
+        names = [t.name for t in result["execution_state"]["candidate_tools"]]
+        assert "pokeapi" in names
+        assert "web_search" in names
+        assert "calculator" in names
+        assert names.count("pokeapi") == 1
+
+    @pytest.mark.asyncio
+    async def test_tool_costs_populated_from_candidates(self, config, mock_writer, mock_model):
+        """tool_costs should be populated from candidate tools' invocation_cost."""
+        _inject_services(config, mock_model)
+
+        mock_discovery = AsyncMock()
+        mock_discovery.discover = AsyncMock(return_value=[
+            ToolDefinition(name="web_search", description="Search", invocation_cost=5.0),
+            ToolDefinition(name="api_tool", description="API", invocation_cost=2.0),
+        ])
+        _services["tool_discovery"] = mock_discovery
+
+        mock_catalog = MagicMock()
+        mock_catalog.get_default_tools.return_value = [
+            ToolDefinition(
+                name="calculator", description="Math",
+                is_default=True, invocation_cost=0.1,
+            ),
+        ]
+        _services["tool_catalog"] = mock_catalog
+
+        from moira.workflow.nodes.tool_identification import tool_identification
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+
+        result = await tool_identification(state, _make_run_config(config))
+
+        tc = result["execution_state"]["tool_costs"]
+        assert tc["web_search"] == 5.0
+        assert tc["api_tool"] == 2.0
+        assert tc["calculator"] == 0.1
+
+    @pytest.mark.asyncio
+    async def test_tool_call_limits_populated(self, config, mock_writer, mock_model):
+        """tool_call_limits should be populated for tools with limit > 0."""
+        _inject_services(config, mock_model)
+
+        mock_discovery = AsyncMock()
+        mock_discovery.discover = AsyncMock(return_value=[
+            ToolDefinition(
+                name="web_search", description="Search",
+                invocation_cost=5.0, call_limit_per_run=10,
+            ),
+            ToolDefinition(
+                name="api_tool", description="API",
+                invocation_cost=2.0,
+            ),
+        ])
+        _services["tool_discovery"] = mock_discovery
+
+        mock_catalog = MagicMock()
+        mock_catalog.get_default_tools.return_value = []
+        _services["tool_catalog"] = mock_catalog
+
+        from moira.workflow.nodes.tool_identification import tool_identification
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+
+        result = await tool_identification(state, _make_run_config(config))
+
+        limits = result["execution_state"]["tool_call_limits"]
+        assert limits["web_search"] == 10
+        assert "api_tool" not in limits
+
+    @pytest.mark.asyncio
+    async def test_tool_costs_merges_with_initial_state(self, config, mock_writer, mock_model):
+        """tool_costs from initial_state (from streaming.py catalog) should
+        be preserved when tool_identification merges its candidate costs."""
+        _inject_services(config, mock_model)
+
+        mock_discovery = AsyncMock()
+        mock_discovery.discover = AsyncMock(return_value=[
+            ToolDefinition(name="web_search", description="Search", invocation_cost=5.0),
+        ])
+        _services["tool_discovery"] = mock_discovery
+
+        mock_catalog = MagicMock()
+        mock_catalog.get_default_tools.return_value = []
+        _services["tool_catalog"] = mock_catalog
+
+        from moira.workflow.nodes.tool_identification import tool_identification
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["tool_costs"] = {
+            "url_content": 3.0,
+            "calculator": 0.1,
+        }
+        state["execution_state"]["tool_call_limits"] = {
+            "url_content": 15,
+        }
+
+        result = await tool_identification(state, _make_run_config(config))
+
+        tc = result["execution_state"]["tool_costs"]
+        assert tc["web_search"] == 5.0
+        assert tc["url_content"] == 3.0
+        assert tc["calculator"] == 0.1
+
+        limits = result["execution_state"]["tool_call_limits"]
+        assert limits["url_content"] == 15
+
+    @pytest.mark.asyncio
+    async def test_detail_includes_per_fact_queries(self, config, mock_writer, mock_model):
+        """The streamed detail should include per-fact query info with top_results."""
+        _inject_services(config, mock_model)
+
+        mock_discovery = AsyncMock()
+        mock_discovery.discover = AsyncMock(return_value=[
+            ToolDefinition(name="pokeapi", description="API"),
+            ToolDefinition(name="pokemon_db", description="DB"),
+        ])
+        _services["tool_discovery"] = mock_discovery
+
+        mock_catalog = MagicMock()
+        mock_catalog.get_default_tools.return_value = [
+            ToolDefinition(name="calculator", description="Math", is_default=True),
+        ]
+        _services["tool_catalog"] = mock_catalog
+
+        from moira.workflow.nodes.tool_identification import tool_identification
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="Tyranitar", fact_needed="typing", status="unknown"),
+        ]
+
+        await tool_identification(state, _make_run_config(config))
+
+        node_end = [e for e in mock_writer if e.get("event") == "node_end"][0]
+        detail = node_end["payload"]["detail"]
+        assert len(detail["queries"]) == 1
+        assert detail["queries"][0]["fact_id"] == "f001"
+        assert detail["queries"][0]["query"] == "Tyranitar typing"
+        assert "pokeapi" in detail["queries"][0]["top_results"]
+        assert "calculator" in detail["default_tools_included"]
+
+
+class TestResearchCallLimits:
+
+    @pytest.mark.asyncio
+    async def test_call_limit_enforced(self, config, mock_writer, mock_model):
+        """When a tool has hit its call limit, further calls should be skipped."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[])
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps({"tool_calls": [], "discovered_facts": [], "sources": []})
+        )
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+        state["execution_state"]["tool_call_limits"] = {"web_search": 1}
+        state["execution_state"]["tool_call_counts"] = {"web_search": 1}
+        state["execution_state"]["tool_costs"] = {"web_search": 5.0}
+
+        result = await research(state, _make_run_config(config))
+
+        mock_executor.execute_batch.assert_not_called()
+        assert result["execution_state"]["total_tool_cost_consumed"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_call_limit_partial_batch(self, config, mock_writer, mock_model):
+        """When some tools hit their limit, only remaining tools should execute."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[
+            ToolResult(tool_name="api_tool", output="result", success=True, duration_ms=50),
+        ])
+        _services["tool_executor"] = mock_executor
+
+        model_responses = [
+            ChatResponse(content=json.dumps([
+                {"tool": "web_search", "args": {"query": "x"}},
+                {"tool": "api_tool", "args": {"q": "y"}},
+            ])),
+            ChatResponse(content=json.dumps({
+                "tool_calls": [], "discovered_facts": [], "sources": [],
+            })),
+        ]
+        mock_model["client"].chat_completion.side_effect = model_responses
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(
+                tool="web_search", args={"query": "x"},
+                target_fact_ids=["f001"], cost=5.0,
+            ),
+            ToolCallPlan(
+                tool="api_tool", args={"q": "y"},
+                target_fact_ids=["f001"], cost=2.0,
+            ),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+            ToolDefinition(name="api_tool", description="API"),
+        ]
+        state["execution_state"]["tool_call_limits"] = {"web_search": 2}
+        state["execution_state"]["tool_call_counts"] = {"web_search": 2}
+        state["execution_state"]["tool_costs"] = {"web_search": 5.0, "api_tool": 2.0}
+
+        result = await research(state, _make_run_config(config))
+
+        executed_calls = mock_executor.execute_batch.call_args[0][0]
+        assert len(executed_calls) == 1
+        assert executed_calls[0][0] == "api_tool"
+        assert result["execution_state"]["tool_call_counts"]["api_tool"] == 1
+
+    @pytest.mark.asyncio
+    async def test_tool_cost_deduction_custom_cost(self, config, mock_writer, mock_model):
+        """Tool cost deduction should use the cost from tool_costs, not default 1.0."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[
+            ToolResult(tool_name="web_search", output="data", success=True, duration_ms=100),
+        ])
+        _services["tool_executor"] = mock_executor
+
+        model_responses = [
+            ChatResponse(content=json.dumps([
+                {"tool": "web_search", "args": {"query": "x"}},
+            ])),
+            ChatResponse(content=json.dumps({
+                "tool_calls": [],
+                "discovered_facts": [
+                    {"fact_id": "f001", "claim": "Found it"},
+                ],
+                "sources": [],
+            })),
+        ]
+        mock_model["client"].chat_completion.side_effect = model_responses
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(
+                tool="web_search", args={"query": "x"},
+                target_fact_ids=["f001"], cost=5.0,
+            ),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+        state["execution_state"]["tool_costs"] = {"web_search": 5.0}
+
+        result = await research(state, _make_run_config(config))
+
+        assert result["execution_state"]["total_tool_cost_consumed"] == 5.0
+        step_cost = config.budget.cost_weights.research
+        expected = config.budget.default_limit - step_cost - 5.0
+        assert result["execution_state"]["budget_remaining"] == expected
+
+    @pytest.mark.asyncio
+    async def test_zero_call_limit_means_unlimited(self, config, mock_writer, mock_model):
+        """A call_limit of 0 (or absent) means unlimited calls allowed."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[
+            ToolResult(tool_name="web_search", output="data", success=True, duration_ms=100),
+        ])
+        _services["tool_executor"] = mock_executor
+
+        model_responses = [
+            ChatResponse(content=json.dumps([
+                {"tool": "web_search", "args": {"query": "x"}},
+            ])),
+            ChatResponse(content=json.dumps({
+                "tool_calls": [],
+                "discovered_facts": [
+                    {"fact_id": "f001", "claim": "Found"},
+                ],
+                "sources": [],
+            })),
+        ]
+        mock_model["client"].chat_completion.side_effect = model_responses
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(
+                tool="web_search", args={"query": "x"},
+                target_fact_ids=["f001"], cost=1.0,
+            ),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+        state["execution_state"]["tool_call_limits"] = {}
+        state["execution_state"]["tool_call_counts"] = {"web_search": 5}
+        state["execution_state"]["tool_costs"] = {"web_search": 1.0}
+
+        result = await research(state, _make_run_config(config))
+
+        assert result["execution_state"]["tool_call_counts"]["web_search"] == 6
+        assert result["execution_state"]["total_tool_cost_consumed"] == 1.0
+
+
+class TestPlanningCallLimits:
+
+    @pytest.mark.asyncio
+    async def test_call_limits_in_formatted_tools(self, config, mock_writer, mock_model):
+        """_format_tools_with_costs_and_limits should include call limit info."""
+        from moira.workflow.nodes.planning import _format_tools_with_costs_and_limits
+
+        tools = [
+            ToolDefinition(name="web_search", description="Search the web"),
+            ToolDefinition(name="calculator", description="Do math"),
+        ]
+        tool_costs = {"web_search": 5.0, "calculator": 0.1}
+        call_counts = {"web_search": 3}
+        call_limits = {"web_search": 10}
+
+        result = _format_tools_with_costs_and_limits(tools, tool_costs, call_counts, call_limits)
+
+        assert "cost per call: 5.0" in result
+        assert "cost per call: 0.1" in result
+        assert "calls remaining: 7" in result
+        assert "unlimited" in result
+
+    @pytest.mark.asyncio
+    async def test_call_limit_at_zero_remaining(self, config, mock_writer, mock_model):
+        """When a tool has used all its calls, remaining should be 0."""
+        from moira.workflow.nodes.planning import _format_tools_with_costs_and_limits
+
+        tools = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+        tool_costs = {"web_search": 5.0}
+        call_counts = {"web_search": 10}
+        call_limits = {"web_search": 10}
+
+        result = _format_tools_with_costs_and_limits(tools, tool_costs, call_counts, call_limits)
+
+        assert "calls remaining: 0" in result
+
+    @pytest.mark.asyncio
+    async def test_planning_uses_tool_costs_from_state(self, config, mock_writer, mock_model):
+        """Planning should produce a tool_call_plan with costs from tool_costs."""
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps({
+                "calls": [
+                    {"tool": "web_search", "args": {"query": "x"}, "target_fact_ids": ["f001"]},
+                ],
+            })
+        )
+
+        from moira.workflow.nodes.planning import planning
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+        state["execution_state"]["tool_costs"] = {"web_search": 5.0}
+
+        result = await planning(state, _make_run_config(config))
+
+        plan = result["execution_state"]["tool_call_plan"]
+        assert len(plan) == 1
+        assert plan[0]["cost"] == 5.0
+
+
+class TestResearchSummaryRound:
+
+    @pytest.mark.asyncio
+    async def test_summary_round_on_max_rounds_exhausted(
+        self, config, mock_writer, mock_model
+    ):
+        """When all rounds are used, a final summary round should happen
+        and its response should be the one shown in the step detail."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[
+            ToolResult(
+                tool_name="web_search", output="Result data",
+                success=True, duration_ms=50,
+            ),
+        ])
+        _services["tool_executor"] = mock_executor
+
+        # Round 1: tool calls, Round 2: tool calls, Round 3: tool calls
+        # Then summary round (extra model call)
+        tool_call_response = json.dumps({
+            "tool_calls": [{"tool": "web_search", "args": {"query": "x"}}],
+            "discovered_facts": [],
+            "sources": [],
+        })
+        summary_response = json.dumps({
+            "tool_calls": [],
+            "discovered_facts": [
+                {"fact_id": "f001", "subject": "x", "claim": "Found it"},
+            ],
+            "sources": [{"source": "web_search", "excerpt": "Result data"}],
+        })
+
+        # 3 rounds of tool calls + 1 summary round = 4 model calls
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(content=tool_call_response),
+            ChatResponse(content=tool_call_response),
+            ChatResponse(content=tool_call_response),
+            ChatResponse(content=summary_response),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(
+                tool="web_search", args={"query": "x"},
+                target_fact_ids=["f001"], cost=1.0,
+            ),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+        state["execution_state"]["tool_costs"] = {"web_search": 1.0}
+
+        await research(state, _make_run_config(config))
+
+        # The response in detail should be the summary, not a tool call list
+        node_end_events = [
+            e for e in mock_writer if e.get("event") == "node_end"
+        ]
+        assert len(node_end_events) == 1
+        detail = node_end_events[0]["payload"]["detail"]
+        assert "Found it" in detail["response"]
+
+        # 3 tool rounds + 1 summary = 4 model calls
+        assert mock_model["client"].chat_completion.call_count == 4
+
+    @pytest.mark.asyncio
+    async def test_no_summary_when_model_signals_done(
+        self, config, mock_writer, mock_model
+    ):
+        """When the model signals completion (empty tool_calls), no summary
+        round should happen."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[
+            ToolResult(
+                tool_name="web_search", output="Data",
+                success=True, duration_ms=50,
+            ),
+        ])
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(content=json.dumps({
+                "tool_calls": [{"tool": "web_search", "args": {"query": "x"}}],
+                "discovered_facts": [],
+                "sources": [],
+            })),
+            ChatResponse(content=json.dumps({
+                "tool_calls": [],
+                "discovered_facts": [
+                    {"fact_id": "f001", "subject": "x", "claim": "Done"},
+                ],
+                "sources": [],
+            })),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(
+                tool="web_search", args={"query": "x"},
+                target_fact_ids=["f001"], cost=1.0,
+            ),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+        state["execution_state"]["tool_costs"] = {"web_search": 1.0}
+
+        await research(state, _make_run_config(config))
+
+        # Only 2 model calls: tool round + done signal
+        assert mock_model["client"].chat_completion.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_node_end_detail_has_no_tool_results(
+        self, config, mock_writer, mock_model
+    ):
+        """The node_end detail should NOT include tool_results (they come from
+        tool_result events in the run_manager)."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[
+            ToolResult(
+                tool_name="web_search", output="Data", success=True,
+                duration_ms=50,
+            ),
+        ])
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(content=json.dumps({
+                "tool_calls": [{"tool": "web_search", "args": {"query": "x"}}],
+                "discovered_facts": [],
+                "sources": [],
+            })),
+            ChatResponse(content=json.dumps({
+                "tool_calls": [],
+                "discovered_facts": [
+                    {"fact_id": "f001", "subject": "x", "claim": "Found"},
+                ],
+                "sources": [],
+            })),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(
+                tool="web_search", args={"query": "x"},
+                target_fact_ids=["f001"], cost=1.0,
+            ),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+        state["execution_state"]["tool_costs"] = {"web_search": 1.0}
+
+        await research(state, _make_run_config(config))
+
+        node_end_events = [
+            e for e in mock_writer if e.get("event") == "node_end"
+        ]
+        detail = node_end_events[0]["payload"]["detail"]
+        assert "tool_results" not in detail
+
+    @pytest.mark.asyncio
+    async def test_skips_calls_missing_required_params(
+        self, config, mock_writer, mock_model
+    ):
+        """Tool calls missing required parameters should be skipped before
+        execution to avoid deterministic failures."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[])
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps({
+                "tool_calls": [],
+                "discovered_facts": [],
+                "sources": [],
+            }),
+        )
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(
+                name="web_search",
+                description="Search",
+                argument_schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                    },
+                    "required": ["query"],
+                },
+            ),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(
+                tool="web_search", args={},
+                target_fact_ids=["f001"], cost=1.0,
+            ),
+        ]
+        state["execution_state"]["tool_costs"] = {"web_search": 1.0}
+
+        # Model returns a call with no query param
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(content=json.dumps({
+                "tool_calls": [{"tool": "web_search", "args": {}}],
+                "discovered_facts": [],
+                "sources": [],
+            })),
+            ChatResponse(content=json.dumps({
+                "tool_calls": [],
+                "discovered_facts": [],
+                "sources": [],
+            })),
+        ]
+
+        await research(state, _make_run_config(config))
+
+        # web_search should NOT have been executed (missing required param)
+        mock_executor.execute_batch.assert_not_called()
