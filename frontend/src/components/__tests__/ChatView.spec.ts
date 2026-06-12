@@ -109,6 +109,17 @@ vi.mock("../../api/client", () => ({
   },
 }));
 
+vi.mock("naive-ui", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("naive-ui")>();
+  return {
+    ...actual,
+    useDialog: () => ({
+      warning: vi.fn(),
+      create: vi.fn(),
+    }),
+  };
+});
+
 import { api } from "../../api/client";
 import { useChatStore } from "../../stores/chat";
 import ChatView from "../ChatView.vue";

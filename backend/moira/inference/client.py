@@ -1,9 +1,9 @@
 import logging
 from dataclasses import dataclass
 
-from moira.inference.defaults import DEFAULT_TEMPERATURE
-
 import httpx
+
+from moira.inference.defaults import DEFAULT_TEMPERATURE
 
 logger = logging.getLogger(__name__)
 

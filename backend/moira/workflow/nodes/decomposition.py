@@ -3,8 +3,7 @@
 Identifies the user goal, topic, entities, concepts, and unknown facts
 needed to answer the question. Uses the intelligence model (needs world
 knowledge). Does NOT use tools.
-
-Phase A: uses stub prompts. Full prompts added in Phase B."""
+"""
 
 import logging
 
@@ -13,25 +12,19 @@ from langgraph.config import get_stream_writer
 
 from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.models.knowledge import Fact, ResearchState, next_id
+from moira.prompts import get_prompt
 from moira.workflow.budget import can_execute, deduct_cost
-from moira.workflow.nodes._helpers import _check_stop, _get_model, _now, _parse_json_object, _response_meta
+from moira.workflow.nodes._helpers import (
+    _check_stop,
+    _get_model,
+    _now,
+    _parse_json_object,
+    _response_meta,
+)
 
 logger = logging.getLogger(__name__)
 
 NODE_NAME = "decomposition"
-
-# Phase A stub prompt — replaced in Phase B with full prompt from
-# agent-docs/research-loop-overhaul-plan.md section 5.5.
-_STUB_SYSTEM = (
-    "You are a research question analyst. Decompose the user's question into "
-    "a structured analysis. Respond with a JSON object with these keys: "
-    '"user_goal" (string), "topic" (string), "entities" (list of strings), '
-    '"concepts" (list of strings), "unknown_facts" (list of objects, each with '
-    '"subject" and "fact_needed"). '
-    "Each fact should be narrow enough that a single tool call could provide it."
-)
-
-_STUB_USER = "Research question: {question}"
 
 
 async def decomposition(state: ResearchState, config: RunnableConfig) -> dict:
@@ -61,9 +54,10 @@ async def decomposition(state: ResearchState, config: RunnableConfig) -> dict:
 
     registry = _get_model(config)
     resolved = await registry.resolve("intelligence")
-    user_prompt = _STUB_USER.format(question=question)
+    system_prompt = get_prompt("decomposition.system")
+    user_prompt = get_prompt("decomposition.user").format(question=question)
     messages = [
-        {"role": "system", "content": _STUB_SYSTEM},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
 

@@ -1725,7 +1725,122 @@ retry_research, retry_synthesis).
 
 ---
 
+### Phase B1: Prompt system wiring and contract alignment
+
+**Status: COMPLETE**
+
+**What was built:**
+
+1. **Replace `moira/resources/prompts.md`** — replace all old-loop sections with the
+   new section names and prompt text from section 5.5. The old sections
+   (`planning.system`, `tool_selection.*`, `research_execution.*`, `compression.*`,
+   `draft_synthesis.*`, `verification.system`, `verification.user`, etc.) are
+   removed. The new sections are:
+   - `decomposition.system`, `decomposition.user`
+   - `planning.system`, `planning.user`, `planning.system_retry`,
+     `planning.system_prior_report`, `planning.system_earlier_turns`
+   - `research.system`, `research.user`
+   - `synthesis.system`, `synthesis.user`, `synthesis.system_retry`
+   - `verification.system`, `verification.user`
+   - `verification.fact_check.system`, `verification.fact_check.user`,
+     `verification.evidence`
+   - `report_generation.system`, `report_generation.user`,
+     `report_generation.path_verified`, `report_generation.path_budget_exhausted`,
+     `report_generation.path_error`
+   - Keep `tool_discovery.query_rewrite.system` and
+     `tool_discovery.query_rewrite.user` for the tool identification node's
+     optional query rewriting feature.
+
+2. **Update `moira/prompts.py`** — replace `REQUIRED_SECTIONS` with the new section
+   names listed above.
+
+3. **Wire all nodes to `get_prompt()`** — each node file replaces its hardcoded
+   `_STUB_SYSTEM` and `_STUB_USER` strings with calls to `get_prompt()`. Template
+   variables are filled with `.format(**kwargs)` as before.
+
+4. **Fix research response contract** — the research prompt and node must agree on
+   one response format. The model returns a JSON object every round with keys:
+   - `tool_calls`: array of `{tool, args}` objects (empty `[]` when done)
+   - `discovered_facts`: array of `{fact_id, subject, claim, relation?, value?}`
+   - `sources`: array of `{source, url?, title?, excerpt?}`
+   
+   The loop parser reads `tool_calls` from that object each round.
+   `discovered_facts` and `sources` are applied each round, not only at the end.
+   The parse-correction prompt must ask for the object format, not a raw array.
+   This is the most critical contract fix because the research node drives all
+   downstream data.
+
+5. **Fix verification response contract** — the verification prompt output keys
+   must match the current node expectations:
+   - `fact_results` (not `supported_claims`/`unsupported_claims`)
+   - `conclusion_results`
+   - `new_unknown_facts`
+   - `goal_met`
+   - `goal_assessment`
+   - `route` with values `"accept"`, `"retry_research"`, `"retry_synthesis"`
+   
+   Old-loop outcome names (`retry_plan`, `retry_draft`) must not appear.
+
+6. **Fix report generation response contract** — the prompt must instruct the model
+   to produce a JSON object matching the current `ResearchReport` shape:
+   - `answer`, `citations`, `critiques`
+   - `verified_facts`, `verified_conclusions`, `contradicted`, `unknown_facts`
+   - `total_cost`, `tool_call_total_cost`, `generation_path`
+   
+   Old-loop fields like `support` and `unverified_claims` must be removed.
+
+7. **Add prompt contract tests** — tests that verify:
+   - All required sections load without errors
+   - Each node's template variables match what the node code provides
+   - Research response parsing handles the `{tool_calls, discovered_facts, sources}`
+     object format
+   - Verification response parsing handles the new route names
+
+**Prompt composition rules (unchanged from section 5.5):** On retry, the `_retry`
+variant is appended to the base `.system` prompt. The `_prior_report` and
+`_earlier_turns` sections are appended when prior conversation context exists.
+A node's full system prompt is always: `{node}.system` + applicable appendices.
+
+**Key implementation details:**
+
+- The research node's multi-round loop must parse the object format, not raw
+  arrays. The `_parse_tool_calls` helper extracts from `parsed["tool_calls"]`
+  rather than treating the entire response as an array.
+- The research node's correction prompt must say: "Respond with a JSON object
+  with keys tool_calls, discovered_facts, and sources" rather than "Respond with
+  a raw JSON array."
+- The research node must apply `discovered_facts` and `sources` each round,
+  not only after the loop ends.
+- The planning node's user prompt must include the full template variables from
+  section 5.5 (`topic`, `entities`, `concepts`, `reserved_budget`,
+  `available_for_tools`, `tool_descriptions_with_costs_and_limits`) in addition
+  to the variables the stub used.
+- The synthesis node must handle retry by appending `synthesis.system_retry` to
+  the base system prompt when `synthesis_retry_count > 0`.
+- The planning node must handle retry by appending `planning.system_retry` and
+  handle prior context by appending `planning.system_prior_report` and
+  `planning.system_earlier_turns`.
+
+**Testability:** All existing unit and integration tests continue to pass (they
+mock model responses in the correct format). New prompt contract tests verify
+that real prompt text loads and renders. A real-model smoke test (one conversation)
+should produce valid structured output at every node.
+
+**Exit criteria:**
+- All old-loop prompt sections removed from `prompts.md`
+- All new sections present and loadable via `get_prompt()`
+- All nodes use `get_prompt()` instead of stub strings
+- Research, verification, and report_generation response contracts aligned
+- `uv run pytest` passes (437 passed), `uv run ruff check .` clean
+- Real-model conversation produces valid output at every step
+- Post-loop fact extraction handles models that omit discovered_facts
+- execute_batch kwarg bug fixed, plan-matching no longer marks failed calls
+
+---
+
 ### Phase B: Prompts and real model execution
+
+**Status: COMPLETE** (merged with Phase B1)
 
 **Goal:** Replace stub prompts with the full prompt drafts from section 5.5.
 Run the graph against a real model and verify it produces meaningful
@@ -1813,7 +1928,81 @@ with new structure. Knowledge endpoint returns valid JSON for completed runs.
 
 ---
 
-### Phase E: Tool ingest enrichment
+### Phase D1: Verification fact-checking with tool calls
+
+**Status: NOT STARTED**
+
+**Context:** The verification node has prompts for fact-checking
+(`verification.fact_check.system`, `verification.fact_check.user`,
+`verification.evidence`) but the node does not actually call tools to
+independently verify claims. Currently, verification is purely a model-based
+judgment — the model evaluates claims against the facts it has seen, but it
+cannot re-check them against independent sources. This is a significant
+quality gap: the verification rubric's hard-fail category "verification quality"
+requires that the system flags weak support and contradictions, which tool-backed
+verification can do much more reliably than model-only judgment.
+
+**Goal:** Wire the verification node to use the tool executor for independent
+fact-checking. The model identifies checkable claims, calls tools to verify them,
+and uses the evidence to ground its verdict. This produces the `verification.evidence`
+section that the verification prompt already references.
+
+**What to build:**
+
+1. **Fact-check sub-loop in `verification.py`** — after the model produces its
+   initial verification verdict, if `route != "accept"`, extract checkable claims
+   and run a fact-checking sub-loop:
+   - Identify facts with `status="unverified"` or claims the model flagged as
+     uncertain
+   - For each checkable claim, call the model with
+     `verification.fact_check.system/user` to produce tool calls
+   - Execute those tool calls via the tool executor
+   - Collect evidence
+   - Append `verification.evidence` to the verification prompt
+   - Re-run the verification model with the additional evidence
+
+2. **Budget-aware fact-checking** — each tool call during verification deducts from
+   the remaining budget. The fact-check loop must respect the budget and stop when
+   remaining budget is insufficient for more calls. Track tool costs and call counts
+   in `execution_state` (same as research node).
+
+3. **Evidence integration** — the evidence from fact-checking is included in the
+   verification step detail under `tool_results` and in the `structured_output`
+   so the frontend can display what was checked and what was found.
+
+4. **Routing impact** — fact-checking evidence may change the verification route.
+   A fact that appeared unverified may become verified (or contradicted) after
+   independent checking. The re-run after evidence must produce an updated route.
+
+**Key implementation details:**
+
+- The fact-check model call uses `verification.fact_check.system` which instructs
+  the model to return raw JSON arrays of tool calls (same format as research loop).
+- Parse and execute these calls the same way as the research loop (with allowed
+  tool filtering).
+- The evidence summary is formatted using `verification.evidence` template.
+- The full verification prompt becomes: `verification.system` + evidence section +
+  original `verification.user` content.
+- Only run fact-checking if budget allows at least one tool call after the
+  verification step cost.
+- The fact-check sub-loop is bounded (max 2 rounds, max 3 tool calls per round).
+
+**Testability:**
+- Unit test: verification with fact-checking produces `tool_results` in step detail
+- Unit test: fact-checking evidence changes verification route (contradicted → verified)
+- Unit test: fact-checking respects budget (skips when insufficient)
+- Unit test: fact-checking loop bounded by max rounds
+
+**Exit criteria:**
+- Verification node calls tools to independently verify claims
+- Evidence is recorded in step detail
+- Budget is deducted for verification tool calls
+- `uv run pytest` passes, `uv run ruff check .` clean
+- Real-model run shows tool calls during verification step
+
+---
+
+### Phase D2: Frontend ChatView spec fixes
 
 **Goal:** Replace the current hint generation with the enriched description
 prompt from section 6.2. Verify that enriched descriptions improve LanceDB
@@ -1865,15 +2054,17 @@ navigable object.
 ```
 Phase 0 (evaluation harness + baseline)
   └── Phase A (knowledge model + graph skeleton)
-       └── Phase B (prompts + real model execution)
+       └── Phase B1/B (prompts + real model execution)
             └── Phase C (tool identification + budget)
                  └── Phase D (run manager + SSE + API)
+                      ├── Phase D1 (verification fact-checking with tools)
+                      ├── Phase D2 (frontend ChatView spec fixes)
                       ├── Phase E (tool ingest enrichment)
                       └── Phase F (knowledge panel + frontend)
 ```
 
-Phases E and F are independent of each other once D is complete. Phase A is
-the only phase that breaks the existing system — after A, the old graph and
+Phases D1, D2, E and F are independent of each other once D is complete. Phase A
+is the only phase that breaks the existing system — after A, the old graph and
 state model are gone. This is intentional: the new system replaces the old one
 completely, and there is no migration path for old run data.
 

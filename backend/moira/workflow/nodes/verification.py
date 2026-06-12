@@ -3,8 +3,7 @@
 Performs fact verification, conclusion verification, and goal assessment.
 May call tools to re-check claims. Produces a VerificationOutcome that
 determines routing.
-
-Phase A: uses stub prompts. Full prompts added in Phase B."""
+"""
 
 import logging
 
@@ -18,28 +17,19 @@ from moira.models.knowledge import (
     VerificationOutcome,
     next_id,
 )
+from moira.prompts import get_prompt
 from moira.workflow.budget import can_execute, deduct_cost
-from moira.workflow.nodes._helpers import _check_stop, _get_model, _now, _parse_json_object, _response_meta
+from moira.workflow.nodes._helpers import (
+    _check_stop,
+    _get_model,
+    _now,
+    _parse_json_object,
+    _response_meta,
+)
 
 logger = logging.getLogger(__name__)
 
 NODE_NAME = "verification"
-
-_STUB_SYSTEM = (
-    "You are a verification judge. Evaluate facts and conclusions. "
-    "Respond with JSON: {fact_results: [{fact_id, result, evidence}], "
-    "conclusion_results: [{conclusion_id, result, reason}], "
-    "new_unknown_facts: [], goal_met: bool, goal_assessment: string, "
-    'route: "accept"|"retry_research"|"retry_synthesis"}.'
-)
-
-_STUB_USER = (
-    "User goal: {user_goal}\n"
-    "Question: {question}\n"
-    "Facts:\n{facts}\n"
-    "Conclusions:\n{conclusions}\n"
-    "Available tools:\n{tools}"
-)
 
 
 def _format_facts_for_verification(facts: list[Fact]) -> str:
@@ -105,18 +95,18 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
     new_budget = es["budget_remaining"]
 
     # Do model-based verification
-    user_prompt = _STUB_USER.format(
+    user_prompt = get_prompt("verification.user").format(
         user_goal=knowledge.get("user_goal", knowledge["question"]),
         question=knowledge["question"],
-        facts=_format_facts_for_verification(facts),
-        conclusions=_format_conclusions(conclusions),
-        tools=_format_tools(candidate_tools),
+        facts_with_claims_and_sources=_format_facts_for_verification(facts),
+        conclusions_with_supporting_facts=_format_conclusions(conclusions),
+        tool_descriptions=_format_tools(candidate_tools),
     )
 
     registry = _get_model(config)
     resolved = await registry.resolve("intelligence")
     messages = [
-        {"role": "system", "content": _STUB_SYSTEM},
+        {"role": "system", "content": get_prompt("verification.system")},
         {"role": "user", "content": user_prompt},
     ]
 

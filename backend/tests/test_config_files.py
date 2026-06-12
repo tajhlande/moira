@@ -81,20 +81,40 @@ class TestPromptsFile:
         """Verify that every {variable} in templates that take args has the
         expected placeholders. Prevents typos in template variable names."""
         template_vars = {
-            "planning.system_retry": {"case", "assessment", "guidance"},
+            "decomposition.user": {"question"},
+            "planning.user": {
+                "user_goal", "topic", "entities", "concepts",
+                "unknown_facts", "tool_descriptions_with_costs_and_limits",
+                "budget_remaining", "reserved_budget", "available_for_tools",
+            },
+            "planning.system_retry": {
+                "verification_feedback", "unresolved_facts", "all_unknown_facts",
+            },
             "planning.system_earlier_turns": {"earlier_turns"},
             "planning.system_prior_report": {"prior_question", "prior_report_answer"},
-            "tool_selection.user": {"question", "plan", "tool_descriptions"},
-            "research_execution.user": {"question", "plan", "tool_descriptions"},
-            "draft_synthesis.user": {"question", "plan", "evidence"},
-            "draft_synthesis.system_retry": {"case", "assessment", "guidance"},
-            "verification.user": {"question", "draft"},
-            "verification.fact_check.user": {"question", "draft", "tool_descriptions"},
+            "research.system": {"max_extra_rounds"},
+            "research.user": {
+                "user_goal", "unknown_facts", "tool_call_plan",
+                "tool_descriptions",
+            },
+            "synthesis.user": {
+                "user_goal", "topic", "entities", "concepts",
+                "facts_with_claims", "prior_conclusions_section",
+            },
+            "synthesis.system_retry": {"verification_feedback"},
+            "verification.user": {
+                "user_goal", "question", "facts_with_claims_and_sources",
+                "conclusions_with_supporting_facts", "tool_descriptions",
+            },
+            "verification.fact_check.user": {"claims_list", "tool_descriptions"},
             "verification.evidence": {"evidence"},
             "report_generation.system": {"path_instruction"},
             "report_generation.path_error": {"error"},
-            "report_generation.path_budget_exhausted": {"unverified_claims"},
-            "report_generation.user": {"question", "draft", "evidence"},
+            "report_generation.user": {
+                "question", "user_goal", "verified_facts",
+                "verified_conclusions", "contradicted_items",
+                "unknown_facts", "citations",
+            },
         }
         import re
 

@@ -753,10 +753,80 @@ class TestResearch:
 
         assert result["execution_state"]["total_tool_cost_consumed"] == 0.0
 
+    @pytest.mark.asyncio
+    async def test_post_loop_fact_extraction(self, config, mock_writer, mock_model):
+        """When the model produces tool_calls but never includes discovered_facts,
+        the post-loop extraction step should extract facts from tool results."""
+        _inject_services(config, mock_model)
 
-# ===========================================================================
-# SYNTHESIS
-# ===========================================================================
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[
+            ToolResult(
+                tool_name="web_search",
+                output="The limit of sqrt(x)/log2(x) as x->infinity is infinity",
+                success=True,
+                duration_ms=50,
+            ),
+        ])
+        _services["tool_executor"] = mock_executor
+
+        # Round 1: model returns tool_calls but no discovered_facts
+        # Post-loop: model extracts facts from tool results
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(
+                content=json.dumps({
+                    "tool_calls": [
+                        {"tool": "web_search", "args": {"query": "sqrt vs log2 limit"}},
+                    ],
+                }),
+            ),
+            ChatResponse(
+                content=json.dumps({
+                    "discovered_facts": [
+                        {
+                            "fact_id": "f001",
+                            "subject": "limit",
+                            "claim": "lim(x->inf) sqrt(x)/log2(x) = infinity",
+                        },
+                    ],
+                    "sources": [
+                        {"source": "web_search", "excerpt": "sqrt(x)/log2(x) -> infinity"},
+                    ],
+                }),
+            ),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Compare sqrt(x) and log2(x)")
+        state["knowledge"]["user_goal"] = "Compare growth rates"
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="limit",
+                fact_needed="limit of sqrt(x)/log2(x)",
+                status="unknown",
+            ),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(
+                tool="web_search", args={"query": "sqrt vs log2"},
+                target_fact_ids=["f001"], cost=1.0,
+            ),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+
+        result = await research(state, _make_run_config(config))
+
+        # The post-loop extraction should have resolved the fact
+        facts = result["knowledge"]["facts"]
+        resolved = [f for f in facts if f["status"] != "unknown" and f.get("claim")]
+        assert len(resolved) == 1
+        assert resolved[0]["id"] == "f001"
+        assert "infinity" in resolved[0]["claim"].lower()
+        assert mock_model["client"].chat_completion.call_count == 2
 
 
 class TestSynthesis:

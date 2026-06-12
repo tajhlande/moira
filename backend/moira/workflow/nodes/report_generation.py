@@ -2,8 +2,7 @@
 
 Terminal node that always runs (budget-exempt). Produces a ResearchReport
 from the knowledge model. Does NOT use tools.
-
-Phase A: uses stub prompts. Full prompts added in Phase B."""
+"""
 
 import logging
 
@@ -12,37 +11,28 @@ from langgraph.config import get_stream_writer
 
 from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.models.knowledge import ResearchReport, ResearchState
+from moira.prompts import get_prompt
 from moira.workflow.budget import deduct_cost
-from moira.workflow.nodes._helpers import _check_stop, _get_model, _now, _parse_json_object, _response_meta
+from moira.workflow.nodes._helpers import (
+    _check_stop,
+    _get_model,
+    _now,
+    _parse_json_object,
+    _response_meta,
+)
 
 logger = logging.getLogger(__name__)
 
 NODE_NAME = "report_generation"
 
-_STUB_SYSTEM = (
-    "Write a research report using ONLY the provided facts and conclusions. "
-    "Respond with JSON: {answer: string, citations: [], verified_facts: [], "
-    "verified_conclusions: [], contradicted: [], unknown_facts: [], "
-    "critiques: [], total_cost: 0, tool_call_total_cost: 0, "
-    "generation_path: string}. "
-    "generation_path should be one of: 'verified', 'budget_exhausted', 'error'."
-)
-
-_STUB_USER = (
-    "Question: {question}\n"
-    "User goal: {user_goal}\n"
-    "Facts:\n{facts}\n"
-    "Conclusions:\n{conclusions}\n"
-    "Citations:\n{citations}\n"
-    "Generation path: {generation_path}"
-)
-
 
 def _format_facts(facts: list) -> str:
     lines = []
     for f in facts:
+        cit = ", ".join(f.get("citation_ids", []))
         lines.append(
-            f"{f['id']} | {f['subject']} | {f.get('claim', '')} | {f['status']}"
+            f"{f['id']} | {f['subject']} | {f.get('claim', '')} | "
+            f"{f['status']} | [{cit}]"
         )
     return "\n".join(lines)
 
@@ -50,17 +40,20 @@ def _format_facts(facts: list) -> str:
 def _format_conclusions(conclusions: list) -> str:
     lines = []
     for c in conclusions:
+        facts_str = ", ".join(c.get("supporting_fact_ids", []))
         lines.append(
-            f"{c['id']} | {c['conclusion']} | {c['status']}"
+            f"{c['id']} | {c['conclusion']} | [{facts_str}] | "
+            f"{c.get('reasoning', '')} | {c['status']}"
         )
     return "\n".join(lines)
 
 
 def _format_citations(citations: list) -> str:
     lines = []
-    for c in citations:
+    for i, c in enumerate(citations, 1):
         lines.append(
-            f"{c['id']} | {c['source']} | {c.get('url', '')} | {c.get('excerpt', '')[:100]}"
+            f"[{i}] {c['id']} | {c['source']} | {c.get('url', '')} | "
+            f"{c.get('title', '')} | {c.get('excerpt', '')[:100]}"
         )
     return "\n".join(lines)
 
@@ -77,10 +70,13 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     # Report generation is budget-exempt: always runs
     new_budget = deduct_cost(es["step_costs"], NODE_NAME, es["budget_remaining"])
 
-    # Determine generation path
+    # Determine generation path and path_instruction
     error = es.get("error", "")
     if error:
         generation_path = "error"
+        path_instruction = get_prompt("report_generation.path_error").format(
+            error=error,
+        )
     elif knowledge.get("verification_history"):
         latest = knowledge["verification_history"][-1]
         if latest.get("goal_met") and not any(
@@ -88,29 +84,55 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
             for c in knowledge.get("conclusions", [])
         ):
             generation_path = "verified"
+            path_instruction = get_prompt("report_generation.path_verified")
         else:
             generation_path = "budget_exhausted"
+            path_instruction = get_prompt(
+                "report_generation.path_budget_exhausted",
+            )
     else:
         generation_path = "budget_exhausted"
+        path_instruction = get_prompt("report_generation.path_budget_exhausted")
+
+    # Separate verified, contradicted, and unknown items for the prompt
+    all_facts = knowledge.get("facts", [])
+    all_conclusions = knowledge.get("conclusions", [])
+    all_citations = knowledge.get("citations", [])
+
+    verified_facts = [f for f in all_facts if f.get("status") == "verified"]
+    verified_conclusions = [
+        c for c in all_conclusions if c.get("status") == "verified"
+    ]
+    contradicted_items = (
+        [f for f in all_facts if f.get("status") == "contradicted"]
+        + [c for c in all_conclusions if c.get("status") == "contradicted"]
+    )
+    unknown_facts_list = [
+        f for f in all_facts if f.get("status") == "unknown"
+    ]
 
     # Try model-based report generation
-        report: ResearchReport | None = None
-        resolved = None
-        response = None
+    report: ResearchReport | None = None
+    resolved = None
+    response = None
     try:
-        user_prompt = _STUB_USER.format(
+        system_prompt = get_prompt("report_generation.system").format(
+            path_instruction=path_instruction,
+        )
+        user_prompt = get_prompt("report_generation.user").format(
             question=knowledge["question"],
             user_goal=knowledge.get("user_goal", knowledge["question"]),
-            facts=_format_facts(knowledge.get("facts", [])),
-            conclusions=_format_conclusions(knowledge.get("conclusions", [])),
-            citations=_format_citations(knowledge.get("citations", [])),
-            generation_path=generation_path,
+            verified_facts=_format_facts(verified_facts),
+            verified_conclusions=_format_conclusions(verified_conclusions),
+            contradicted_items=_format_facts(contradicted_items),
+            unknown_facts=_format_facts(unknown_facts_list),
+            citations=_format_citations(all_citations),
         )
 
         registry = _get_model(config)
         resolved = await registry.resolve("intelligence")
         messages = [
-            {"role": "system", "content": _STUB_SYSTEM},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
 

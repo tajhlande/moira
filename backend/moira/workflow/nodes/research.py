@@ -3,13 +3,16 @@
 The model decides which tools to call, sees results, and iterates. This
 matches the original research_execution design: a tool-use loop where the
 model produces tool calls, they are executed, results are fed back, and
-the loop continues until the model signals completion ([]) or max rounds.
+the loop continues until the model signals completion (empty tool_calls)
+or max rounds.
 
-Under the overhaul, the OUTPUT format changes: instead of prose findings,
-the model records structured discovered_facts with fact_id, subject,
-claim, relation, and value. But the loop mechanics are the same.
+The model returns a JSON object each round with keys:
+- tool_calls: array of {tool, args} objects
+- discovered_facts: array of {fact_id, subject, claim, relation?, value?}
+- sources: array of {source, url?, title?, excerpt?}
 
-Phase A: uses stub prompts. Full prompts added in Phase B."""
+Discovered facts and sources are applied each round, not just at the end.
+"""
 
 import logging
 
@@ -18,6 +21,7 @@ from langgraph.config import get_stream_writer
 
 from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.models.knowledge import Citation, Fact, ResearchState, next_id
+from moira.prompts import get_prompt
 from moira.tools.base import ToolDefinition
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
@@ -36,43 +40,12 @@ DEFAULT_MAX_ROUNDS = 3
 DEFAULT_MAX_PARSE_RETRIES = 2
 
 _PARSE_CORRECTION_PROMPT = (
-    "Your previous response did not contain a valid JSON array of tool calls. "
-    "Respond ONLY with a raw JSON array, no markdown fences. "
-    'Example: [{"tool": "tool_name", "args": {"key": "value"}}] '
-    "Respond with [] if you are done gathering evidence."
-)
-
-_STUB_SYSTEM = (
-    "You are a research assistant performing fact discovery. Your job is to "
-    "call tools to find the specific facts identified in the research plan, "
-    "interpret the results, and record what you learned.\n\n"
-    "You will receive unknown facts with their IDs. Call tools to discover them. "
-    "After receiving results, you may request additional tool calls if results "
-    "were incomplete, or identify new facts that need to be discovered.\n\n"
-    "Rules:\n"
-    "- You must NOT draw conclusions or synthesize answers — your only job is fact discovery\n"
-    "- When a tool returns data, extract specific fact claims from it\n"
-    "- If a tool call fails or returns empty results, try a different approach\n"
-    "- If a specialized tool is available for the domain, prefer it over generic tools\n\n"
-    "For each fact you discover, record:\n"
-    "- fact_id: the ID of the fact this resolves (e.g., 'f001')\n"
-    "- subject: what entity or topic this fact is about\n"
-    "- claim: a specific, precise claim based on the tool output\n"
-    "- optionally: relation and value\n\n"
-    "For newly identified facts not in the original list, use fact_id: null and "
-    "include fact_needed describing what the new fact is about.\n\n"
-    "Respond with JSON:\n"
-    '{tool_calls: [{"tool": "...", "args": {...}}, ...], '
-    "discovered_facts: [{fact_id, subject, claim, relation?, value?}, ...], "
-    "sources: [{source, url?, title?, excerpt?}, ...]}\n"
-    "Use [] for tool_calls when you are done."
-)
-
-_STUB_USER = (
-    "User goal: {user_goal}\n"
-    "Unknown facts (ID | subject | fact_needed):\n{unknown_facts}\n"
-    "Tool call plan (suggested tool | args | target fact IDs):\n{tool_call_plan}\n"
-    "Available tools:\n{tool_descriptions}"
+    "Your previous response did not contain a valid JSON object with tool_calls, "
+    "discovered_facts, and sources. "
+    "Respond ONLY with a JSON object: "
+    '{{"tool_calls": [...], "discovered_facts": [...], "sources": [...]}}. '
+    "Use an empty tool_calls array when done: "
+    '{{"tool_calls": [], "discovered_facts": [...], "sources": [...]}}'
 )
 
 
@@ -193,6 +166,174 @@ def _looks_like_failed_tool_calls(text: str) -> bool:
     return False
 
 
+def _extract_tool_calls(parsed: dict) -> list[tuple[str, dict]]:
+    """Extract tool calls from the parsed JSON object response.
+
+    The model returns {tool_calls: [{tool, args}, ...], ...}.
+    Returns a list of (tool_name, args) tuples.
+    """
+    raw_calls = parsed.get("tool_calls", [])
+    if not isinstance(raw_calls, list):
+        return []
+    result = []
+    for call in raw_calls:
+        if not isinstance(call, dict):
+            continue
+        name = call.get("tool", "")
+        args = call.get("args", {})
+        if name:
+            result.append((name, args))
+    return result
+
+
+def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
+    """Apply discovered_facts from a model response to the facts list.
+
+    For facts with a matching fact_id and status "unknown", updates the
+    claim, relation, value, and status to "unverified". For new facts
+    (fact_id is null/missing with fact_needed), appends them.
+    """
+    discovered = parsed.get("discovered_facts", [])
+    if not isinstance(discovered, list):
+        return
+    for disc in discovered:
+        if not isinstance(disc, dict):
+            continue
+        fact_id = disc.get("fact_id")
+        if fact_id:
+            for fact in facts:
+                if fact["id"] == fact_id and fact["status"] == "unknown":
+                    fact["claim"] = disc.get("claim", "")
+                    if disc.get("relation"):
+                        fact["relation"] = disc["relation"]
+                    if disc.get("value"):
+                        fact["value"] = disc["value"]
+                    fact["status"] = "unverified"
+                    break
+        elif disc.get("fact_needed"):
+            new_id = next_id("f", facts)
+            facts.append(
+                Fact(
+                    id=new_id,
+                    subject=disc.get("subject", ""),
+                    fact_needed=disc["fact_needed"],
+                    status="unknown",
+                )
+            )
+
+
+def _apply_sources(parsed: dict, citations: list[Citation]) -> None:
+    """Apply sources from a model response to the citations list."""
+    sources = parsed.get("sources", [])
+    if not isinstance(sources, list):
+        return
+    seen_ids = {c["id"] for c in citations}
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        cit_id = next_id("cit", citations)
+        if cit_id not in seen_ids:
+            citations.append(
+                Citation(
+                    id=cit_id,
+                    source=src.get("source", ""),
+                    url=src.get("url"),
+                    title=src.get("title"),
+                    excerpt=src.get("excerpt"),
+                )
+            )
+            seen_ids.add(cit_id)
+
+
+_FACT_EXTRACTION_SYSTEM = (
+    "You are a fact extraction assistant. Given tool execution results and a list "
+    "of unknown facts, extract the specific factual claims that were discovered.\n\n"
+    "For each fact that the tool results address, provide:\n"
+    '- "fact_id": the ID of the fact (e.g., "f001")\n'
+    '- "subject": what entity or topic this fact is about\n'
+    '- "claim": a specific, precise factual statement based on the tool output\n'
+    '- "relation": optional predicate (e.g., "has_type", "equals")\n'
+    '- "value": optional value\n\n'
+    "For newly discovered facts not in the original list, use \"fact_id\": null and "
+    'include "fact_needed" describing what the new fact is about.\n\n'
+    "Also list sources:\n"
+    '- "source": the tool name\n'
+    '- "url": if applicable\n'
+    '- "title": if applicable\n'
+    '- "excerpt": relevant snippet from the tool output\n\n'
+    'Respond with a JSON object: {"discovered_facts": [...], "sources": [...]}\n'
+    "Only include facts where the tool results actually provide evidence. If a tool "
+    "call failed or returned no useful data, do not fabricate a claim for it."
+)
+
+_FACT_EXTRACTION_USER = (
+    "User goal: {user_goal}\n\n"
+    "Unknown facts (ID | subject | fact_needed):\n{unknown_facts}\n\n"
+    "Tool execution results:\n{tool_results_text}"
+)
+
+
+async def _extract_facts_from_results(
+    facts: list[Fact],
+    tool_results: list[dict],
+    resolved: object,
+    user_goal: str,
+) -> list[Fact]:
+    """Post-loop extraction: ask the model to interpret tool results and
+    produce discovered_facts. Called when the tool loop produced results
+    but the model never included discovered_facts in its responses."""
+    unknown_facts_text = _format_unknown_facts(facts)
+    tool_results_text = "\n\n".join(
+        f"Tool: {tr['tool']}\nArgs: {tr['args']}\n"
+        f"Status: {'SUCCESS' if tr['success'] else 'FAILED'}\n"
+        f"Result:\n{tr['output']}"
+        for tr in tool_results
+        if tr.get("success")
+    )
+
+    if not tool_results_text.strip():
+        logger.warning("RESEARCH: no successful tool results to extract facts from")
+        return []
+
+    messages = [
+        {"role": "system", "content": _FACT_EXTRACTION_SYSTEM},
+        {
+            "role": "user",
+            "content": _FACT_EXTRACTION_USER.format(
+                user_goal=user_goal,
+                unknown_facts=unknown_facts_text,
+                tool_results_text=tool_results_text,
+            ),
+        },
+    ]
+
+    model_id = getattr(resolved, "model_id", "")
+    client = getattr(resolved, "client", None)
+    if client is None:
+        return []
+
+    logger.info("RESEARCH: running post-loop fact extraction")
+    response = await client.chat_completion(
+        messages=messages,
+        model=model_id,
+        temperature=DEFAULT_TEMPERATURE,
+    )
+    raw = response.content or ""
+    if not raw.strip():
+        logger.warning("RESEARCH: fact extraction returned empty content")
+        return []
+
+    parsed = _parse_json_object(raw)
+    _apply_discovered_facts(parsed, facts)
+
+    resolved_list = [f for f in facts if f["status"] != "unknown" and f.get("claim")]
+    logger.info(
+        "RESEARCH: post-loop extraction produced %d resolved facts",
+        len(resolved_list),
+    )
+    return resolved_list
+
+
 async def research(state: ResearchState, config: RunnableConfig) -> dict:
     """Model-driven multi-round tool calling for fact discovery.
 
@@ -281,15 +422,18 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
 
     allowed_names = {t.name for t in candidate_tools}
 
-    # Build initial messages
-    user_prompt = _STUB_USER.format(
+    # Build initial messages using real prompts
+    system_prompt = get_prompt("research.system").format(
+        max_extra_rounds=DEFAULT_MAX_ROUNDS,
+    )
+    user_prompt = get_prompt("research.user").format(
         user_goal=knowledge.get("user_goal", knowledge["question"]),
         unknown_facts=_format_unknown_facts(facts),
         tool_call_plan=_format_tool_call_plan(tool_plan),
         tool_descriptions=_format_tool_descriptions(candidate_tools),
     )
     messages = [
-        {"role": "system", "content": _STUB_SYSTEM},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -346,16 +490,31 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
                 f"(thinking={len(last_thinking)} chars)"
             )
 
-        # Parse tool calls from response
-        parsed_calls = _parse_tool_calls(raw)
+        # Parse the JSON object response: {tool_calls, discovered_facts, sources}
+        parsed = _parse_json_object(raw)
 
-        # If response can't be parsed but looks like a failed attempt, retry
-        if not parsed_calls and raw.strip() not in ("[]", "[]\n") and _looks_like_failed_tool_calls(raw):
+        # Apply discovered facts and sources each round
+        _apply_discovered_facts(parsed, facts)
+        _apply_sources(parsed, citations)
+
+        # Extract tool calls from the parsed object
+        parsed_calls = _extract_tool_calls(parsed)
+
+        # If object parse didn't yield tool_calls, try legacy array parsing
+        if not parsed_calls and "tool_calls" not in parsed:
+            parsed_calls = _parse_tool_calls(raw)
+
+        # If still unparseable but looks like failed tool calls, retry with correction
+        if (
+            not parsed_calls
+            and raw.strip() not in ("[]", "[]\n")
+            and _looks_like_failed_tool_calls(raw)
+        ):
             parse_attempt = 0
             while parse_attempt < DEFAULT_MAX_PARSE_RETRIES:
                 parse_attempt += 1
                 logger.warning(
-                    "RESEARCH round %d: unparseable tool calls, retry %d/%d",
+                    "RESEARCH round %d: unparseable response, retry %d/%d",
                     round_num + 1,
                     parse_attempt,
                     DEFAULT_MAX_PARSE_RETRIES,
@@ -376,7 +535,12 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
                 if not raw.strip():
                     break
 
-                parsed_calls = _parse_tool_calls(raw)
+                parsed = _parse_json_object(raw)
+                _apply_discovered_facts(parsed, facts)
+                _apply_sources(parsed, citations)
+                parsed_calls = _extract_tool_calls(parsed)
+                if not parsed_calls and "tool_calls" not in parsed:
+                    parsed_calls = _parse_tool_calls(raw)
                 if parsed_calls or raw.strip() in ("[]", "[]\n"):
                     break
 
@@ -396,10 +560,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
 
         # Execute tool calls
         try:
-            results = await executor.execute_batch(
-                valid_calls,
-                tools=candidate_tools,
-            )
+            results = await executor.execute_batch(valid_calls)
         except Exception as e:
             logger.error("Tool execution batch error: %s", e, exc_info=True)
             break
@@ -437,17 +598,22 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
                 "success": result.success,
             })
 
-            # Update any target facts from the plan that match this tool
-            for planned in tool_plan:
-                if planned["tool"] == name:
-                    target_ids = planned.get("target_fact_ids", [])
-                    for fact in facts:
-                        if fact["id"] in target_ids and fact["status"] == "unknown":
-                            fact["claim"] = result.output[:500] if result.output else ""
-                            fact["status"] = "unverified"
-                            if fact.get("citation_ids") is None:
-                                fact["citation_ids"] = []
-                            fact["citation_ids"].append(cit_id)
+            # Update any target facts from the plan that match this tool.
+            # Only mark as unverified if the call succeeded and produced output.
+            if result.success and result.output:
+                for planned in tool_plan:
+                    if planned["tool"] == name:
+                        target_ids = planned.get("target_fact_ids", [])
+                        for fact in facts:
+                            if (
+                                fact["id"] in target_ids
+                                and fact["status"] == "unknown"
+                            ):
+                                fact["claim"] = result.output[:500]
+                                fact["status"] = "unverified"
+                                if fact.get("citation_ids") is None:
+                                    fact["citation_ids"] = []
+                                fact["citation_ids"].append(cit_id)
 
             # Track call counts and per-call tool cost
             call_counts[name] = call_counts.get(name, 0) + 1
@@ -471,35 +637,20 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             len(results),
         )
 
-    # --- Post-loop: extract discovered facts from final model response ---
-    if last_response is not None:
-        final_raw = last_response.content or ""
-        parsed = _parse_json_object(final_raw)
-
-        for disc in parsed.get("discovered_facts", []):
-            if not isinstance(disc, dict):
-                continue
-            fact_id = disc.get("fact_id")
-            if fact_id:
-                for fact in facts:
-                    if fact["id"] == fact_id and fact["status"] == "unknown":
-                        fact["claim"] = disc.get("claim", "")
-                        if disc.get("relation"):
-                            fact["relation"] = disc["relation"]
-                        if disc.get("value"):
-                            fact["value"] = disc["value"]
-                        fact["status"] = "unverified"
-                        break
-            elif disc.get("fact_needed"):
-                new_id = next_id("f", facts)
-                facts.append(
-                    Fact(
-                        id=new_id,
-                        subject=disc.get("subject", ""),
-                        fact_needed=disc["fact_needed"],
-                        status="unknown",
-                    )
-                )
+    # --- Post-loop: extract discovered facts if model never produced them ---
+    resolved_facts = [f for f in facts if f["status"] != "unknown" and f.get("claim")]
+    if tool_results_log and not resolved_facts:
+        logger.info(
+            "RESEARCH: no discovered_facts produced during loop, "
+            "running post-loop extraction",
+        )
+        resolved_facts = await _extract_facts_from_results(
+            facts=facts,
+            tool_results=tool_results_log,
+            resolved=resolved,
+            user_goal=knowledge.get("user_goal", knowledge["question"]),
+        )
+        total_call_count += 1
 
     # --- Build detail and emit ---
     detail = {

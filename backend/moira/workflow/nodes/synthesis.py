@@ -2,8 +2,7 @@
 
 Uses the intelligence model. Does NOT use tools. Derives conclusions
 ONLY from the provided facts. On retry, conclusions are replaced entirely.
-
-Phase A: uses stub prompts. Full prompts added in Phase B."""
+"""
 
 import logging
 
@@ -12,27 +11,19 @@ from langgraph.config import get_stream_writer
 
 from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.models.knowledge import Conclusion, ResearchState, next_id
+from moira.prompts import get_prompt
 from moira.workflow.budget import can_execute, deduct_cost
-from moira.workflow.nodes._helpers import _check_stop, _get_model, _now, _parse_json_object, _response_meta
+from moira.workflow.nodes._helpers import (
+    _check_stop,
+    _get_model,
+    _now,
+    _parse_json_object,
+    _response_meta,
+)
 
 logger = logging.getLogger(__name__)
 
 NODE_NAME = "synthesis"
-
-_STUB_SYSTEM = (
-    "You are a synthesis assistant. Derive conclusions from the provided "
-    "facts ONLY. Each conclusion must reference supporting fact IDs. "
-    "Respond with JSON: {conclusions: [{conclusion: string, "
-    "supporting_fact_ids: list, reasoning: string}]}. "
-    "Do NOT use world knowledge."
-)
-
-_STUB_USER = (
-    "User goal: {user_goal}\n"
-    "Topic: {topic}\n"
-    "Entities: {entities}\n"
-    "Facts:\n{facts_with_claims}"
-)
 
 
 def _format_facts_with_claims(facts: list) -> str:
@@ -70,21 +61,42 @@ async def synthesis(state: ResearchState, config: RunnableConfig) -> dict:
             },
         }
 
-    user_prompt = _STUB_USER.format(
+    retry_count = es.get("synthesis_retry_count", 0)
+    prior_conclusions_section = ""
+    if retry_count > 0:
+        verification_history = knowledge.get("verification_history", [])
+        last_v = verification_history[-1] if verification_history else {}
+        prior_conclusions_section = (
+            "Previous conclusions were rejected by verification. Feedback:\n"
+            f"{last_v.get('goal_assessment', '')}\n\n"
+            "Produce revised conclusions addressing this feedback."
+        )
+
+    user_prompt = get_prompt("synthesis.user").format(
         user_goal=knowledge.get("user_goal", knowledge["question"]),
         topic=knowledge.get("topic", ""),
         entities=", ".join(knowledge.get("entities", [])),
+        concepts=", ".join(knowledge.get("concepts", [])),
         facts_with_claims=_format_facts_with_claims(knowledge["facts"]),
+        prior_conclusions_section=prior_conclusions_section,
     )
+
+    system_prompt = get_prompt("synthesis.system")
+    if retry_count > 0:
+        verification_history = knowledge.get("verification_history", [])
+        last_v = verification_history[-1] if verification_history else {}
+        feedback = last_v.get("goal_assessment", "")
+        system_prompt += "\n\n" + get_prompt("synthesis.system_retry").format(
+            verification_feedback=feedback,
+        )
 
     registry = _get_model(config)
     resolved = await registry.resolve("intelligence")
     messages = [
-        {"role": "system", "content": _STUB_SYSTEM},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
 
-    retry_count = es.get("synthesis_retry_count", 0)
     logger.info("SYNTHESIS Start (retry=%d)", retry_count)
     response = await resolved.client.chat_completion(
         messages=messages,
