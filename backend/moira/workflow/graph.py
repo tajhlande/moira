@@ -1,148 +1,131 @@
+"""Research workflow graph for the overhauled research loop.
+
+Nodes: decomposition -> tool_identification -> planning -> research ->
+synthesis -> verification -> [conditional] -> report_generation -> END
+
+Verification routes:
+- accept -> report_generation
+- retry_synthesis -> synthesis (budget check)
+- retry_research -> tool_identification (budget check)
+- budget exhausted -> report_generation
+"""
+
 import logging
 
 from langgraph.graph import END, START, StateGraph
 
 from moira.config import MoiraConfig
-from moira.models.state import ResearchState
-from moira.workflow.budget import draft_retry_cost, full_cycle_cost
-from moira.workflow.nodes.research_nodes import (
-    draft_synthesis,
-    planning,
-    report_generation,
-    research_execution,
-    tool_discovery,
-    tool_selection,
-    verification,
+from moira.models.knowledge import ResearchState
+from moira.workflow.budget import (
+    research_retry_cost,
+    synthesis_retry_cost,
 )
+from moira.workflow.nodes.decomposition import decomposition
+from moira.workflow.nodes.planning import planning
+from moira.workflow.nodes.report_generation import report_generation
+from moira.workflow.nodes.research import research
+from moira.workflow.nodes.synthesis import synthesis
+from moira.workflow.nodes.tool_identification import tool_identification
+from moira.workflow.nodes.verification import verification
 
 logger = logging.getLogger(__name__)
 
 
 def make_verification_router():
     """Return a routing function that checks verification outcome against
-    budget. Reads cost_weights from state so the router uses the same
-    resolved values as the nodes themselves."""
+    budget and retry limits."""
 
     def route_after_verification(state: ResearchState) -> str:
-        """Conditional routing after the Verification node based on the
-        verification report's explicit outcome field:
-        - "accept" -> report_generation
-        - "error" -> report_generation (with error flag set in state)
-        - "retry_draft" + budget sufficient + retries remaining -> draft_synthesis
-        - "retry_plan" + budget sufficient -> planning
-        - fallback: report_generation
-        """
-        cost_weights = state.get("cost_weights", {})
-        verification_history = state.get("verification_history", [])
+        es = state.get("execution_state", {})
+        knowledge = state.get("knowledge", {})
+        step_costs = es.get("step_costs", {})
+        verification_history = knowledge.get("verification_history", [])
+
         if not verification_history:
             return "report_generation"
 
         latest = verification_history[-1]
-        outcome = latest.get("outcome", "retry_plan")
+        route = latest.get("route", "accept")
 
-        if outcome == "accept":
-            logger.info(
-                "Verification accepted (case %d), routing to report_generation",
-                latest.get("case"),
-            )
+        if route == "accept":
+            logger.info("Verification accepted, routing to report_generation")
             return "report_generation"
 
-        if outcome == "error":
-            logger.info(
-                "Verification error (case %d), routing to report_generation",
-                latest.get("case"),
-            )
-            return "report_generation"
+        budget_remaining = es.get("budget_remaining", 0.0)
 
-        if outcome == "retry_draft":
-            budget_remaining = state.get("budget_remaining", 0.0)
-            draft_retries = state.get("draft_retry_count", 0)
-            dr_cost = draft_retry_cost(cost_weights)
-            if draft_retries < 1 and budget_remaining >= dr_cost:
+        if route == "retry_synthesis":
+            synthesis_retries = es.get("synthesis_retry_count", 0)
+            sr_cost = synthesis_retry_cost(step_costs)
+            if synthesis_retries < 1 and budget_remaining >= sr_cost:
                 logger.info(
-                    "Verification retry_draft (case %d), budget sufficient"
-                    " (%.1f >= %d), routing to draft_synthesis",
-                    latest.get("case"),
+                    "retry_synthesis: budget sufficient (%.1f >= %.1f)",
                     budget_remaining,
-                    dr_cost,
+                    sr_cost,
                 )
-                return "draft_synthesis"
-            # Fall through to retry_plan or report
+                return "synthesis"
             logger.info(
-                "Verification retry_draft declined (retries=%d, budget=%.1f), falling through",
-                draft_retries,
+                "retry_synthesis declined (retries=%d, budget=%.1f)",
+                synthesis_retries,
                 budget_remaining,
             )
+            # Fall through to report_generation
+            return "report_generation"
 
-        # outcome == "retry_plan" or retry_draft fallback
-        budget_remaining = state.get("budget_remaining", 0.0)
-        cycle_cost = full_cycle_cost(cost_weights)
-        if budget_remaining >= cycle_cost:
+        if route == "retry_research":
+            rr_cost = research_retry_cost(step_costs)
+            if budget_remaining >= rr_cost:
+                logger.info(
+                    "retry_research: budget sufficient (%.1f >= %.1f)",
+                    budget_remaining,
+                    rr_cost,
+                )
+                return "tool_identification"
             logger.info(
-                "Verification retry_plan (case %d), budget sufficient"
-                " (%.1f >= %d), routing to planning",
-                latest.get("case"),
+                "retry_research: budget insufficient (%.1f < %.1f)",
                 budget_remaining,
-                cycle_cost,
+                rr_cost,
             )
-            return "planning"
+            return "report_generation"
 
-        logger.info(
-            "Verification retry_plan (case %d), budget insufficient (%.1f < %d),"
-            " routing to report_generation",
-            latest.get("case"),
-            budget_remaining,
-            cycle_cost,
-        )
+        # Unknown route or fallback
         return "report_generation"
 
     return route_after_verification
 
 
-def route_after_error(state: ResearchState) -> str:
-    """If a node wrote an error to state, route directly to report_generation."""
-    if state.get("error"):
-        return "report_generation"
-    return "continue"
-
-
 def build_graph(config: MoiraConfig) -> StateGraph:
-    """Build the LangGraph research workflow with 7 active nodes and
-    conditional routing. Compression is bypassed (findings flow directly
-    from research_execution to draft_synthesis). Returns an uncompiled
-    StateGraph."""
+    """Build the LangGraph research workflow with 7 nodes and conditional
+    routing after verification."""
     graph = StateGraph(ResearchState)
 
-    # 7 active nodes (compression bypassed)
+    graph.add_node("decomposition", decomposition)
+    graph.add_node("tool_identification", tool_identification)
     graph.add_node("planning", planning)
-    graph.add_node("tool_discovery", tool_discovery)
-    graph.add_node("tool_selection", tool_selection)
-    graph.add_node("research_execution", research_execution)
-    graph.add_node("draft_synthesis", draft_synthesis)
+    graph.add_node("research", research)
+    graph.add_node("synthesis", synthesis)
     graph.add_node("verification", verification)
     graph.add_node("report_generation", report_generation)
 
-    # Linear path: START -> Planning -> ToolDiscovery -> ToolSelection ->
-    # ResearchExecution -> DraftSynthesis -> Verification
-    graph.add_edge(START, "planning")
-    graph.add_edge("planning", "tool_discovery")
-    graph.add_edge("tool_discovery", "tool_selection")
-    graph.add_edge("tool_selection", "research_execution")
-    graph.add_edge("research_execution", "draft_synthesis")
-    graph.add_edge("draft_synthesis", "verification")
+    # Linear path — node errors propagate as exceptions and are caught by
+    # ActiveRun._run_graph, which persists the step detail and stops the run.
+    graph.add_edge(START, "decomposition")
+    graph.add_edge("decomposition", "tool_identification")
+    graph.add_edge("tool_identification", "planning")
+    graph.add_edge("planning", "research")
+    graph.add_edge("research", "synthesis")
+    graph.add_edge("synthesis", "verification")
 
-    # Conditional routing after Verification
+    # Conditional routing after verification
     graph.add_conditional_edges(
         "verification",
         make_verification_router(),
         {
-            "planning": "planning",
-            "draft_synthesis": "draft_synthesis",
+            "tool_identification": "tool_identification",
+            "synthesis": "synthesis",
             "report_generation": "report_generation",
         },
     )
 
-    # ReportGeneration is the terminal node
     graph.add_edge("report_generation", END)
 
     logger.info("Research graph built with 7 nodes")
@@ -150,8 +133,7 @@ def build_graph(config: MoiraConfig) -> StateGraph:
 
 
 def compile_graph(config: MoiraConfig, checkpointer=None):
-    """Build and compile the research graph. Optionally provides a
-    checkpointer for state persistence."""
+    """Build and compile the research graph."""
     graph = build_graph(config)
     compiled = graph.compile(checkpointer=checkpointer)
     logger.info("Research graph compiled")

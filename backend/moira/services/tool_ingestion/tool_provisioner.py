@@ -17,6 +17,7 @@ import logging
 import uuid
 from typing import Any, cast
 
+from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.persistence.interfaces import (
     ApiSource,
     ApiSourceRepository,
@@ -204,7 +205,7 @@ class ToolProvisioner:
             raw = await resolved.client.chat_completion(
                 model=resolved.model_id,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
+                temperature=DEFAULT_TEMPERATURE,
             )
         except Exception as e:
             logger.warning("Hint generation call failed: %s", e)

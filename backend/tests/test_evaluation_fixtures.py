@@ -21,9 +21,9 @@ import pytest
 from moira.config import MoiraConfig
 from moira.inference.client import ChatResponse, InferenceClient
 from moira.inference.registry import ModelRegistry, ResolvedModel
-from moira.models.state import Finding, ResearchState
+from moira.models.knowledge import Fact, ResearchState
 from moira.service_setup import _services
-from moira.tools.base import ToolDefinition, ToolResult
+from moira.tools.base import ToolDefinition
 
 
 @pytest.fixture
@@ -38,7 +38,14 @@ def mock_writer():
     def write(event):
         events.append(event)
 
-    with patch("moira.workflow.nodes.research_nodes.get_stream_writer", return_value=write):
+    with patch("moira.workflow.nodes.verification.get_stream_writer", return_value=write), \
+         patch("moira.workflow.nodes.synthesis.get_stream_writer", return_value=write), \
+         patch("moira.workflow.nodes.decomposition.get_stream_writer", return_value=write), \
+         patch("moira.workflow.nodes.planning.get_stream_writer", return_value=write), \
+         patch("moira.workflow.nodes.research.get_stream_writer", return_value=write), \
+         patch("moira.workflow.nodes.report_generation.get_stream_writer", return_value=write), \
+         patch("moira.workflow.nodes.tool_identification.get_stream_writer", return_value=write), \
+         patch("moira.workflow.nodes._helpers.get_stream_writer", return_value=write):
         yield events
 
 
@@ -60,6 +67,45 @@ def _inject_services(config, mock_model):
 
 def _make_run_config(config):
     return {"configurable": {"moira_config": config}}
+
+
+def _build_state(config, question: str, facts: list[Fact] | None = None) -> ResearchState:
+    cw = config.budget.cost_weights
+    step_costs = {
+        "decomposition": cw.decomposition,
+        "tool_identification": cw.tool_identification,
+        "planning": cw.planning,
+        "research": cw.research,
+        "synthesis": cw.synthesis,
+        "verification": cw.verification,
+        "report_generation": cw.report_generation,
+    }
+    return {
+        "knowledge": {
+            "question": question,
+            "user_goal": "",
+            "topic": "",
+            "entities": [],
+            "concepts": [],
+            "facts": facts or [],
+            "conclusions": [],
+            "citations": [],
+            "verification_history": [],
+        },
+        "execution_state": {
+            "candidate_tools": [],
+            "tool_call_plan": [],
+            "budget_remaining": float(config.budget.default_limit),
+            "budget_limit": float(config.budget.default_limit),
+            "step_costs": step_costs,
+            "tool_costs": {},
+            "tool_call_counts": {},
+            "total_tool_cost_consumed": 0.0,
+            "error": "",
+            "synthesis_retry_count": 0,
+            "verification_attempts": 0,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -157,100 +203,65 @@ class TestVerificationStressFixture:
 
     @pytest.fixture
     def stress_state(self, config) -> ResearchState:
-        cw = config.budget.cost_weights
-        return {
-            "question": "What Pokemon synergize well with Tyranitar in Gen9 OU?",
-            "plan": "Research Tyranitar typing, abilities, weaknesses, partners",
-            "active_tools": [
-                ToolDefinition(name="web_search", description="Search the web"),
-                ToolDefinition(name="pokeapi", description="Pokemon data API"),
-            ],
-            "findings": [],
-            "compressed_findings": [],
-            "draft": VERIFICATION_STRESS_DRAFT,
-            "verification": "",
-            "report": None,
-            "budget_remaining": 30.0,
-            "budget_limit": 50.0,
-            "cost_weights": {
-                "planning": cw.planning,
-                "tool_discovery": cw.tool_discovery,
-                "tool_selection": cw.tool_selection,
-                "research_execution": cw.research_execution,
-                "compression": cw.compression,
-                "draft_synthesis": cw.draft_synthesis,
-                "verification": cw.verification,
-                "report_generation": cw.report_generation,
-            },
-            "verification_history": [],
-            "unverified_claims": [],
-            "error": "",
-            "draft_retry_count": 0,
-        }
+        facts = [
+            Fact(id="f001", subject="Tyranitar",
+                 fact_needed="Tyranitar typing",
+                 claim="Rock/Dark type", status="unverified"),
+            Fact(id="f002", subject="Tyranitar",
+                 fact_needed="Tyranitar abilities",
+                 claim="Sand Stream, sets sandstorm for 8 turns",
+                 status="unverified"),
+            Fact(id="f003", subject="Tyranitar",
+                 fact_needed="Tyranitar weaknesses",
+                 claim="Fighting x4, Ground x4, Water, Grass, Bug, Steel, Fairy",
+                 status="unverified"),
+            Fact(id="f004", subject="Tyranitar",
+                 fact_needed="Tyranitar typical moves",
+                 claim="Fire Blast, Draco Meteor, Stone Edge, Tera Blast",
+                 status="unverified"),
+            Fact(id="f005", subject="Corviknight",
+                 fact_needed="Corviknight abilities",
+                 claim="Immune to Ground", status="unverified"),
+        ]
+        question = "What Pokemon synergize well with Tyranitar in Gen9 OU?"
+        state = _build_state(config, question, facts)
+        state["knowledge"]["user_goal"] = "Find synergistic partners for Tyranitar in Gen9 OU"
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search the web"),
+            ToolDefinition(name="pokeapi", description="Pokemon data API"),
+        ]
+        return state
 
     async def test_flags_ground_weakness_error(
         self, config, mock_writer, mock_model, stress_state
     ):
         """Verification should catch that Ground is not x4 on Tyranitar."""
         _inject_services(config, mock_model)
-        mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(
-            return_value=[
-                ToolResult(
-                    tool_name="pokeapi",
-                    output=(
-                        "Tyranitar: Rock/Dark. Ground is x2 "
-                        "(super effective vs Rock, neutral vs Dark). Not x4."
-                    ),
-                    success=True,
-                    duration_ms=100,
-                )
-            ]
+
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps(
+                {
+                    "fact_results": [
+                        {"fact_id": "f003", "result": "contradicted",
+                         "evidence": "Ground is x2, not x4"},
+                    ],
+                    "conclusion_results": [],
+                    "new_unknown_facts": [],
+                    "goal_met": False,
+                    "goal_assessment": "Ground weakness is wrong",
+                    "route": "retry_research",
+                }
+            )
         )
-        _services["tool_executor"] = mock_executor
 
-        mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(
-                content=json.dumps(
-                    [{"tool": "pokeapi", "args": {"query": "Tyranitar type weaknesses"}}]
-                )
-            ),
-            ChatResponse(content="Fact-checking complete."),
-            ChatResponse(
-                content=json.dumps(
-                    {
-                        "outcome": "retry_plan",
-                        "case": 6,
-                        "assessment": "Ground x4 weakness claim is wrong",
-                        "supported_claims": ["Tyranitar is Rock/Dark type"],
-                        "unsupported_claims": [
-                            "Ground x4 weakness is incorrect: Ground is x2, not x4"
-                        ],
-                        "contradictions": [
-                            "Draft claims Ground x4 but Tyranitar takes x2 from Ground"
-                        ],
-                        "relevance": "on_topic",
-                        "depth": "sufficient",
-                        "guidance": "Fix type weakness calculations",
-                    }
-                )
-            ),
-        ]
-
-        from moira.workflow.nodes.research_nodes import verification
+        from moira.workflow.nodes.verification import verification
 
         result = await verification(stress_state, _make_run_config(config))
 
-        assessment = result["verification_history"][0]["assessment"].lower()
-        contradictions = result["verification_history"][0].get("contradictions", [])
-        unsupported = result["verification_history"][0].get("unsupported_claims", [])
-        all_text = " ".join(
-            [assessment] + contradictions + unsupported
-        ).lower()
-
+        all_text = json.dumps(result["knowledge"]["verification_history"]).lower()
         assert "ground" in all_text, (
             "Verification should flag the Ground x4 error. "
-            f"Got assessment: {assessment}, contradictions: {contradictions}"
+            f"Got: {all_text[:300]}"
         )
 
     async def test_flags_sand_stream_duration_error(
@@ -258,58 +269,31 @@ class TestVerificationStressFixture:
     ):
         """Verification should catch that Sand Stream lasts 5 turns, not 8."""
         _inject_services(config, mock_model)
-        mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(
-            return_value=[
-                ToolResult(
-                    tool_name="pokeapi",
-                    output="Sand Stream: sets sandstorm for 5 turns in Gen9",
-                    success=True,
-                    duration_ms=100,
-                )
-            ]
-        )
-        _services["tool_executor"] = mock_executor
 
         mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(
-                content=json.dumps(
-                    [{"tool": "pokeapi", "args": {"query": "Sand Stream ability duration"}}]
-                )
-            ),
-            ChatResponse(content="Fact-checking complete."),
-            ChatResponse(
-                content=json.dumps(
-                    {
-                        "outcome": "retry_plan",
-                        "case": 6,
-                        "assessment": "Sand Stream duration is wrong",
-                        "supported_claims": [],
-                        "unsupported_claims": ["Sand Stream lasts 5 turns, not 8"],
-                        "contradictions": ["Draft claims 8 turns, actual is 5"],
-                        "relevance": "on_topic",
-                        "depth": "sufficient",
-                        "guidance": "Fix ability details",
-                    }
-                )
-            ),
+            ChatResponse(content=json.dumps(
+                {
+                    "fact_results": [
+                        {"fact_id": "f002", "result": "contradicted",
+                         "evidence": "Sand Stream lasts 5 turns, not 8"},
+                    ],
+                    "conclusion_results": [],
+                    "new_unknown_facts": [],
+                    "goal_met": False,
+                    "goal_assessment": "Sand Stream duration wrong",
+                    "route": "retry_research",
+                }
+            )),
         ]
 
-        from moira.workflow.nodes.research_nodes import verification
+        from moira.workflow.nodes.verification import verification
 
         result = await verification(stress_state, _make_run_config(config))
 
-        all_text = " ".join(
-            [
-                result["verification_history"][0]["assessment"],
-                *result["verification_history"][0].get("contradictions", []),
-                *result["verification_history"][0].get("unsupported_claims", []),
-            ]
-        ).lower()
-
-        assert "sand" in all_text or "5 turn" in all_text or "8 turn" in all_text, (
+        all_text = json.dumps(result["knowledge"]["verification_history"]).lower()
+        assert "sand" in all_text or "5 turn" in all_text, (
             "Verification should flag the Sand Stream duration error. "
-            f"Got: {all_text}"
+            f"Got: {all_text[:300]}"
         )
 
     async def test_flags_draco_meteor_impossibility(
@@ -317,58 +301,31 @@ class TestVerificationStressFixture:
     ):
         """Verification should catch that Tyranitar cannot learn Draco Meteor."""
         _inject_services(config, mock_model)
-        mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(
-            return_value=[
-                ToolResult(
-                    tool_name="pokeapi",
-                    output="Tyranitar learnset does not include Draco Meteor",
-                    success=True,
-                    duration_ms=100,
-                )
-            ]
-        )
-        _services["tool_executor"] = mock_executor
 
         mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(
-                content=json.dumps(
-                    [{"tool": "pokeapi", "args": {"query": "Tyranitar learnset Draco Meteor"}}]
-                )
-            ),
-            ChatResponse(content="Fact-checking complete."),
-            ChatResponse(
-                content=json.dumps(
-                    {
-                        "outcome": "retry_plan",
-                        "case": 6,
-                        "assessment": "Draco Meteor is not in Tyranitar's learnset",
-                        "supported_claims": [],
-                        "unsupported_claims": ["Tyranitar cannot learn Draco Meteor"],
-                        "contradictions": ["Draft lists Draco Meteor as a typical move"],
-                        "relevance": "on_topic",
-                        "depth": "sufficient",
-                        "guidance": "Remove Draco Meteor from move list",
-                    }
-                )
-            ),
+            ChatResponse(content=json.dumps(
+                {
+                    "fact_results": [
+                        {"fact_id": "f004", "result": "contradicted",
+                         "evidence": "Draco Meteor not in learnset"},
+                    ],
+                    "conclusion_results": [],
+                    "new_unknown_facts": [],
+                    "goal_met": False,
+                    "goal_assessment": "Draco Meteor is impossible",
+                    "route": "retry_research",
+                }
+            )),
         ]
 
-        from moira.workflow.nodes.research_nodes import verification
+        from moira.workflow.nodes.verification import verification
 
         result = await verification(stress_state, _make_run_config(config))
 
-        all_text = " ".join(
-            [
-                result["verification_history"][0]["assessment"],
-                *result["verification_history"][0].get("contradictions", []),
-                *result["verification_history"][0].get("unsupported_claims", []),
-            ]
-        ).lower()
-
-        assert "draco" in all_text or "learnset" in all_text or "cannot learn" in all_text, (
+        all_text = json.dumps(result["knowledge"]["verification_history"]).lower()
+        assert "draco" in all_text or "learnset" in all_text, (
             "Verification should flag Draco Meteor as impossible. "
-            f"Got: {all_text}"
+            f"Got: {all_text[:300]}"
         )
 
     async def test_flags_corviknight_ground_immunity_error(
@@ -376,68 +333,31 @@ class TestVerificationStressFixture:
     ):
         """Verification should catch that Corviknight is NOT immune to Ground."""
         _inject_services(config, mock_model)
-        mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(
-            return_value=[
-                ToolResult(
-                    tool_name="pokeapi",
-                    output=(
-                        "Corviknight: Steel/Flying. "
-                        "Abilities: Pressure, Defiant (hidden). No Levitate."
-                    ),
-                    success=True,
-                    duration_ms=100,
-                )
-            ]
-        )
-        _services["tool_executor"] = mock_executor
 
         mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(
-                content=json.dumps(
-                    [{"tool": "pokeapi", "args": {"query": "Corviknight abilities type"}}]
-                )
-            ),
-            ChatResponse(content="Fact-checking complete."),
-            ChatResponse(
-                content=json.dumps(
-                    {
-                        "outcome": "retry_plan",
-                        "case": 6,
-                        "assessment": "Corviknight Ground immunity claim is wrong",
-                        "supported_claims": [],
-                        "unsupported_claims": [
-                            "Corviknight does not have Levitate, takes neutral from Ground"
-                        ],
-                        "contradictions": [
-                            "Draft claims Corviknight is immune to Ground"
-                        ],
-                        "relevance": "on_topic",
-                        "depth": "sufficient",
-                        "guidance": "Fix Corviknight Ground interaction",
-                    }
-                )
-            ),
+            ChatResponse(content=json.dumps(
+                {
+                    "fact_results": [
+                        {"fact_id": "f005", "result": "contradicted",
+                         "evidence": "Corviknight has no Levitate"},
+                    ],
+                    "conclusion_results": [],
+                    "new_unknown_facts": [],
+                    "goal_met": False,
+                    "goal_assessment": "Corviknight Ground immunity wrong",
+                    "route": "retry_research",
+                }
+            )),
         ]
 
-        from moira.workflow.nodes.research_nodes import verification
+        from moira.workflow.nodes.verification import verification
 
         result = await verification(stress_state, _make_run_config(config))
 
-        all_text = " ".join(
-            [
-                result["verification_history"][0]["assessment"],
-                *result["verification_history"][0].get("contradictions", []),
-                *result["verification_history"][0].get("unsupported_claims", []),
-            ]
-        ).lower()
-
-        assert (
-            "corviknight" in all_text
-            and ("ground" in all_text or "immune" in all_text or "levitate" in all_text)
-        ), (
+        all_text = json.dumps(result["knowledge"]["verification_history"]).lower()
+        assert "corviknight" in all_text and ("ground" in all_text or "immune" in all_text), (
             "Verification should flag the Corviknight Ground immunity error. "
-            f"Got: {all_text}"
+            f"Got: {all_text[:300]}"
         )
 
 
@@ -596,17 +516,11 @@ class TestToolRoutingFixture:
         self, config, mock_writer, mock_model
     ):
         """When discovering tools for Pokemon-specific facts, specialized tools
-        should be in the candidate list and ranked ahead of web_search.
-
-        This test uses the current tool_discovery node to verify that
-        LanceDB returns Pokemon tools for Pokemon-related plan text.
-        It is expected to partially fail against the current system
-        (which embeds the plan text, not individual fact queries)."""
+        should be in the candidate list."""
         _inject_services(config, mock_model)
 
-        from moira.workflow.nodes.research_nodes import tool_discovery
+        from moira.workflow.nodes.tool_identification import tool_identification
 
-        # Mock LanceDB discovery to return tools in similarity order
         pokemon_tools = [t for t in TOOL_CATALOG if not t.is_default]
         mock_discovery = AsyncMock()
         mock_discovery.discover = AsyncMock(return_value=pokemon_tools[:3])
@@ -617,18 +531,15 @@ class TestToolRoutingFixture:
         mock_catalog.get_default_tools.return_value = default_tools
         _services["tool_catalog"] = mock_catalog
 
-        state = {
-            "question": "What Pokemon synergize with Tyranitar in Gen9 OU?",
-            "plan": "Research Tyranitar typing, abilities, weaknesses, OU legality, teammates",
-            "active_tools": [],
-            "budget_remaining": 50.0,
-            "cost_weights": config.budget.cost_weights.model_dump(),
-        }
+        state = _build_state(config, "What Pokemon synergize with Tyranitar in Gen9 OU?")
+        facts = [
+            Fact(id="f001", subject="Tyranitar", fact_needed="Tyranitar typing", status="unknown"),
+        ]
+        state["knowledge"]["facts"] = facts
 
-        result = await tool_discovery(state, _make_run_config(config))
+        result = await tool_identification(state, _make_run_config(config))
 
-        discovered_names = [t.name for t in result.get("active_tools", [])]
-        # pokeapi and pokemon_db should be discovered
+        discovered_names = [t.name for t in result["execution_state"]["candidate_tools"]]
         assert "pokeapi" in discovered_names or "pokemon_db" in discovered_names, (
             f"Expected Pokemon tools in discovery results, got: {discovered_names}"
         )
@@ -640,68 +551,6 @@ class TestToolRoutingFixture:
 # A fixed fact bundle containing individually true facts that tempt an
 # unjustified conclusion. The system should qualify the claim or refuse
 # to overstate it.
-
-# Individually true facts about Tyranitar and a potential partner.
-SYNTHESIS_TRAP_FACTS = [
-    Finding(
-        content="Tyranitar is Rock/Dark type",
-        source="pokeapi",
-        citation_url="https://pokeapi.co/api/v2/pokemon/248",
-        type="evidence",
-    ),
-    Finding(
-        content="Tyranitar is weak to Fighting (x4), Water, Grass, Bug, Steel, Fairy, Ground (x2)",
-        source="pokeapi",
-        citation_url="https://pokeapi.co/api/v2/type/rock",
-        type="evidence",
-    ),
-    Finding(
-        content="Tyranitar has the ability Sand Stream which sets sandstorm for 5 turns",
-        source="pokeapi",
-        citation_url="https://pokeapi.co/api/v2/ability/29",
-        type="evidence",
-    ),
-    Finding(
-        content="Corviknight is Steel/Flying type",
-        source="pokeapi",
-        citation_url="https://pokeapi.co/api/v2/pokemon/823",
-        type="evidence",
-    ),
-    Finding(
-        content=(
-            "Corviknight resists Fairy (x0.5), "
-            "takes neutral from Fighting (Rock x2, Steel x0.5), "
-            "immune to Ground (Flying type)"
-        ),
-        source="pokeapi",
-        citation_url="https://pokeapi.co/api/v2/type/flying",
-        type="evidence",
-    ),
-    Finding(
-        content="Corviknight has the ability Pressure (or Defiant as hidden ability)",
-        source="pokeapi",
-        citation_url="https://pokeapi.co/api/v2/pokemon/823",
-        type="evidence",
-    ),
-    Finding(
-        content="Corviknight can learn Roost, Brave Bird, U-turn, Iron Head, Body Press",
-        source="pokeapi",
-        citation_url="https://pokeapi.co/api/v2/pokemon/823",
-        type="evidence",
-    ),
-    Finding(
-        content="Tinkaton is Fairy/Steel type",
-        source="pokeapi",
-        citation_url="https://pokeapi.co/api/v2/pokemon/957",
-        type="evidence",
-    ),
-    Finding(
-        content="Tinkaton resists Dark (x0.5), Rock (x0.5), and is immune to Dragon",
-        source="pokeapi",
-        citation_url="https://pokeapi.co/api/v2/type/fairy",
-        type="evidence",
-    ),
-]
 
 # The trap: from these facts, one might conclude "Corviknight is the BEST partner"
 # because it resists some of Tyranitar's weaknesses. But the facts don't support
@@ -735,126 +584,134 @@ class TestSynthesisTrapFixture:
 
     @pytest.fixture
     def trap_state(self, config) -> ResearchState:
-        cw = config.budget.cost_weights
-        return {
-            "question": "What Pokemon synergize well with Tyranitar in Gen9 OU?",
-            "plan": "Research Tyranitar typing, weaknesses, potential partners",
-            "active_tools": [
-                ToolDefinition(name="pokeapi", description="Pokemon data API"),
-            ],
-            "findings": list(SYNTHESIS_TRAP_FACTS),
-            "compressed_findings": [],
-            "draft": "",
-            "verification": "",
-            "report": None,
-            "budget_remaining": 30.0,
-            "budget_limit": 50.0,
-            "cost_weights": {
-                "planning": cw.planning,
-                "tool_discovery": cw.tool_discovery,
-                "tool_selection": cw.tool_selection,
-                "research_execution": cw.research_execution,
-                "compression": cw.compression,
-                "draft_synthesis": cw.draft_synthesis,
-                "verification": cw.verification,
-                "report_generation": cw.report_generation,
-            },
-            "verification_history": [],
-            "unverified_claims": [],
-            "error": "",
-            "draft_retry_count": 0,
-        }
+        facts = [
+            Fact(id="f001", subject="Tyranitar", fact_needed="Tyranitar typing",
+                 claim="Tyranitar is Rock/Dark type", status="unverified"),
+            Fact(id="f002", subject="Tyranitar", fact_needed="Tyranitar weaknesses",
+                 claim="Weak to Fighting (x4), Water, Grass, Bug, "
+                       "Steel, Fairy, Ground (x2)",
+                 status="unverified"),
+            Fact(id="f003", subject="Tyranitar", fact_needed="Tyranitar ability",
+                 claim="Sand Stream sets sandstorm for 5 turns", status="unverified"),
+            Fact(id="f004", subject="Corviknight", fact_needed="Corviknight typing",
+                 claim="Corviknight is Steel/Flying type", status="unverified"),
+            Fact(id="f005", subject="Corviknight",
+                 fact_needed="Corviknight matchups",
+                 claim="Resists Fairy (x0.5), takes neutral from Fighting, "
+                       "immune to Ground (Flying type)",
+                 status="unverified"),
+            Fact(id="f006", subject="Corviknight", fact_needed="Corviknight abilities",
+                 claim="Pressure or Defiant (hidden)", status="unverified"),
+            Fact(id="f007", subject="Corviknight", fact_needed="Corviknight moves",
+                 claim="Roost, Brave Bird, U-turn, Iron Head, Body Press", status="unverified"),
+            Fact(id="f008", subject="Tinkaton", fact_needed="Tinkaton typing",
+                 claim="Tinkaton is Fairy/Steel type", status="unverified"),
+            Fact(id="f009", subject="Tinkaton", fact_needed="Tinkaton resistances",
+                 claim="Resists Dark (x0.5), Rock (x0.5), immune to Dragon", status="unverified"),
+        ]
+        question = "What Pokemon synergize well with Tyranitar in Gen9 OU?"
+        state = _build_state(config, question, facts)
+        state["knowledge"]["user_goal"] = "Find synergistic partners for Tyranitar in Gen9 OU"
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="pokeapi", description="Pokemon data API"),
+        ]
+        return state
 
     @pytest.mark.xfail(
-        reason="Current system passes model output through without checking "
-        "for overclaims. Overhauled synthesis must enforce fact-only reasoning.",
+        reason="Synthesis must enforce fact-only reasoning and reject overclaims.",
         strict=True,
     )
     async def test_synthesis_does_not_claim_best_partner(
         self, config, mock_writer, mock_model, trap_state
     ):
-        """Draft synthesis should not claim Corviknight is 'the best' partner
+        """Synthesis should not claim Corviknight is 'the best' partner
         without usage/stat evidence."""
         _inject_services(config, mock_model)
 
-        # Simulate a draft that overclaims
-        overclaiming_draft = (
-            "Corviknight is the best partner for Tyranitar in Gen9 OU. "
-            "Its typing perfectly covers all of Tyranitar's weaknesses, "
-            "making Tyranitar easy to use on any team."
-        )
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=overclaiming_draft
+            content=json.dumps({
+                "conclusions": [{
+                    "conclusion": "Corviknight is the best partner for Tyranitar in Gen9 OU",
+                    "supporting_fact_ids": ["f004", "f005"],
+                    "reasoning": "Covers all weaknesses",
+                }]
+            })
         )
 
-        from moira.workflow.nodes.research_nodes import draft_synthesis
+        from moira.workflow.nodes.synthesis import synthesis
 
-        result = await draft_synthesis(trap_state, _make_run_config(config))
+        result = await synthesis(trap_state, _make_run_config(config))
 
-        draft = result.get("draft", "")
-        # The draft should NOT contain superlative claims like "best" or
-        # "perfectly covers all" given the limited evidence.
-        # This test documents the expected behavior; it will likely fail
-        # against the current system because the model tends to overstate.
-        #
-        # We check for the most egregious overclaims:
-        assert "best partner" not in draft.lower() or "evidence" in draft.lower(), (
-            "Draft should not claim 'best partner' without usage data. "
-            f"Got: {draft[:200]}"
+        conclusions_text = json.dumps(result["knowledge"]["conclusions"]).lower()
+        assert "best partner" not in conclusions_text, (
+            "Synthesis should not claim 'best partner' without usage data. "
+            f"Got: {conclusions_text[:300]}"
         )
 
     @pytest.mark.xfail(
-        reason="Current system passes model output through without checking "
-        "Fighting type interaction accuracy. Overhauled synthesis must enforce "
-        "fact-only reasoning.",
+        reason="Synthesis must enforce fact-only reasoning and type interaction accuracy.",
         strict=True,
     )
     async def test_synthesis_qualifies_fighting_neutral(
         self, config, mock_writer, mock_model, trap_state
     ):
-        """Draft should note that Corviknight takes neutral from Fighting,
+        """Synthesis should note that Corviknight takes neutral from Fighting,
         not resist it (Tyranitar's x4 weakness)."""
         _inject_services(config, mock_model)
 
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content="Corviknight resists all of Tyranitar's weaknesses including Fighting."
+            content=json.dumps({
+                "conclusions": [{
+                    "conclusion": "Corviknight resists all of "
+                                  "Tyranitar's weaknesses including Fighting",
+                    "supporting_fact_ids": ["f004", "f005"],
+                    "reasoning": "Steel resists Fairy and Fighting",
+                }]
+            })
         )
 
-        from moira.workflow.nodes.research_nodes import draft_synthesis
+        from moira.workflow.nodes.synthesis import synthesis
 
-        result = await draft_synthesis(trap_state, _make_run_config(config))
+        result = await synthesis(trap_state, _make_run_config(config))
 
-        draft = result.get("draft", "").lower()
-        # Should not claim Corviknight "resists Fighting"
-        if "resist" in draft and "fighting" in draft:
-            assert "neutral" in draft or "does not resist" in draft, (
-                "Draft should clarify Corviknight takes neutral from Fighting, "
-                "not resist it. Got: " + draft[:200]
+        conclusions_text = json.dumps(result["knowledge"]["conclusions"]).lower()
+        if "resist" in conclusions_text and "fighting" in conclusions_text:
+            assert "neutral" in conclusions_text, (
+                "Synthesis should clarify Corviknight takes neutral from Fighting. "
+                f"Got: {conclusions_text[:300]}"
             )
 
     async def test_synthesis_acknowledges_limited_evidence(
         self, config, mock_writer, mock_model, trap_state
     ):
-        """Draft should acknowledge that no usage data or matchup data was
+        """Synthesis should acknowledge that no usage data or matchup data was
         provided in the facts."""
         _inject_services(config, mock_model)
 
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content="Based on the available type matchups, Corviknight provides "
-            "good defensive synergy. However, without usage statistics or "
-            "competitive matchup data, a definitive ranking cannot be established."
+            content=json.dumps({
+                "conclusions": [{
+                    "conclusion": (
+                        "Corviknight provides good defensive synergy "
+                        "based on type matchups. However, without usage "
+                        "statistics, a definitive ranking cannot be "
+                        "established."
+                    ),
+                    "supporting_fact_ids": ["f004", "f005"],
+                    "reasoning": "Type coverage analysis with hedging for missing data",
+                }]
+            })
         )
 
-        from moira.workflow.nodes.research_nodes import draft_synthesis
+        from moira.workflow.nodes.synthesis import synthesis
 
-        result = await draft_synthesis(trap_state, _make_run_config(config))
+        result = await synthesis(trap_state, _make_run_config(config))
 
-        draft = result.get("draft", "").lower()
-        # Should contain some hedging language
+        conclusions_text = json.dumps(result["knowledge"]["conclusions"]).lower()
         has_qualification = any(
-            word in draft
+            word in conclusions_text
             for word in ["however", "without", "limited", "based on", "available", "suggests"]
         )
         assert has_qualification, (
-            "Draft should hedge given limited evidence. Got: " + draft[:200]
+            "Synthesis should hedge given limited evidence. Got: " + conclusions_text[:200]
         )

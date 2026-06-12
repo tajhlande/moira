@@ -43,18 +43,22 @@ class WorkflowRun:
     id: str
     conversation_id: str
     user_message_id: int
-    thread_id: str
-    tool_executions: list = field(default_factory=list)
-    report: dict | None = None
-    budget_limit: float = 0.0
-    budget_consumed: float = 0.0
-    error: str = ""
     status: str = "running"
-    state_version: int = 1
+    budget_limit: float = 0.0
+    total_cost: float = 0.0
+    generation_path: str = ""
     started_at: str = ""
     completed_at: str = ""
-    updated_at: str = ""
     total_elapsed_ms: int = 0
+    updated_at: str = ""
+    knowledge_snapshot: str = ""
+    state_version: int = 1
+    # Legacy fields preserved for migration compatibility
+    thread_id: str = ""
+    tool_executions: list = field(default_factory=list)
+    report: dict | None = None
+    budget_consumed: float = 0.0
+    error: str = ""
 
 
 @dataclass
@@ -73,6 +77,7 @@ class WorkflowStep:
     budget_remaining: float
     started_at: str
     elapsed_ms: int
+    tool_call_cost: float = 0.0
     purpose: str | None = None
     model: str | None = None
     call_count: int | None = None

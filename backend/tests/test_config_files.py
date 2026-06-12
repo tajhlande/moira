@@ -32,7 +32,7 @@ class TestConfigTemplate:
         config = MoiraConfig.model_validate(raw)
         assert config.budget.default_limit > 0
         assert config.database.sqlite_path
-        assert len(CostWeights.model_fields) == 8
+        assert len(CostWeights.model_fields) == 7
 
     def test_template_has_all_cost_weight_keys(self):
         with open(CONFIG_TEMPLATE) as f:
@@ -40,12 +40,11 @@ class TestConfigTemplate:
         config = MoiraConfig.model_validate(raw)
         cw = config.budget.cost_weights
         expected = [
+            "decomposition",
+            "tool_identification",
             "planning",
-            "tool_discovery",
-            "tool_selection",
-            "research_execution",
-            "compression",
-            "draft_synthesis",
+            "research",
+            "synthesis",
             "verification",
             "report_generation",
         ]

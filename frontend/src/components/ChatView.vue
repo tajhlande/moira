@@ -16,7 +16,7 @@ import {
   IconRefresh,
 } from "@tabler/icons-vue";
 import { useRoute, useRouter } from "vue-router";
-import { useChatStore } from "../stores/chat";
+import { DEFAULT_BUDGET, useChatStore } from "../stores/chat";
 import { useDialog } from "naive-ui";
 import RunArtifacts from "./RunArtifacts.vue";
 import MarkdownContent from "./MarkdownContent.vue";
@@ -66,6 +66,20 @@ watch(
 // content (usually the end) is immediately visible.
 watch(
   () => store.currentConversationId,
+  () => {
+    nextTick(() => {
+      messagesScrollbar.value?.scrollTo({ top: 999999, behavior: "smooth" });
+    });
+  },
+);
+
+// Auto-scroll during streaming as new steps/content arrive.
+watch(
+  () => [
+    store.messages.length,
+    store.activeRun?.execution_steps?.length,
+    store.activeRun?.report,
+  ],
   () => {
     nextTick(() => {
       messagesScrollbar.value?.scrollTo({ top: 999999, behavior: "smooth" });
@@ -177,7 +191,7 @@ function confirmRerun(msgId: number) {
         <div class="settings-row">
           <label class="settings-label">Budget</label>
           <NSlider
-            :value="store.runSettings.budget ?? 50"
+            :value="store.runSettings.budget ?? DEFAULT_BUDGET"
             :min="35"
             :max="150"
             :step="1"
@@ -187,7 +201,7 @@ function confirmRerun(msgId: number) {
               (v: number) => (store.runSettings.budget = v)
             "
           />
-          <span class="settings-value">{{ store.runSettings.budget ?? 50 }}</span>
+          <span class="settings-value">{{ store.runSettings.budget ?? DEFAULT_BUDGET }}</span>
         </div>
       </div>
     </div>
@@ -254,6 +268,7 @@ function confirmRerun(msgId: number) {
 
 .messages-area {
   flex: 1;
+  min-height: 0;
   padding: 24px 40px;
 }
 

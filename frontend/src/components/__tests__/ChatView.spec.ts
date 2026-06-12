@@ -3,6 +3,7 @@ import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { nextTick } from "vue";
 import { createRouter, createMemoryHistory, type Router } from "vue-router";
+import { DEFAULT_BUDGET } from "../../stores/chat";
 
 let router: Router;
 
@@ -135,7 +136,7 @@ function runSnapshot(
       conversation_id: "conv-1",
       user_message_id: 1,
       status: "running",
-      budget_limit: 50,
+      budget_limit: DEFAULT_BUDGET,
       budget_consumed: 0,
       error: "",
       report: null,
@@ -161,7 +162,7 @@ describe("ChatView", () => {
             label: "Planning",
             status: "running",
             cost: 0,
-            budget_remaining: 50,
+            budget_remaining: DEFAULT_BUDGET,
             tool_call_count: 0,
             step_version: 1,
             has_detail: false,
@@ -176,9 +177,13 @@ describe("ChatView", () => {
         report: {
           answer: "Mocked SSE response",
           citations: [],
+          verified_facts: [],
+          verified_conclusions: [],
+          contradicted: [],
+          unknown_facts: [],
           critiques: [],
-          unverified_claims: [],
-          budget_consumed: 21,
+          total_cost: 21,
+          tool_call_total_cost: 0,
         },
         execution_steps: [
           {
@@ -222,7 +227,7 @@ describe("ChatView", () => {
             label: "Planning",
             status: "running",
             cost: 0,
-            budget_remaining: 50,
+            budget_remaining: DEFAULT_BUDGET,
             tool_call_count: 0,
             step_version: 1,
             has_detail: false,
@@ -238,8 +243,12 @@ describe("ChatView", () => {
           answer: "Done",
           citations: [],
           critiques: [],
-          unverified_claims: [],
-          budget_consumed: 2,
+          verified_facts: [],
+          verified_conclusions: [],
+          contradicted: [],
+          unknown_facts: [],
+          total_cost: 2,
+          tool_call_total_cost: 0,
         },
         execution_steps: [
           {
@@ -306,8 +315,12 @@ describe("ChatView", () => {
           answer: "Final answer",
           citations: [],
           critiques: [],
-          unverified_claims: [],
-          budget_consumed: 10,
+          verified_facts: [],
+          verified_conclusions: [],
+          contradicted: [],
+          unknown_facts: [],
+          total_cost: 10,
+          tool_call_total_cost: 0,
         },
         execution_steps: [
           {
@@ -429,8 +442,12 @@ describe("ChatView", () => {
           answer: "Rendered answer",
           citations: [],
           critiques: [],
-          unverified_claims: [],
-          budget_consumed: 10,
+          verified_facts: [],
+          verified_conclusions: [],
+          contradicted: [],
+          unknown_facts: [],
+          total_cost: 10,
+          tool_call_total_cost: 0,
         },
         execution_steps: [
           {
@@ -499,8 +516,12 @@ describe("ChatView", () => {
           answer: "Persisted answer",
           citations: [],
           critiques: [],
-          unverified_claims: [],
-          budget_consumed: 5,
+          verified_facts: [],
+          verified_conclusions: [],
+          contradicted: [],
+          unknown_facts: [],
+          total_cost: 5,
+          tool_call_total_cost: 0,
         },
         execution_steps: [
           {
@@ -692,7 +713,7 @@ describe("ChatView", () => {
           conversation_id: "conv-1",
           user_message_id: 1,
           status: "stopped",
-          budget_limit: 50,
+          budget_limit: DEFAULT_BUDGET,
           budget_consumed: 14,
           error: "",
           report: null,
@@ -736,7 +757,7 @@ describe("ChatView", () => {
           conversation_id: "conv-1",
           user_message_id: 1,
           status: "running",
-          budget_limit: 50,
+          budget_limit: DEFAULT_BUDGET,
           budget_consumed: 14,
           error: "",
           report: null,
@@ -808,7 +829,7 @@ describe("ChatView", () => {
           conversation_id: "conv-1",
           user_message_id: 1,
           status: "stopped",
-          budget_limit: 50,
+          budget_limit: DEFAULT_BUDGET,
           budget_consumed: 10,
           error: "",
           report: null,
@@ -859,7 +880,7 @@ describe("ChatView", () => {
           conversation_id: "conv-1",
           user_message_id: 1,
           status: "stopped",
-          budget_limit: 50,
+          budget_limit: DEFAULT_BUDGET,
           budget_consumed: 10,
           error: "",
           report: null,
@@ -889,7 +910,7 @@ describe("ChatView", () => {
           conversation_id: "conv-1",
           user_message_id: 1,
           status: "running",
-          budget_limit: 50,
+          budget_limit: DEFAULT_BUDGET,
           budget_consumed: 10,
           error: "",
           report: null,
@@ -969,7 +990,7 @@ describe("ChatView", () => {
           conversation_id: "conv-1",
           user_message_id: 1,
           status: "running",
-          budget_limit: 50,
+          budget_limit: DEFAULT_BUDGET,
           budget_consumed: 10,
           error: "",
           report: null,

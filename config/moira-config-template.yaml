@@ -17,15 +17,14 @@ database:
 # --- Budget (consumed by Phase 2 workflow) ---
 
 budget:
-  default_limit: 50
+  default_limit: 60
   cost_weights:
+    decomposition: 2
+    tool_identification: 1
     planning: 2
-    tool_discovery: 1
-    tool_selection: 2
-    research_execution: 5
-    compression: 1
-    draft_synthesis: 3
-    verification: 4
+    research: 10
+    synthesis: 5
+    verification: 8
     report_generation: 3  # budget-exempt: tracked for accounting, never gates execution
 
 # --- Inference ---

@@ -217,7 +217,7 @@ function fmt(n: number): string {
                 </template>
               </span>
               <span v-if="row.step.status === 'completed'" class="step-cost"
-                >-{{ row.step.cost }}</span
+                >-{{ Math.abs(row.step.cost) }}</span
               >
               <span v-else-if="row.step.elapsed_ms != null || row.step.status === 'running'" class="step-cost step-cost-placeholder"
               ></span>

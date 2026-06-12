@@ -101,12 +101,11 @@ async def send_message(
         )
         cw = config.budget.cost_weights
         cost_weights = {
+            "decomposition": cw.decomposition,
+            "tool_identification": cw.tool_identification,
             "planning": cw.planning,
-            "tool_discovery": cw.tool_discovery,
-            "tool_selection": cw.tool_selection,
-            "research_execution": cw.research_execution,
-            "compression": cw.compression,
-            "draft_synthesis": cw.draft_synthesis,
+            "research": cw.research,
+            "synthesis": cw.synthesis,
             "verification": cw.verification,
             "report_generation": cw.report_generation,
         }
@@ -136,21 +135,30 @@ async def send_message(
     prior_question = prior_turns[-1]["question"] if prior_turns else None
 
     initial_state = {
-        "question": user_content,
-        "plan": "",
-        "active_tools": [],
-        "findings": [],
-        "compressed_findings": [],
-        "draft": "",
-        "verification": "",
-        "report": None,
-        "budget_remaining": float(budget_limit),
-        "budget_limit": float(budget_limit),
-        "cost_weights": cost_weights,
-        "verification_history": [],
-        "unverified_claims": [],
-        "error": "",
-        "draft_retry_count": 0,
+        "knowledge": {
+            "question": user_content,
+            "user_goal": "",
+            "topic": "",
+            "entities": [],
+            "concepts": [],
+            "facts": [],
+            "conclusions": [],
+            "citations": [],
+            "verification_history": [],
+        },
+        "execution_state": {
+            "candidate_tools": [],
+            "tool_call_plan": [],
+            "budget_remaining": float(budget_limit),
+            "budget_limit": float(budget_limit),
+            "step_costs": cost_weights,
+            "tool_costs": {},
+            "tool_call_counts": {},
+            "total_tool_cost_consumed": 0.0,
+            "error": "",
+            "synthesis_retry_count": 0,
+            "verification_attempts": 0,
+        },
     }
 
     thread_id = str(uuid.uuid4())
@@ -252,12 +260,11 @@ async def rerun_message(
         )
         cw = config.budget.cost_weights
         cost_weights = {
+            "decomposition": cw.decomposition,
+            "tool_identification": cw.tool_identification,
             "planning": cw.planning,
-            "tool_discovery": cw.tool_discovery,
-            "tool_selection": cw.tool_selection,
-            "research_execution": cw.research_execution,
-            "compression": cw.compression,
-            "draft_synthesis": cw.draft_synthesis,
+            "research": cw.research,
+            "synthesis": cw.synthesis,
             "verification": cw.verification,
             "report_generation": cw.report_generation,
         }
@@ -286,21 +293,30 @@ async def rerun_message(
     prior_question = prior_turns[-1]["question"] if prior_turns else None
 
     initial_state = {
-        "question": user_content,
-        "plan": "",
-        "active_tools": [],
-        "findings": [],
-        "compressed_findings": [],
-        "draft": "",
-        "verification": "",
-        "report": None,
-        "budget_remaining": float(budget_limit),
-        "budget_limit": float(budget_limit),
-        "cost_weights": cost_weights,
-        "verification_history": [],
-        "unverified_claims": [],
-        "error": "",
-        "draft_retry_count": 0,
+        "knowledge": {
+            "question": user_content,
+            "user_goal": "",
+            "topic": "",
+            "entities": [],
+            "concepts": [],
+            "facts": [],
+            "conclusions": [],
+            "citations": [],
+            "verification_history": [],
+        },
+        "execution_state": {
+            "candidate_tools": [],
+            "tool_call_plan": [],
+            "budget_remaining": float(budget_limit),
+            "budget_limit": float(budget_limit),
+            "step_costs": cost_weights,
+            "tool_costs": {},
+            "tool_call_counts": {},
+            "total_tool_cost_consumed": 0.0,
+            "error": "",
+            "synthesis_retry_count": 0,
+            "verification_attempts": 0,
+        },
     }
 
     thread_id = str(uuid.uuid4())

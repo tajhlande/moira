@@ -14,9 +14,16 @@ interface PromptMessage {
 const props = defineProps<{ detail: Record<string, unknown> }>();
 const toolsStore = useToolsStore();
 
+const promptText = computed<string | null>(() => {
+  const p = props.detail.prompt;
+  if (typeof p === "string" && p.length > 0) return p;
+  return null;
+});
+
 const promptMessages = computed<PromptMessage[]>(() => {
   const p = props.detail.prompt as { messages?: PromptMessage[] } | undefined;
-  return p?.messages ?? [];
+  if (p && typeof p === "object" && "messages" in p) return p.messages ?? [];
+  return [];
 });
 
 const thinking = computed<string | null>(() => {
@@ -38,6 +45,21 @@ const so = computed<Record<string, unknown> | null>(() => {
 const toolResults = computed<ToolExecution[]>(() => {
   if (!props.detail.tool_results) return [];
   return props.detail.tool_results as ToolExecution[];
+});
+
+const candidateTools = computed<string[]>(() => {
+  const v = props.detail.candidate_tools;
+  return Array.isArray(v) ? v : [];
+});
+
+const queries = computed<{ fact_id: string; query: string }[]>(() => {
+  const v = props.detail.queries;
+  return Array.isArray(v) ? v : [];
+});
+
+const generationPath = computed<string | null>(() => {
+  const v = props.detail.generation_path;
+  return typeof v === "string" ? v : null;
 });
 
 const toolListKeys = computed<string[]>(() => {
@@ -87,6 +109,18 @@ function prettyLabel(key: string): string {
   return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+const isKnownKey = new Set([
+  "selected_tools", "default_tools", "discovered_tools",
+  "outcome", "case", "assessment", "retry_declined", "retry_declined_reason",
+  "supported_claims", "unsupported_claims", "contradictions",
+  "answer", "citations",
+]);
+
+const genericEntries = computed<[string, unknown][]>(() => {
+  if (!so.value) return [];
+  return Object.entries(so.value).filter(([k]) => !isKnownKey.has(k));
+});
+
 function claimList(key: string): unknown[] {
   const arr = so.value?.[key];
   return Array.isArray(arr) ? arr : [];
@@ -95,7 +129,18 @@ function claimList(key: string): unknown[] {
 
 <template>
   <div class="step-detail-content">
-    <!-- Prompt section -->
+    <!-- Prompt section (string) -->
+    <NCollapse
+      v-if="promptText"
+      :default-expanded-names="[]"
+      class="detail-section"
+    >
+      <NCollapseItem title="Prompt" name="prompt">
+        <pre class="detail-text-block">{{ promptText }}</pre>
+      </NCollapseItem>
+    </NCollapse>
+
+    <!-- Prompt section (messages) -->
     <NCollapse
       v-if="promptMessages.length > 0"
       :default-expanded-names="[]"
@@ -223,8 +268,54 @@ function claimList(key: string): unknown[] {
           <div class="detail-label">Answer Preview</div>
           <pre class="detail-text-block">{{ so!.answer }}</pre>
         </div>
+
+        <!-- Generic key-value renderer for unknown structured output keys -->
+        <div v-if="genericEntries.length > 0" class="structured-section">
+          <div
+            v-for="([key, val], gi) in genericEntries"
+            :key="gi"
+            class="generic-entry"
+          >
+            <div class="detail-label">{{ prettyLabel(key) }}</div>
+            <pre
+              v-if="typeof val === 'string'"
+              class="detail-text-block"
+            >{{ val }}</pre>
+            <pre v-else class="detail-text-block">{{ JSON.stringify(val, null, 2) }}</pre>
+          </div>
+        </div>
       </NCollapseItem>
     </NCollapse>
+
+    <!-- Tool identification detail -->
+    <div v-if="candidateTools.length > 0 || queries.length > 0" class="detail-section">
+      <div v-if="candidateTools.length > 0" class="structured-section">
+        <div class="detail-label">Candidate Tools</div>
+        <div class="tool-tags">
+          <span
+            v-for="name in candidateTools"
+            :key="name"
+            class="tool-tag discovered"
+          >{{ name }}</span>
+        </div>
+      </div>
+      <div v-if="queries.length > 0" class="structured-section">
+        <div class="detail-label">Fact Queries</div>
+        <ul>
+          <li v-for="(q, qi) in queries" :key="qi">
+            <strong>{{ q.fact_id }}</strong>: {{ q.query }}
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Report generation path -->
+    <div v-if="generationPath" class="detail-section">
+      <div class="structured-section">
+        <div class="detail-label">Generation Path</div>
+        <span :class="['generation-path-badge', generationPath]">{{ generationPath }}</span>
+      </div>
+    </div>
 
     <!-- Tool executions -->
     <NCollapse

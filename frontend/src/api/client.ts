@@ -53,9 +53,13 @@ export interface ToolExecution {
 export interface ResearchReport {
   answer: string;
   citations: { source: string; url?: string; excerpt?: string }[];
+  verified_facts: { id: string; subject: string; claim: string; status: string }[];
+  verified_conclusions: { id: string; conclusion: string; status: string }[];
+  contradicted: { id: string; subject?: string; conclusion?: string; status: string }[];
+  unknown_facts: { id: string; subject: string; fact_needed: string; status: string }[];
   critiques: string[];
-  unverified_claims: string[];
-  budget_consumed: number;
+  total_cost: number;
+  tool_call_total_cost: number;
   generation_path?: "verified" | "budget_exhausted" | "error";
 }
 

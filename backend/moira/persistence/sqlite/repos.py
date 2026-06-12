@@ -147,38 +147,37 @@ class SqliteConversationRepository(ConversationRepository):
         try:
             conn.execute(
                 "INSERT INTO workflow_runs "
-                "(id, conversation_id, user_message_id, thread_id, "
-                "tool_executions, report, budget_limit, budget_consumed, "
-                "error, status, state_version, started_at, completed_at, "
-                "updated_at, total_elapsed_ms) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "(id, conversation_id, user_message_id, status, "
+                "budget_limit, total_cost, generation_path, started_at, "
+                "completed_at, total_elapsed_ms, updated_at, "
+                "knowledge_snapshot, state_version, report) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
-                "tool_executions = excluded.tool_executions, "
-                "report = excluded.report, "
-                "budget_limit = excluded.budget_limit, "
-                "budget_consumed = excluded.budget_consumed, "
-                "error = excluded.error, "
                 "status = excluded.status, "
-                "state_version = excluded.state_version, "
+                "budget_limit = excluded.budget_limit, "
+                "total_cost = excluded.total_cost, "
+                "generation_path = excluded.generation_path, "
                 "completed_at = excluded.completed_at, "
+                "total_elapsed_ms = excluded.total_elapsed_ms, "
                 "updated_at = excluded.updated_at, "
-                "total_elapsed_ms = excluded.total_elapsed_ms",
+                "knowledge_snapshot = excluded.knowledge_snapshot, "
+                "state_version = excluded.state_version, "
+                "report = excluded.report",
                 (
                     run.id,
                     run.conversation_id,
                     run.user_message_id,
-                    run.thread_id,
-                    json.dumps(run.tool_executions),
-                    json.dumps(run.report) if run.report else None,
-                    run.budget_limit,
-                    run.budget_consumed,
-                    run.error,
                     run.status,
-                    run.state_version,
+                    run.budget_limit,
+                    run.total_cost,
+                    run.generation_path,
                     run.started_at,
                     run.completed_at or None,
-                    run.updated_at or None,
                     run.total_elapsed_ms or None,
+                    run.updated_at or None,
+                    run.knowledge_snapshot or None,
+                    run.state_version,
+                    json.dumps(run.report) if run.report else None,
                 ),
             )
             conn.commit()
@@ -189,22 +188,21 @@ class SqliteConversationRepository(ConversationRepository):
         conn = self._connect()
         try:
             rows = conn.execute(
-                "SELECT id, conversation_id, user_message_id, thread_id, "
-                "tool_executions, report, budget_limit, budget_consumed, "
-                "error, status, state_version, started_at, completed_at, "
-                "updated_at, total_elapsed_ms "
+                "SELECT id, conversation_id, user_message_id, status, "
+                "budget_limit, total_cost, generation_path, started_at, "
+                "completed_at, total_elapsed_ms, updated_at, "
+                "knowledge_snapshot, state_version, report "
                 "FROM workflow_runs WHERE conversation_id = ? ORDER BY started_at ASC",
                 (conversation_id,),
             ).fetchall()
             result = []
             for r in rows:
                 d = dict(r)
-                te = d["tool_executions"]
-                d["tool_executions"] = json.loads(te) if te else []
-                d["report"] = json.loads(d["report"]) if d["report"] else None
                 d["state_version"] = d.get("state_version") or 1
                 d["updated_at"] = d.get("updated_at") or d.get("completed_at") or d["started_at"]
                 d["total_elapsed_ms"] = d["total_elapsed_ms"] or 0
+                report_raw = d.pop("report", None)
+                d["report"] = json.loads(report_raw) if report_raw else None
                 result.append(WorkflowRun(**d))
             return result
         finally:
@@ -300,7 +298,6 @@ class SqliteConversationRepository(ConversationRepository):
             step_count = step_cursor.rowcount
             run_cursor = conn.execute(
                 "UPDATE workflow_runs SET status = 'stopped', "
-                "error = 'Server restarted while run was in progress', "
                 "state_version = state_version + 1, "
                 "completed_at = ?, updated_at = ? "
                 "WHERE status = 'running'",
@@ -702,19 +699,20 @@ class SqliteWorkflowStepRepository(WorkflowStepRepository):
             cursor = conn.execute(
                 "INSERT INTO workflow_steps "
                 "(workflow_run_id, node_name, label, status, cost, "
-                "budget_remaining, started_at, elapsed_ms, "
+                "tool_call_cost, budget_remaining, started_at, elapsed_ms, "
                 "step_version, tool_call_count, "
                 "purpose, model, call_count, "
                 "input_tokens, thinking_tokens, output_tokens, "
                 "prompt_time_ms, gen_time_ms, "
                 "error, detail) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     step.workflow_run_id,
                     step.node_name,
                     step.label,
                     step.status,
                     step.cost,
+                    step.tool_call_cost,
                     step.budget_remaining,
                     step.started_at,
                     step.elapsed_ms,
@@ -743,7 +741,7 @@ class SqliteWorkflowStepRepository(WorkflowStepRepository):
         try:
             rows = conn.execute(
                 "SELECT id, workflow_run_id, node_name, label, status, cost, "
-                "budget_remaining, started_at, elapsed_ms, "
+                "tool_call_cost, budget_remaining, started_at, elapsed_ms, "
                 "step_version, tool_call_count, "
                 "purpose, model, call_count, "
                 "input_tokens, thinking_tokens, output_tokens, "

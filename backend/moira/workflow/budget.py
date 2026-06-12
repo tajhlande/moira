@@ -1,49 +1,66 @@
+"""Budget management for the overhauled research loop.
+
+Step costs match the overhaul plan (section 2.3):
+- decomposition: 2
+- tool_identification: 1
+- planning: 2
+- research: 10
+- synthesis: 5
+- verification: 8
+- report_generation: 3 (budget-exempt)
+
+Tool invocation costs are deducted per-call during research and verification.
+"""
+
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Nodes that participate in a full research cycle (planning through
-# verification). Report generation is excluded because it is budget-exempt
-# and always runs as the terminal node. Compression is bypassed but
-# retained in cost mapping for backward compatibility.
+# Nodes in a full research cycle (decomposition through verification).
 _FULL_CYCLE_NODES = (
+    "decomposition",
+    "tool_identification",
     "planning",
-    "tool_discovery",
-    "tool_selection",
-    "research_execution",
-    "draft_synthesis",
+    "research",
+    "synthesis",
     "verification",
 )
 
-# Nodes participating in a draft-only retry (re-synthesis + re-verification).
-_DRAFT_RETRY_NODES = (
-    "draft_synthesis",
+# Nodes in a synthesis-only retry (synthesis + verification).
+_SYNTHESIS_RETRY_NODES = (
+    "synthesis",
+    "verification",
+)
+
+# Nodes in a research retry (tool_identification through verification).
+_RESEARCH_RETRY_NODES = (
+    "tool_identification",
+    "planning",
+    "research",
+    "synthesis",
     "verification",
 )
 
 
-def get_node_cost(cost_weights: dict[str, int], node_name: str) -> int:
-    """Return the cost weight for a given node name."""
-    return cost_weights.get(node_name, 0)
+def get_node_cost(step_costs: dict[str, float], node_name: str) -> float:
+    return step_costs.get(node_name, 0)
 
 
-def can_execute(cost_weights: dict[str, int], node_name: str, budget_remaining: float) -> bool:
-    """Check whether a node can execute given remaining budget.
-    report_generation is always executable (budget-exempt)."""
+def can_execute(step_costs: dict[str, float], node_name: str, budget_remaining: float) -> bool:
+    """Report generation is always executable (budget-exempt)."""
     if node_name == "report_generation":
         return True
-    cost = get_node_cost(cost_weights, node_name)
+    cost = get_node_cost(step_costs, node_name)
     return budget_remaining >= cost
 
 
-def deduct_cost(cost_weights: dict[str, int], node_name: str, budget_remaining: float) -> float:
-    """Deduct the node's cost weight from budget_remaining. Returns the
-    new budget_remaining. report_generation's cost is deducted for
-    accounting but never prevents execution."""
-    cost = get_node_cost(cost_weights, node_name)
+def deduct_cost(step_costs: dict[str, float], node_name: str, budget_remaining: float) -> float:
+    """Deduct node cost. report_generation cost is deducted for accounting
+    but never prevents execution."""
+    cost = get_node_cost(step_costs, node_name)
     new_budget = budget_remaining - cost
     logger.debug(
-        "Budget deduction: node=%s, cost=%d, before=%.1f, after=%.1f",
+        "Budget deduction: node=%s, cost=%.1f, before=%.1f, after=%.1f",
         node_name,
         cost,
         budget_remaining,
@@ -52,15 +69,16 @@ def deduct_cost(cost_weights: dict[str, int], node_name: str, budget_remaining: 
     return new_budget
 
 
-def full_cycle_cost(cost_weights: dict[str, int]) -> int:
-    """Return the total budget cost of one complete research cycle
-    (planning through verification). Used by the verification router to
-    decide whether a retry loop is affordable."""
-    return sum(get_node_cost(cost_weights, n) for n in _FULL_CYCLE_NODES)
+def full_cycle_cost(step_costs: dict[str, float]) -> float:
+    """Total step cost of one complete cycle (decomposition through verification)."""
+    return sum(get_node_cost(step_costs, n) for n in _FULL_CYCLE_NODES)
 
 
-def draft_retry_cost(cost_weights: dict[str, int]) -> int:
-    """Return the budget cost of a draft-only retry (draft_synthesis +
-    verification). Used when verification identifies a synthesis-specific
-    problem (cases 7-8) that doesn't require re-running research."""
-    return sum(get_node_cost(cost_weights, n) for n in _DRAFT_RETRY_NODES)
+def research_retry_cost(step_costs: dict[str, float]) -> float:
+    """Step cost of a research retry (tool_identification through verification)."""
+    return sum(get_node_cost(step_costs, n) for n in _RESEARCH_RETRY_NODES)
+
+
+def synthesis_retry_cost(step_costs: dict[str, float]) -> float:
+    """Step cost of a synthesis retry (synthesis + verification)."""
+    return sum(get_node_cost(step_costs, n) for n in _SYNTHESIS_RETRY_NODES)

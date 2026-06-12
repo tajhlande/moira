@@ -1,7 +1,7 @@
 import pytest
+from langgraph.graph import START
 
 from moira.config import CostWeights, MoiraConfig
-from moira.models.state import ResearchState, VerificationReport
 from moira.workflow.graph import build_graph, compile_graph, make_verification_router
 
 
@@ -10,186 +10,125 @@ def config():
     return MoiraConfig()
 
 
-@pytest.fixture
-def cost_weights():
+def _make_router_state(route="accept", budget_remaining=60.0, synthesis_retry_count=0):
     cw = CostWeights()
-    return {
+    step_costs = {
+        "decomposition": cw.decomposition,
+        "tool_identification": cw.tool_identification,
         "planning": cw.planning,
-        "tool_discovery": cw.tool_discovery,
-        "tool_selection": cw.tool_selection,
-        "research_execution": cw.research_execution,
-        "compression": cw.compression,
-        "draft_synthesis": cw.draft_synthesis,
+        "research": cw.research,
+        "synthesis": cw.synthesis,
         "verification": cw.verification,
         "report_generation": cw.report_generation,
     }
-
-
-def _make_report(**overrides) -> VerificationReport:
-    defaults = {
-        "outcome": "accept",
-        "case": 1,
-        "assessment": "",
-        "supported_claims": [],
-        "unsupported_claims": [],
-        "contradictions": [],
-        "relevance": "on_topic",
-        "depth": "sufficient",
-        "guidance": "",
+    return {
+        "knowledge": {
+            "question": "test",
+            "verification_history": [
+                {
+                    "route": route,
+                    "goal_met": route == "accept",
+                    "goal_assessment": "",
+                    "fact_results": [],
+                    "conclusion_results": [],
+                    "new_unknown_facts": [],
+                }
+            ],
+        },
+        "execution_state": {
+            "budget_remaining": budget_remaining,
+            "budget_limit": 60.0,
+            "step_costs": step_costs,
+            "synthesis_retry_count": synthesis_retry_count,
+            "tool_costs": {},
+            "tool_call_counts": {},
+            "candidate_tools": [],
+            "tool_call_plan": [],
+            "total_tool_cost_consumed": 0.0,
+            "error": "",
+            "verification_attempts": 1,
+        },
     }
-    defaults.update(overrides)
-    return VerificationReport(**defaults)
 
 
-def _base_state(cost_weights, **overrides) -> ResearchState:
-    state: ResearchState = {
-        "question": "test",
-        "plan": "",
-        "active_tools": [],
-        "findings": [],
-        "compressed_findings": [],
-        "draft": "",
-        "verification": "",
-        "report": None,
-        "budget_remaining": 50.0,
-        "budget_limit": 50.0,
-        "cost_weights": cost_weights,
-        "verification_history": [],
-        "unverified_claims": [],
-        "error": "",
-        "draft_retry_count": 0,
+def test_graph_has_seven_nodes(config):
+    graph = build_graph(config)
+    expected = {
+        "decomposition",
+        "tool_identification",
+        "planning",
+        "research",
+        "synthesis",
+        "verification",
+        "report_generation",
     }
-    state.update(overrides)
-    return state
+    assert set(graph.nodes) == expected
 
 
-class TestGraphStructure:
-    def test_build_graph(self, config):
-        graph = build_graph(config)
-        assert graph is not None
+def test_graph_linear_path(config):
+    graph = build_graph(config)
+    edges = graph.edges
 
-    def test_compile_graph_without_checkpointer(self, config):
-        compiled = compile_graph(config)
-        assert compiled is not None
-
-    def test_compile_graph_with_in_memory_checkpointer(self, config):
-        from langgraph.checkpoint.memory import InMemorySaver
-
-        saver = InMemorySaver()
-        compiled = compile_graph(config, checkpointer=saver)
-        assert compiled is not None
+    assert (START, "decomposition") in edges
+    assert ("decomposition", "tool_identification") in edges
+    assert ("tool_identification", "planning") in edges
+    assert ("planning", "research") in edges
+    assert ("research", "synthesis") in edges
+    assert ("synthesis", "verification") in edges
 
 
-class TestVerificationRouting:
-    def test_accept_routes_to_report(self, cost_weights):
-        route_after_verification = make_verification_router()
-        state = _base_state(
-            cost_weights,
-            verification_history=[_make_report(outcome="accept", case=1)],
-        )
-        result = route_after_verification(state)
-        assert result == "report_generation"
+def test_graph_verification_routes_to_report_generation_on_accept():
+    router = make_verification_router()
+    state = _make_router_state(route="accept")
+    assert router(state) == "report_generation"
 
-    def test_retry_plan_with_budget_routes_to_planning(self, cost_weights):
-        route_after_verification = make_verification_router()
-        state = _base_state(
-            cost_weights,
-            budget_remaining=50.0,
-            verification_history=[
-                _make_report(
-                    outcome="retry_plan",
-                    case=5,
-                    unsupported_claims=["claim 1 is wrong"],
-                ),
-            ],
-            unverified_claims=["claim 1 is wrong"],
-        )
-        result = route_after_verification(state)
-        assert result == "planning"
 
-    def test_retry_plan_without_budget_routes_to_report(self, cost_weights):
-        route_after_verification = make_verification_router()
-        state = _base_state(
-            cost_weights,
-            budget_remaining=5.0,
-            verification_history=[
-                _make_report(
-                    outcome="retry_plan",
-                    case=5,
-                    unsupported_claims=["claim 1 is wrong"],
-                ),
-            ],
-            unverified_claims=["claim 1 is wrong"],
-        )
-        result = route_after_verification(state)
-        assert result == "report_generation"
+def test_graph_verification_routes_to_synthesis_on_retry():
+    router = make_verification_router()
+    state = _make_router_state(
+        route="retry_synthesis", budget_remaining=60.0,
+        synthesis_retry_count=0,
+    )
+    assert router(state) == "synthesis"
 
-    def test_error_outcome_routes_to_report(self, cost_weights):
-        route_after_verification = make_verification_router()
-        state = _base_state(
-            cost_weights,
-            verification_history=[
-                _make_report(outcome="error", case=11, assessment="Technical failure"),
-            ],
-            error="Technical failure",
-        )
-        result = route_after_verification(state)
-        assert result == "report_generation"
 
-    def test_empty_history_routes_to_report(self, cost_weights):
-        route_after_verification = make_verification_router()
-        state = _base_state(cost_weights)
-        result = route_after_verification(state)
-        assert result == "report_generation"
+def test_graph_verification_routes_to_tool_identification_on_retry_research():
+    router = make_verification_router()
+    state = _make_router_state(route="retry_research", budget_remaining=60.0)
+    assert router(state) == "tool_identification"
 
-    def test_retry_draft_with_budget_routes_to_draft_synthesis(self, cost_weights):
-        route_after_verification = make_verification_router()
-        state = _base_state(
-            cost_weights,
-            draft="Off-topic draft",
-            budget_remaining=50.0,
-            verification_history=[
-                _make_report(
-                    outcome="retry_draft",
-                    case=7,
-                    assessment="Draft is off-topic",
-                ),
-            ],
-        )
-        result = route_after_verification(state)
-        assert result == "draft_synthesis"
 
-    def test_retry_draft_with_max_retries_falls_through_to_planning(self, cost_weights):
-        route_after_verification = make_verification_router()
-        state = _base_state(
-            cost_weights,
-            draft="Off-topic draft",
-            budget_remaining=50.0,
-            verification_history=[
-                _make_report(
-                    outcome="retry_draft",
-                    case=7,
-                    assessment="Draft is off-topic",
-                ),
-            ],
-            draft_retry_count=1,
-        )
-        result = route_after_verification(state)
-        assert result == "planning"
+def test_graph_verification_falls_to_report_generation_on_insufficient_budget_retry_synthesis():
+    router = make_verification_router()
+    state = _make_router_state(
+        route="retry_synthesis", budget_remaining=0.0,
+        synthesis_retry_count=0,
+    )
+    assert router(state) == "report_generation"
 
-    def test_retry_draft_without_budget_routes_to_report(self, cost_weights):
-        route_after_verification = make_verification_router()
-        state = _base_state(
-            cost_weights,
-            draft="Off-topic draft",
-            budget_remaining=2.0,
-            verification_history=[
-                _make_report(
-                    outcome="retry_draft",
-                    case=7,
-                    assessment="Draft is off-topic",
-                ),
-            ],
-        )
-        result = route_after_verification(state)
-        assert result == "report_generation"
+
+def test_graph_verification_falls_to_report_generation_on_insufficient_budget_retry_research():
+    router = make_verification_router()
+    state = _make_router_state(route="retry_research", budget_remaining=0.0)
+    assert router(state) == "report_generation"
+
+
+def test_graph_verification_falls_to_report_generation_on_max_synthesis_retries():
+    router = make_verification_router()
+    state = _make_router_state(
+        route="retry_synthesis", budget_remaining=60.0,
+        synthesis_retry_count=1,
+    )
+    assert router(state) == "report_generation"
+
+
+def test_graph_no_verification_history_routes_to_report_generation():
+    router = make_verification_router()
+    state = _make_router_state()
+    state["knowledge"]["verification_history"] = []
+    assert router(state) == "report_generation"
+
+
+def test_graph_compiles_successfully(config):
+    compiled = compile_graph(config)
+    assert compiled is not None

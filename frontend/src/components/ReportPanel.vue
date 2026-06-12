@@ -15,8 +15,20 @@ import "./workflow-artifacts.css";
 
 const props = defineProps<{ report: ResearchReport }>();
 
+const report = computed(() => ({
+  ...props.report,
+  citations: props.report.citations ?? [],
+  verified_facts: props.report.verified_facts ?? [],
+  verified_conclusions: props.report.verified_conclusions ?? [],
+  contradicted: props.report.contradicted ?? [],
+  unknown_facts: props.report.unknown_facts ?? [],
+  critiques: props.report.critiques ?? [],
+  total_cost: typeof props.report.total_cost === "number" ? props.report.total_cost : 0,
+  tool_call_total_cost: typeof props.report.tool_call_total_cost === "number" ? props.report.tool_call_total_cost : 0,
+}));
+
 const warningMessage = computed(() => {
-  const path = props.report.generation_path;
+  const path = report.value.generation_path;
   if (path === "budget_exhausted") {
     return "Verification recommended to continue researching but the budget was insufficient. The answer below may be incomplete.";
   }
@@ -37,7 +49,7 @@ let hideTimer: ReturnType<typeof setTimeout> | null = null;
 const fullReportMarkdown = computed(() => buildFullReport());
 
 async function copyAnswer() {
-  await navigator.clipboard.writeText(props.report.answer);
+  await navigator.clipboard.writeText(report.value.answer);
   copiedAnswer.value = true;
   setTimeout(() => {
     copiedAnswer.value = false;
@@ -45,23 +57,23 @@ async function copyAnswer() {
 }
 
 function buildFullReport(): string {
-  const parts: string[] = [props.report.answer];
-  if (props.report.citations.length > 0) {
+  const parts: string[] = [report.value.answer];
+  if (report.value.citations.length > 0) {
     parts.push("\n\n## Sources\n");
-    for (const c of props.report.citations) {
+    for (const c of report.value.citations) {
       let line = `- ${c.source}`;
       if (c.url) line += ` — ${c.url}`;
       if (c.excerpt) line += `\n  > ${c.excerpt}`;
       parts.push(line);
     }
   }
-  if (props.report.critiques.length > 0) {
+  if (report.value.critiques.length > 0) {
     parts.push("\n\n## Critiques\n");
-    for (const c of props.report.critiques) parts.push(`- ${c}`);
+    for (const c of report.value.critiques) parts.push(`- ${c}`);
   }
-  if (props.report.unverified_claims.length > 0) {
-    parts.push("\n\n## Unverified Claims\n");
-    for (const c of props.report.unverified_claims) parts.push(`- ${c}`);
+  if (report.value.unknown_facts.length > 0) {
+    parts.push("\n\n## Unresolved Facts\n");
+    for (const f of report.value.unknown_facts) parts.push(`- ${f.subject}: ${f.fact_needed}`);
   }
   return parts.join("\n");
 }
@@ -78,7 +90,7 @@ function handleAnswerMouseOver(e: MouseEvent) {
   const target = (e.target as HTMLElement).closest(".cite-ref");
   if (!target) return;
   const num = parseInt((target as HTMLElement).dataset.cite || "", 10);
-  if (isNaN(num) || num < 1 || num > props.report.citations.length) return;
+  if (isNaN(num) || num < 1 || num > report.value.citations.length) return;
 
   if (hideTimer !== null) {
     clearTimeout(hideTimer);
@@ -185,22 +197,22 @@ function handleTooltipLeave() {
       </ul>
     </div>
 
-    <div v-if="report.unverified_claims.length > 0" class="report-secondary-section">
-      <h4>Unverified Claims</h4>
+    <div v-if="report.unknown_facts.length > 0" class="report-secondary-section">
+      <h4>Unresolved Facts</h4>
       <ul>
         <li
-          v-for="(c, ci) in report.unverified_claims"
-          :key="ci"
+          v-for="(f, fi) in report.unknown_facts"
+          :key="fi"
           class="unverified"
         >
-          <MarkdownContent :content="c" inline />
+          <MarkdownContent :content="`${f.subject}: ${f.fact_needed}`" inline />
         </li>
       </ul>
     </div>
 
     <div class="report-footer">
       <span class="budget-consumed">
-        Budget consumed: {{ report.budget_consumed.toFixed(0) }}
+        Budget consumed: {{ report.total_cost.toFixed(0) }}
       </span>
       <NButton
         quaternary

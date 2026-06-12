@@ -11,13 +11,14 @@ import {
   type WorkflowRunInfo,
 } from "../api/client";
 
+export const DEFAULT_BUDGET = 60;
+
 const STAGE_LABELS: Record<string, string> = {
-  planning: "Planning",
-  tool_discovery: "Discovering Tools",
-  tool_selection: "Selecting Tools",
-  research_execution: "Researching",
-  compression: "Summarizing",
-  draft_synthesis: "Drafting",
+  decomposition: "Decomposing question",
+  tool_identification: "Identifying tools",
+  planning: "Planning research",
+  research: "Researching",
+  synthesis: "Synthesizing conclusions",
   verification: "Verifying",
   report_generation: "Generating Report",
 };
@@ -85,13 +86,13 @@ export const useChatStore = defineStore("chat", () => {
   const loadingStepDetails = ref<Set<string>>(new Set());
   const stepDetailInflight = new Map<string, Promise<ExecutionStepDetailResponse>>();
 
-  const runSettings = ref<RunSettings>({ budget: 50 });
+  const runSettings = ref<RunSettings>({ budget: DEFAULT_BUDGET });
 
   async function loadDefaultBudget() {
     try {
       const resp = await api.getSetting("budget.default_limit");
       if (resp?.value != null) {
-        runSettings.value = { budget: parseInt(resp.value, 10) || 50 };
+        runSettings.value = { budget: parseInt(resp.value, 10) || DEFAULT_BUDGET };
       }
     } catch {
       // Settings endpoint unavailable; keep the current default.
@@ -564,7 +565,7 @@ export const useChatStore = defineStore("chat", () => {
           execution_steps: [],
           tool_executions: [],
           report: null,
-          budget_limit: runSettings.value.budget ?? 50,
+          budget_limit: runSettings.value.budget ?? DEFAULT_BUDGET,
           budget_consumed: 0,
           error: "",
           status: "running",
@@ -860,7 +861,7 @@ export const useChatStore = defineStore("chat", () => {
           execution_steps: [],
           tool_executions: [],
           report: null,
-          budget_limit: runSettings.value.budget ?? 50,
+          budget_limit: runSettings.value.budget ?? DEFAULT_BUDGET,
           budget_consumed: 0,
           error: "",
           status: "running",

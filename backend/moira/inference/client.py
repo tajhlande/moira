@@ -1,6 +1,8 @@
 import logging
 from dataclasses import dataclass
 
+from moira.inference.defaults import DEFAULT_TEMPERATURE
+
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -73,8 +75,9 @@ class InferenceClient:
         self,
         model: str,
         messages: list[dict[str, str]],
-        temperature: float = 0.7,
-        max_tokens: int = 16384,
+        temperature: float = DEFAULT_TEMPERATURE,
+        max_tokens: int = 65536,
+        extra_body: dict | None = None,
     ) -> ChatResponse:
         assert self._client is not None, "Client not started"
         logger.info("Chat completion request: model=%s, messages=%d", model, len(messages))
@@ -84,6 +87,8 @@ class InferenceClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if extra_body:
+            payload.update(extra_body)
         resp = await self._client.post("/chat/completions", json=payload)
         if not resp.is_success:
             body = resp.text[:2000]

@@ -14,18 +14,17 @@ class DatabaseConfig(BaseModel):
 
 
 class CostWeights(BaseModel):
+    decomposition: int = 2
+    tool_identification: int = 1
     planning: int = 2
-    tool_discovery: int = 1
-    tool_selection: int = 2
-    research_execution: int = 5
-    compression: int = 1
-    draft_synthesis: int = 3
-    verification: int = 4
+    research: int = 10
+    synthesis: int = 5
+    verification: int = 8
     report_generation: int = 3
 
 
 class BudgetConfig(BaseModel):
-    default_limit: int = 50
+    default_limit: int = 60
     cost_weights: CostWeights = CostWeights()
 
 
@@ -86,17 +85,13 @@ class MoiraConfig(BaseModel):
 
     @property
     def full_cycle_cost(self) -> int:
-        # Cost of one full retry cycle (Planning through Verification).
-        # Compression is bypassed (findings flow directly to draft_synthesis).
-        # report_generation is deliberately excluded because it is
-        # budget-exempt -- it always executes as the terminal node.
         cw = self.budget.cost_weights
         return (
-            cw.planning
-            + cw.tool_discovery
-            + cw.tool_selection
-            + cw.research_execution
-            + cw.draft_synthesis
+            cw.decomposition
+            + cw.tool_identification
+            + cw.planning
+            + cw.research
+            + cw.synthesis
             + cw.verification
         )
 

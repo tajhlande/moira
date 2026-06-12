@@ -14,12 +14,11 @@ from moira.persistence.interfaces import ConversationRepository, WorkflowRun
 logger = logging.getLogger(__name__)
 
 STAGE_LABELS = {
-    "planning": "Planning",
-    "tool_discovery": "Discovering Tools",
-    "tool_selection": "Selecting Tools",
-    "research_execution": "Researching",
-    "compression": "Summarizing",
-    "draft_synthesis": "Drafting",
+    "decomposition": "Decomposing question",
+    "tool_identification": "Identifying tools",
+    "planning": "Planning research",
+    "research": "Researching",
+    "synthesis": "Synthesizing conclusions",
     "verification": "Verifying",
     "report_generation": "Generating Report",
 }
@@ -605,6 +604,21 @@ class ActiveRun:
             if self._current_step:
                 self._current_step["status"] = "error"
                 self._current_step["error"] = self.error
+                if payload.get("detail"):
+                    if "detail" not in self._current_step:
+                        self._current_step["detail"] = {}
+                    self._current_step["detail"].update(payload["detail"])
+                if payload.get("budget_remaining") is not None:
+                    prev = self._current_step["budget_remaining"]
+                    self._current_step["budget_remaining"] = payload["budget_remaining"]
+                    self._current_step["cost"] = prev - payload["budget_remaining"]
+                for key in (
+                    "purpose",
+                    "model",
+                    "call_count",
+                ):
+                    if key in payload:
+                        self._current_step[key] = payload[key]
                 self._current_step["elapsed_ms"] = (
                     int((time.monotonic() - self._step_started_at) * 1000)
                     if self._step_started_at
@@ -648,11 +662,7 @@ class ActiveRun:
         )
 
     async def _persist(self) -> None:
-        """Upsert run-level metadata as a WorkflowRun. Steps are persisted
-        individually via _persist_step() on node_end, so this only writes
-        status, budget, error, and other run-level fields. Serialized via
-        an asyncio.Lock so concurrent create_task calls don't collide on
-        SQLite."""
+        """Upsert run-level metadata as a WorkflowRun."""
         from moira.persistence.write_queue import AsyncWriteQueue
 
         async with self._persist_lock:
@@ -660,18 +670,17 @@ class ActiveRun:
                 id=self.run_id,
                 conversation_id=self.conversation_id,
                 user_message_id=self.user_message_id,
-                thread_id=self.thread_id,
-                tool_executions=[],
-                report=self.report,
-                budget_limit=float(self.budget_limit),
-                budget_consumed=self.budget_consumed,
-                error=self.error,
                 status=self.status,
-                state_version=self.state_version,
+                budget_limit=float(self.budget_limit),
+                total_cost=self.budget_consumed,
+                generation_path="",
                 started_at=self.started_at,
                 completed_at=self.completed_at or None,
-                updated_at=self.updated_at,
                 total_elapsed_ms=self.total_elapsed_ms or None,
+                updated_at=self.updated_at,
+                knowledge_snapshot="",
+                state_version=self.state_version,
+                report=dict(self.report) if self.report else None,
             )
             write_queue = cast(
                 AsyncWriteQueue,
@@ -848,7 +857,7 @@ class RunManager:
         run_id = str(uuid.uuid4())
         thread_id = graph_config.get("configurable", {}).get("thread_id", run_id)
         started_at = datetime.now(timezone.utc).isoformat()
-        raw_budget_limit = initial_state.get("budget_limit")
+        raw_budget_limit = initial_state.get("execution_state", {}).get("budget_limit")
         if isinstance(raw_budget_limit, (int, float)):
             budget_limit = float(raw_budget_limit)
         else:
@@ -905,12 +914,11 @@ class RunManager:
             logger.debug("Settings service unavailable, falling back to config for cost_weights")
             cw = config.budget.cost_weights
             return {
+                "decomposition": cw.decomposition,
+                "tool_identification": cw.tool_identification,
                 "planning": cw.planning,
-                "tool_discovery": cw.tool_discovery,
-                "tool_selection": cw.tool_selection,
-                "research_execution": cw.research_execution,
-                "compression": cw.compression,
-                "draft_synthesis": cw.draft_synthesis,
+                "research": cw.research,
+                "synthesis": cw.synthesis,
                 "verification": cw.verification,
                 "report_generation": cw.report_generation,
             }
@@ -976,7 +984,9 @@ class RunManager:
         # always has them, regardless of when the original run was created.
         active_run.start_graph_resume(
             graph,
-            Command(resume=True, update={"cost_weights": cost_weights}),
+            Command(resume=True, update={
+                "execution_state": {"step_costs": cost_weights},
+            }),
             graph_config,
         )
         logger.info(
