@@ -256,6 +256,10 @@ export const useChatStore = defineStore("chat", () => {
         typeof snapshot.thinking_tokens === "number"
           ? snapshot.thinking_tokens
           : existing?.thinking_tokens ?? 0,
+      knowledge:
+        snapshot.knowledge != null && typeof snapshot.knowledge === "object"
+          ? (snapshot.knowledge as WorkflowRunInfo["knowledge"])
+          : existing?.knowledge ?? null,
     };
   }
 

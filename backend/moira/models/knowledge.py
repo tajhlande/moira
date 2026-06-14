@@ -110,6 +110,7 @@ class ExecutionState(TypedDict):
     total_tool_cost_consumed: float
     error: str
     synthesis_retry_count: int
+    research_retry_count: int
     verification_attempts: int
 
 
@@ -154,3 +155,56 @@ def next_id(prefix: str, existing_list: list) -> str:
     ``"f013"`` for a list with 12 items.
     """
     return f"{prefix}{len(existing_list) + 1:03d}"
+
+
+def knowledge_summary(knowledge: Knowledge) -> dict:
+    """Produce a JSON-serializable summary of the knowledge model.
+
+    Intended for inclusion in run snapshots and the knowledge API endpoint.
+    Strips internal-only fields and presents a clean view of facts,
+    conclusions, and citations grouped by status.
+    """
+    facts_by_status: dict[str, list[dict]] = {}
+    for f in knowledge.get("facts", []):
+        status = f.get("status", "unknown")
+        facts_by_status.setdefault(status, []).append({
+            "id": f["id"],
+            "subject": f.get("subject", ""),
+            "fact_needed": f.get("fact_needed", ""),
+            "claim": f.get("claim", ""),
+            "relation": f.get("relation"),
+            "value": f.get("value"),
+            "status": status,
+            "verification_note": f.get("verification_note"),
+        })
+
+    conclusions_by_status: dict[str, list[dict]] = {}
+    for c in knowledge.get("conclusions", []):
+        status = c.get("status", "unverified")
+        conclusions_by_status.setdefault(status, []).append({
+            "id": c["id"],
+            "conclusion": c.get("conclusion", ""),
+            "supporting_fact_ids": c.get("supporting_fact_ids", []),
+            "reasoning": c.get("reasoning"),
+            "status": status,
+        })
+
+    return {
+        "question": knowledge.get("question", ""),
+        "user_goal": knowledge.get("user_goal", ""),
+        "topic": knowledge.get("topic", ""),
+        "entities": knowledge.get("entities", []),
+        "concepts": knowledge.get("concepts", []),
+        "facts": facts_by_status,
+        "conclusions": conclusions_by_status,
+        "citations": [
+            {
+                "id": c["id"],
+                "source": c.get("source", ""),
+                "url": c.get("url"),
+                "title": c.get("title"),
+                "excerpt": c.get("excerpt"),
+            }
+            for c in knowledge.get("citations", [])
+        ],
+    }

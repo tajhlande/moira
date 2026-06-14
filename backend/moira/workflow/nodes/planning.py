@@ -46,8 +46,23 @@ def _format_tools_with_costs_and_limits(
         limit = tool_call_limits.get(t.name, 0)
         remaining = max(limit - used, 0) if limit > 0 else "unlimited"
         desc = t.description[:120].replace("\n", " ").strip()
+
+        # Include parameter names so the model uses correct arg keys
+        params_str = ""
+        schema = getattr(t, "argument_schema", None)
+        if schema and "properties" in schema:
+            required = set(schema.get("required", []))
+            props = schema["properties"]
+            param_parts = []
+            for pname, pdef in props.items():
+                ptype = pdef.get("type", "any")
+                req = "required" if pname in required else "optional"
+                param_parts.append(f"{pname} ({ptype}, {req})")
+            if param_parts:
+                params_str = f" | params: {', '.join(param_parts)}"
+
         lines.append(
-            f"{t.name} | {desc} | cost per call: {cost} | calls remaining: {remaining}"
+            f"{t.name} | {desc}{params_str} | cost per call: {cost} | calls remaining: {remaining}"
         )
     return "\n".join(lines)
 
@@ -103,7 +118,8 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
 
     system_prompt = get_prompt("planning.system")
     # On retry, append retry appendix
-    if es.get("research_retry_count", 0) > 0:
+    research_retry_count = es.get("research_retry_count", 0)
+    if research_retry_count > 0:
         verification_history = knowledge.get("verification_history", [])
         last_v = verification_history[-1] if verification_history else {}
         feedback = last_v.get("goal_assessment", "")
@@ -215,5 +231,8 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
             **es,
             "tool_call_plan": tool_call_plan,
             "budget_remaining": new_budget,
+            # Entry-count semantics: increment on every planning entry so
+            # the router can limit research retries.  First entry: 0→1.
+            "research_retry_count": research_retry_count + 1,
         },
     }

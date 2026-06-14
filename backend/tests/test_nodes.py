@@ -99,6 +99,7 @@ def _build_state(config, question="Test question", facts=None, conclusions=None)
             "total_tool_cost_consumed": 0.0,
             "error": "",
             "synthesis_retry_count": 0,
+            "research_retry_count": 0,
             "verification_attempts": 0,
         },
     }
@@ -1095,6 +1096,191 @@ class TestVerification:
 
         result = await verification(state, _make_run_config(config))
         assert result["execution_state"]["verification_attempts"] == 3
+
+    @pytest.mark.asyncio
+    async def test_tool_calls_executed_and_re_prompted(self, config, mock_writer, mock_model):
+        """When the model returns tool_calls instead of fact_results, the
+        node should execute them and re-prompt for a verification result."""
+        _inject_services(config, mock_model)
+
+        tool_call_response = ChatResponse(
+            content=json.dumps({
+                "tool_calls": [
+                    {"tool": "web_search", "args": {"query": "verify entity1"}},
+                ],
+            })
+        )
+        verification_result = ChatResponse(
+            content=json.dumps({
+                "fact_results": [
+                    {"fact_id": "f001", "result": "verified", "evidence": "Confirmed via search"},
+                ],
+                "conclusion_results": [
+                    {"conclusion_id": "c001", "result": "verified", "reason": "Fact confirmed"},
+                ],
+                "new_unknown_facts": [],
+                "goal_met": True,
+                "goal_assessment": "All verified",
+                "route": "accept",
+            })
+        )
+        mock_model["client"].chat_completion = AsyncMock(
+            side_effect=[tool_call_response, verification_result]
+        )
+
+        executor = AsyncMock()
+        executor.execute_batch = AsyncMock(return_value=[
+            ToolResult(
+                tool_name="web_search",
+                output="Search confirmed entity1",
+                duration_ms=100,
+                success=True,
+            ),
+        ])
+        _services["tool_executor"] = executor
+
+        from moira.workflow.nodes.verification import verification
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="entity1", fact_needed="some fact",
+                 claim="Entity1 confirmed", status="unverified"),
+        ]
+        state["knowledge"]["conclusions"] = [
+            Conclusion(id="c001", conclusion="Entity1 is confirmed",
+                       supporting_fact_ids=["f001"], status="unverified"),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search the web"),
+        ]
+        state["execution_state"]["tool_costs"] = {"web_search": 5.0}
+        state["execution_state"]["tool_call_limits"] = {"web_search": 3}
+
+        result = await verification(state, _make_run_config(config))
+
+        assert result["knowledge"]["facts"][0]["status"] == "verified"
+        assert result["knowledge"]["facts"][0]["verification_note"] == "Confirmed via search"
+        assert result["knowledge"]["conclusions"][0]["status"] == "verified"
+        assert result["knowledge"]["verification_history"][0]["route"] == "accept"
+
+        # Tool executor was called
+        executor.execute_batch.assert_called_once()
+
+        # Model was called twice: initial + re-prompt
+        assert mock_model["client"].chat_completion.call_count == 2
+
+        # Tool costs deducted
+        assert result["execution_state"]["total_tool_cost_consumed"] == 5.0
+
+        # Call counts updated
+        assert result["execution_state"]["tool_call_counts"]["web_search"] == 1
+
+    @pytest.mark.asyncio
+    async def test_structured_output_always_has_verification_schema(
+        self, config, mock_writer, mock_model
+    ):
+        """structured_output should contain verification fields, not tool_calls."""
+        _inject_services(config, mock_model)
+
+        tool_call_response = ChatResponse(
+            content=json.dumps({
+                "tool_calls": [
+                    {"tool": "web_search", "args": {"query": "test"}},
+                ],
+            })
+        )
+        verification_result = ChatResponse(
+            content=json.dumps({
+                "fact_results": [{"fact_id": "f001", "result": "verified", "evidence": "OK"}],
+                "conclusion_results": [],
+                "new_unknown_facts": [],
+                "goal_met": True,
+                "goal_assessment": "Done",
+                "route": "accept",
+            })
+        )
+        mock_model["client"].chat_completion = AsyncMock(
+            side_effect=[tool_call_response, verification_result]
+        )
+
+        executor = AsyncMock()
+        executor.execute_batch = AsyncMock(return_value=[
+            ToolResult(tool_name="web_search", output="result", duration_ms=50, success=True),
+        ])
+        _services["tool_executor"] = executor
+
+        from moira.workflow.nodes.verification import verification
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", claim="z", status="unverified"),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+        state["execution_state"]["tool_costs"] = {"web_search": 5.0}
+
+        await verification(state, _make_run_config(config))
+
+        # Find the node_end event and check structured_output
+        node_end_events = [
+            e for e in mock_writer
+            if isinstance(e, dict) and e.get("event") == "node_end"
+        ]
+        assert len(node_end_events) == 1
+        so = node_end_events[0]["payload"]["detail"]["structured_output"]
+        assert "fact_results" in so
+        assert "conclusion_results" in so
+        assert "goal_met" in so
+        assert "route" in so
+        assert "tool_calls" not in so
+
+    @pytest.mark.asyncio
+    async def test_tool_call_limit_enforced(self, config, mock_writer, mock_model):
+        """Tool calls that exceed the call limit should be skipped."""
+        _inject_services(config, mock_model)
+
+        tool_call_response = ChatResponse(
+            content=json.dumps({
+                "tool_calls": [
+                    {"tool": "web_search", "args": {"query": "test"}},
+                ],
+            })
+        )
+        verification_result = ChatResponse(
+            content=json.dumps({
+                "fact_results": [],
+                "conclusion_results": [],
+                "new_unknown_facts": [],
+                "goal_met": True,
+                "goal_assessment": "Done",
+                "route": "accept",
+            })
+        )
+        mock_model["client"].chat_completion = AsyncMock(
+            side_effect=[tool_call_response, verification_result]
+        )
+
+        executor = AsyncMock()
+        executor.execute_batch = AsyncMock(return_value=[])
+        _services["tool_executor"] = executor
+
+        from moira.workflow.nodes.verification import verification
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", claim="z", status="unverified"),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+        state["execution_state"]["tool_call_limits"] = {"web_search": 1}
+        state["execution_state"]["tool_call_counts"] = {"web_search": 1}
+
+        await verification(state, _make_run_config(config))
+
+        # Tool executor should NOT be called (limit already reached)
+        executor.execute_batch.assert_not_called()
 
 
 # ===========================================================================

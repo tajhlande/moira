@@ -176,5 +176,6 @@ async def synthesis(state: ResearchState, config: RunnableConfig) -> dict:
         "execution_state": {
             **es,
             "budget_remaining": new_budget,
+            "synthesis_retry_count": retry_count + 1,
         },
     }

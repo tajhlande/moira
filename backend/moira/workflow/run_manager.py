@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, cast
 
-from langgraph.graph.state import CompiledStateGraph
+from langgraph.graph.state import CompiledStateGraph, RunnableConfig
 
 from moira.config import MoiraConfig
 from moira.persistence.interfaces import ConversationRepository, WorkflowRun
@@ -60,6 +60,7 @@ class ActiveRun:
         # Accumulated state mirrors WorkflowRun fields
         self.execution_steps: list[dict] = []
         self.report: dict | None = None
+        self.knowledge: dict | None = None
         self.error: str = ""
         self.status: str = "running"
         self.budget_remaining: float = budget_limit
@@ -131,6 +132,7 @@ class ActiveRun:
             "total_elapsed_ms": self.total_elapsed_ms or None,
             "error": self.error,
             "report": self.report,
+            "knowledge": self.knowledge,
             "execution_steps": step_summaries,
             "state_version": self.state_version,
             "started_at": self.started_at,
@@ -188,7 +190,7 @@ class ActiveRun:
         self,
         graph: CompiledStateGraph,
         initial_state: dict,
-        graph_config: dict,
+        graph_config: RunnableConfig,
     ) -> None:
         """Launch the graph as a background asyncio.Task."""
         self._run_started_at = time.monotonic()
@@ -201,7 +203,7 @@ class ActiveRun:
         self,
         graph: CompiledStateGraph,
         resume_input,
-        graph_config: dict,
+        graph_config: RunnableConfig,
     ) -> None:
         """Launch the graph as a background asyncio.Task, resuming from a
         previous interrupt. ``resume_input`` is a ``Command(resume=...)``."""
@@ -223,7 +225,7 @@ class ActiveRun:
         self,
         graph: CompiledStateGraph,
         initial_state: dict,
-        graph_config: dict,
+        graph_config: RunnableConfig,
     ) -> None:
         """Iterate graph.astream(), accumulate state, persist incrementally,
         and broadcast events to subscribers."""
@@ -329,7 +331,7 @@ class ActiveRun:
         self,
         graph: CompiledStateGraph,
         resume_input,
-        graph_config: dict,
+        graph_config: RunnableConfig,
     ) -> None:
         """Resume a previously-interrupted graph run. Structured identically
         to ``_run_graph`` but invokes ``astream`` with a ``Command`` rather
@@ -592,6 +594,8 @@ class ActiveRun:
         elif event_type == "run_complete":
             if payload.get("report"):
                 self.report = payload["report"]
+            if payload.get("knowledge"):
+                self.knowledge = payload["knowledge"]
             self.status = "completed"
             self._finalize_metrics()
             self._mark_state_changed()
@@ -678,7 +682,7 @@ class ActiveRun:
                 completed_at=self.completed_at or None,
                 total_elapsed_ms=self.total_elapsed_ms or None,
                 updated_at=self.updated_at,
-                knowledge_snapshot="",
+                knowledge_snapshot=json.dumps(self.knowledge) if self.knowledge else "",
                 state_version=self.state_version,
                 report=dict(self.report) if self.report else None,
             )
@@ -848,7 +852,7 @@ class RunManager:
         user_message_id: int,
         graph: CompiledStateGraph,
         initial_state: dict,
-        graph_config: dict,
+        graph_config: RunnableConfig,
         config: MoiraConfig,
         conversation_repo: ConversationRepository,
     ) -> str:
@@ -879,7 +883,7 @@ class RunManager:
 
         # Inject run_id into the graph config so nodes can identify
         # which run they belong to.
-        graph_config = dict(graph_config)
+        graph_config = RunnableConfig(graph_config)
         configurable = dict(graph_config.get("configurable", {}))
         configurable["run_id"] = run_id
         graph_config["configurable"] = configurable
@@ -897,7 +901,9 @@ class RunManager:
         )
         return run_id
 
-    async def _resolve_cost_weights(self, config: MoiraConfig) -> dict[str, int]:
+    async def _resolve_cost_weights(
+            self, config: MoiraConfig
+    ) -> dict[str, int | float | bool | str]:
         """Resolve cost weights from the settings service with config fallback.
 
         Ensures resumed runs have cost_weights available even if the
@@ -970,13 +976,13 @@ class RunManager:
         self._active_runs[run_id] = active_run
         self._conversation_runs[conversation_id] = run_id
 
-        graph_config = {
+        graph_config = RunnableConfig({
             "configurable": {
                 "thread_id": resumable_run.thread_id,
                 "run_id": run_id,
                 "moira_config": config,
             },
-        }
+        })
 
         await active_run._persist()
 

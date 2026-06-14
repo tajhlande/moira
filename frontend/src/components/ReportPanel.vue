@@ -67,6 +67,18 @@ function buildFullReport(): string {
       parts.push(line);
     }
   }
+  if (report.value.verified_facts.length > 0) {
+    parts.push("\n\n## Verified Facts\n");
+    for (const f of report.value.verified_facts) parts.push(`- ${f.subject}: ${f.claim}`);
+  }
+  if (report.value.verified_conclusions.length > 0) {
+    parts.push("\n\n## Verified Conclusions\n");
+    for (const c of report.value.verified_conclusions) parts.push(`- ${c.conclusion}`);
+  }
+  if (report.value.contradicted.length > 0) {
+    parts.push("\n\n## Contradicted\n");
+    for (const c of report.value.contradicted) parts.push(`- ~~${c.subject ?? c.conclusion ?? c.id}~~`);
+  }
   if (report.value.critiques.length > 0) {
     parts.push("\n\n## Critiques\n");
     for (const c of report.value.critiques) parts.push(`- ${c}`);
@@ -186,6 +198,48 @@ function handleTooltipLeave() {
           <span v-if="c.excerpt" class="citation-excerpt">{{ c.excerpt }}</span>
         </li>
       </ol>
+    </div>
+
+    <div v-if="report.verified_facts.length > 0" class="report-secondary-section">
+      <h4>Verified Facts</h4>
+      <ul>
+        <li
+          v-for="(f, fi) in report.verified_facts"
+          :key="fi"
+          class="verified"
+        >
+          <MarkdownContent :content="`${f.subject}: ${f.claim}`" inline />
+        </li>
+      </ul>
+    </div>
+
+    <div v-if="report.verified_conclusions.length > 0" class="report-secondary-section">
+      <h4>Verified Conclusions</h4>
+      <ul>
+        <li
+          v-for="(c, ci) in report.verified_conclusions"
+          :key="ci"
+          class="verified"
+        >
+          <MarkdownContent :content="c.conclusion" inline />
+        </li>
+      </ul>
+    </div>
+
+    <div v-if="report.contradicted.length > 0" class="report-secondary-section">
+      <h4>Contradicted</h4>
+      <ul>
+        <li
+          v-for="(c, ci) in report.contradicted"
+          :key="ci"
+          class="contradicted"
+        >
+          <MarkdownContent
+            :content="c.subject ?? c.conclusion ?? c.id"
+            inline
+          />
+        </li>
+      </ul>
     </div>
 
     <div v-if="report.critiques.length > 0" class="report-secondary-section">

@@ -50,6 +50,44 @@ export interface ToolExecution {
   success: boolean;
 }
 
+export interface FactRecord {
+  id: string;
+  subject: string;
+  fact_needed: string;
+  claim?: string;
+  relation?: string;
+  value?: string;
+  status: string;
+  verification_note?: string;
+}
+
+export interface ConclusionRecord {
+  id: string;
+  conclusion: string;
+  supporting_fact_ids: string[];
+  reasoning?: string;
+  status: string;
+}
+
+export interface CitationRecord {
+  id: string;
+  source: string;
+  url?: string;
+  title?: string;
+  excerpt?: string;
+}
+
+export interface KnowledgeSummary {
+  question: string;
+  user_goal: string;
+  topic: string;
+  entities: string[];
+  concepts: string[];
+  facts: Record<string, FactRecord[]>;
+  conclusions: Record<string, ConclusionRecord[]>;
+  citations: CitationRecord[];
+}
+
 export interface ResearchReport {
   answer: string;
   citations: { source: string; url?: string; excerpt?: string }[];
@@ -88,6 +126,7 @@ export interface WorkflowRunInfo {
   execution_steps: ExecutionStep[];
   tool_executions: ToolExecution[];
   report: ResearchReport | null;
+  knowledge: KnowledgeSummary | null;
   budget_limit: number;
   budget_consumed: number;
   error: string;
@@ -174,6 +213,9 @@ export const api = {
 
   getRunStepDetail: (runId: string, stepId: number) =>
     request<ExecutionStepDetailResponse>(`/runs/${runId}/steps/${stepId}/detail`),
+
+  getRunKnowledge: (runId: string) =>
+    request<{ run_id: string; knowledge: KnowledgeSummary | null }>(`/runs/${runId}/knowledge`),
 
   updateConversation: (id: string, title: string) =>
     request<ConversationInfo>(`/conversations/${id}`, {

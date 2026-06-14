@@ -208,6 +208,29 @@ class SqliteConversationRepository(ConversationRepository):
         finally:
             conn.close()
 
+    async def get_workflow_run(self, run_id: str) -> WorkflowRun | None:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT id, conversation_id, user_message_id, status, "
+                "budget_limit, total_cost, generation_path, started_at, "
+                "completed_at, total_elapsed_ms, updated_at, "
+                "knowledge_snapshot, state_version, report "
+                "FROM workflow_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            d["state_version"] = d.get("state_version") or 1
+            d["updated_at"] = d.get("updated_at") or d.get("completed_at") or d["started_at"]
+            d["total_elapsed_ms"] = d["total_elapsed_ms"] or 0
+            report_raw = d.pop("report", None)
+            d["report"] = json.loads(report_raw) if report_raw else None
+            return WorkflowRun(**d)
+        finally:
+            conn.close()
+
     async def delete_conversation(self, conversation_id: str) -> bool:
         logger.debug("Deleting conversation %s and all dependent records", conversation_id)
         conn = self._connect()

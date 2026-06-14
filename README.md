@@ -1,6 +1,41 @@
 # MOiRA
 
-MOiRA is a learning exercise and an experiment to do the following:
+MOiRA is a general-purpose research system that can automatically acquire new capabilities through API ingestion.
+
+## What it can do
+
+**Automatic capability acquisition**
+
+MOiRA has capabilities to automatically register tools from any OpenAPI compatible API. 
+
+**Structured research workflow**
+
+MOiRA generates verified answers to user questions by reasoning about facts and conclusions, with full traceability.
+
+**Local-first execution**
+
+MOiRA is built to work with models you can host locally, on a single GPU. It will work with 
+more powerful models, too.
+
+## What problem does MOiRA solve better than existing agents?
+
+- Reliability. MOiRA:
+  - identifies unsupported claims
+  - cites evidence
+  - refuses unsupported conclusions
+  - provides critiques of its own work
+
+- Capability growth
+  - Install API -> New research capability appears, with little manual effort
+
+- Transparency, You can see:
+  - what facts MOiRA sought
+  - what it found
+  - how it found it
+  - how conclusions were drawn
+  - what claims are contradicted 
+
+## Why I built this
 
 * build a research agent
 * learn LangGraph

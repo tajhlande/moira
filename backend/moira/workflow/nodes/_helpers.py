@@ -46,11 +46,18 @@ def _get_model(config: RunnableConfig):
 
 
 def _parse_json_object(text: str) -> dict:
-    """Extract the first JSON object from text, handling markdown fences."""
+    """Extract the first JSON object from text, handling markdown fences.
+
+    Also strips <think>...</think> blocks and standalone </think> tags that
+    some models leak into the response content.
+    """
     import json
     import re
 
     text = text.strip()
+    # Strip <think>...</think> blocks and standalone closing tags
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    text = re.sub(r"</think>", "", text).strip()
     # Try direct parse
     try:
         result = json.loads(text)
@@ -67,13 +74,15 @@ def _parse_json_object(text: str) -> dict:
                 return result
         except json.JSONDecodeError:
             pass
-    # Find first { ... }
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
+    # Find first { ... } — try each match from longest to shortest
+    # to handle text containing multiple JSON objects
+    for match in re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.DOTALL):
         try:
-            return json.loads(match.group(0))
+            result = json.loads(match.group(0))
+            if isinstance(result, dict):
+                return result
         except json.JSONDecodeError:
-            pass
+            continue
     return {}
 
 

@@ -73,6 +73,9 @@ class FakeConversationRepo(ConversationRepository):
     async def get_workflow_runs(self, conversation_id: str):
         return []
 
+    async def get_workflow_run(self, run_id: str) -> WorkflowRun | None:
+        return None
+
     async def delete_conversation(self, conversation_id: str) -> bool:
         return False
 

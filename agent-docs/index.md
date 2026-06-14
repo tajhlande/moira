@@ -11,6 +11,8 @@ These are evergreen and should be updated as the project evolves.
 | **core/implementation-plan.md** | Phased build plan — Phases 1–2 complete, Phase 3 in progress. Updated to reflect current implementation state. |
 | **core/user-experience.md** | What the user sees and does — the intended UX for the research cycle, continued conversation, and sidebar. |
 | **core/standard-tools.md** | Descriptive list of built-in tools that should always be available to the agent. |
+| **core/research-loop-data-flow.md** | Field-by-field data flow through the 7 research loop nodes, fact/conclusion status lifecycles, budget costs, routing conditions, and known gaps. **Living reference — must be updated when research loop nodes, state fields, or routing change.** |
+| **core/structured-output-renderer.md** | Design for the StructuredOutputRenderer component — field renderer registry + type-dispatching fallback to replace JSON dumps in step detail. **Living reference — must be updated when structured output fields or render types change.** |
 
 ## Core — Feedback Iteration (in `core/feedback-iteration/`)
 

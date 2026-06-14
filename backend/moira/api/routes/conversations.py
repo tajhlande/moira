@@ -5,6 +5,7 @@ history, run/step detail, and the model-assignment picker. Also exposes
 the lazy step-detail endpoint used to expand individual workflow steps
 in the run timeline."""
 
+import json
 import logging
 from typing import Any, cast
 
@@ -153,6 +154,13 @@ def _coalesced_run_snapshot(
         ordinal_counters[rid] = ordinal_counters.get(rid, 0) + 1
         step_summaries.append(_step_summary(step, ordinal_counters[rid]))
 
+    knowledge = None
+    if latest.knowledge_snapshot:
+        try:
+            knowledge = json.loads(latest.knowledge_snapshot)
+        except (json.JSONDecodeError, TypeError):
+            knowledge = None
+
     return {
         "id": latest.id,
         "conversation_id": latest.conversation_id,
@@ -163,6 +171,7 @@ def _coalesced_run_snapshot(
         "total_elapsed_ms": latest.total_elapsed_ms,
         "error": latest.error,
         "report": latest.report,
+        "knowledge": knowledge,
         "execution_steps": step_summaries,
         "attempts": attempt_summaries,
         "tool_executions": merged_tool_executions,
@@ -286,6 +295,30 @@ async def get_run_step_detail(run_id: str, step_id: str):
         "has_detail": bool(target.detail),
         "detail": target.detail or {},
     }
+
+
+@router.get("/runs/{run_id}/knowledge", response_model=dict)
+async def get_run_knowledge(run_id: str):
+    """Return the knowledge model snapshot for a completed run.
+
+    The knowledge snapshot contains the structured research artifacts:
+    facts grouped by status, conclusions, citations, entities, and concepts.
+    Returns 404 if the run does not exist or has no knowledge data."""
+    conversations = _conversations()
+    run = await conversations.get_workflow_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    ks = run.knowledge_snapshot
+    if not ks:
+        return {"run_id": run_id, "knowledge": None}
+
+    try:
+        knowledge = json.loads(ks)
+    except (json.JSONDecodeError, TypeError):
+        return {"run_id": run_id, "knowledge": None}
+
+    return {"run_id": run_id, "knowledge": knowledge}
 
 
 @router.patch("/conversations/{conversation_id}", response_model=dict)

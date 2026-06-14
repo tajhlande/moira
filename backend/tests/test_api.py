@@ -75,6 +75,9 @@ class FakeConversationRepo(ConversationRepository):
     async def get_workflow_runs(self, conversation_id: str) -> list[WorkflowRun]:
         return []
 
+    async def get_workflow_run(self, run_id: str) -> WorkflowRun | None:
+        return None
+
     async def delete_conversation(self, conversation_id: str) -> bool:
         if conversation_id in self._conversations:
             del self._conversations[conversation_id]
@@ -346,3 +349,169 @@ def test_reset_settings(app_client):
     data = resp.json()
     reset = {s["key"]: s["value"] for s in data["settings"]}
     assert reset["budget.default_limit"] == "100"
+
+
+class WorkflowRunAwareRepo(FakeConversationRepo):
+    def __init__(self):
+        super().__init__()
+        self._runs: dict[str, WorkflowRun] = {}
+
+    async def save_workflow_run(self, run: WorkflowRun) -> None:
+        self._runs[run.id] = run
+
+    async def get_workflow_run(self, run_id: str) -> WorkflowRun | None:
+        return self._runs.get(run_id)
+
+    async def get_workflow_runs(self, conversation_id: str) -> list[WorkflowRun]:
+        return [r for r in self._runs.values() if r.conversation_id == conversation_id]
+
+
+@pytest.fixture
+async def app_client_with_runs(tmp_path):
+    import os
+
+    data_dir = str(tmp_path / "moira_data")
+    os.makedirs(data_dir, exist_ok=True)
+    os.environ["MOIRA_DATA_DIR"] = data_dir
+
+    config = _config(str(tmp_path))
+    conversation_repo = WorkflowRunAwareRepo()
+    prefs_repo = FakePrefsRepo()
+
+    from moira.config import resolve_db_path
+    from moira.persistence.sqlite.schema import run_migrations
+
+    run_migrations(resolve_db_path(config))
+
+    await init_services(config, conversation_repo=conversation_repo, prefs_repo=prefs_repo)
+    from moira.main import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    yield client, conversation_repo
+    await shutdown_services()
+    os.environ.pop("MOIRA_DATA_DIR", None)
+
+
+def test_knowledge_endpoint_no_knowledge(app_client_with_runs):
+    client, repo = app_client_with_runs
+    run = WorkflowRun(
+        id="run-1",
+        conversation_id="conv-1",
+        user_message_id=1,
+        status="completed",
+        knowledge_snapshot="",
+    )
+    import asyncio
+
+    asyncio.get_event_loop().run_until_complete(repo.save_workflow_run(run))
+
+    resp = client.get("/api/runs/run-1/knowledge")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["run_id"] == "run-1"
+    assert data["knowledge"] is None
+
+
+def test_knowledge_endpoint_with_knowledge(app_client_with_runs):
+    import asyncio
+    import json
+
+    client, repo = app_client_with_runs
+    knowledge_data = {
+        "question": "What is Python?",
+        "user_goal": "Learn about Python",
+        "topic": "programming",
+        "entities": ["Python"],
+        "concepts": ["programming language"],
+        "facts": {"unknown": [
+            {
+                "id": "f1",
+                "subject": "Python",
+                "fact_needed": "What is it?",
+                "status": "unknown"
+            }]},
+        "conclusions": {"verified": [
+            {
+                "id": "c1",
+                "conclusion": "Python is a language",
+                "supporting_fact_ids": ["f1"],
+                "status": "verified"
+            }]},
+        "citations": [],
+    }
+    run = WorkflowRun(
+        id="run-2",
+        conversation_id="conv-1",
+        user_message_id=1,
+        status="completed",
+        knowledge_snapshot=json.dumps(knowledge_data),
+    )
+    asyncio.get_event_loop().run_until_complete(repo.save_workflow_run(run))
+
+    resp = client.get("/api/runs/run-2/knowledge")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["run_id"] == "run-2"
+    assert data["knowledge"]["question"] == "What is Python?"
+    assert data["knowledge"]["facts"]["unknown"][0]["subject"] == "Python"
+
+
+def test_knowledge_endpoint_not_found(app_client_with_runs):
+    client, _ = app_client_with_runs
+    resp = client.get("/api/runs/nonexistent/knowledge")
+    assert resp.status_code == 404
+
+
+def test_coalesced_run_snapshot_includes_knowledge():
+    import json
+
+    from moira.api.routes.conversations import _coalesced_run_snapshot
+
+    knowledge_data = {
+        "question": "test",
+        "user_goal": "test goal",
+        "topic": "test topic",
+        "entities": [],
+        "concepts": [],
+        "facts": {},
+        "conclusions": {},
+        "citations": [],
+    }
+    run = WorkflowRun(
+        id="run-1",
+        conversation_id="conv-1",
+        user_message_id=1,
+        status="completed",
+        knowledge_snapshot=json.dumps(knowledge_data),
+    )
+    result = _coalesced_run_snapshot([run], {})
+    assert result["knowledge"] == knowledge_data
+
+
+def test_coalesced_run_snapshot_knowledge_null_when_empty():
+    from moira.api.routes.conversations import _coalesced_run_snapshot
+
+    run = WorkflowRun(
+        id="run-1",
+        conversation_id="conv-1",
+        user_message_id=1,
+        status="completed",
+        knowledge_snapshot="",
+    )
+    result = _coalesced_run_snapshot([run], {})
+    assert result["knowledge"] is None
+
+
+def test_coalesced_run_snapshot_knowledge_null_when_invalid_json():
+    from moira.api.routes.conversations import _coalesced_run_snapshot
+
+    run = WorkflowRun(
+        id="run-1",
+        conversation_id="conv-1",
+        user_message_id=1,
+        status="completed",
+        knowledge_snapshot="{invalid json",
+    )
+    result = _coalesced_run_snapshot([run], {})
+    assert result["knowledge"] is None

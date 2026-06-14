@@ -117,7 +117,7 @@ function isRetryBranch(step: ExecutionStep): boolean {
   const so = step.detail?.structured_output as
     | Record<string, unknown>
     | undefined;
-  return so?.outcome === "retry_plan" || so?.outcome === "retry_draft";
+  return so?.route === "retry_research" || so?.route === "retry_synthesis";
 }
 
 function hasStoppedStep(): boolean {

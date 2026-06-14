@@ -178,6 +178,7 @@ async def send_message(
             "total_tool_cost_consumed": 0.0,
             "error": "",
             "synthesis_retry_count": 0,
+            "research_retry_count": 0,
             "verification_attempts": 0,
         },
     }
@@ -339,6 +340,7 @@ async def rerun_message(
             "total_tool_cost_consumed": 0.0,
             "error": "",
             "synthesis_retry_count": 0,
+            "research_retry_count": 0,
             "verification_attempts": 0,
         },
     }

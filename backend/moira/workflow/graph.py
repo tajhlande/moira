@@ -56,7 +56,9 @@ def make_verification_router():
         if route == "retry_synthesis":
             synthesis_retries = es.get("synthesis_retry_count", 0)
             sr_cost = synthesis_retry_cost(step_costs)
-            if synthesis_retries < 1 and budget_remaining >= sr_cost:
+            # Entry-count semantics: synthesis increments on every entry.
+            # Allow retry when fewer than 2 entries (initial + 1 retry).
+            if synthesis_retries < 2 and budget_remaining >= sr_cost:
                 logger.info(
                     "retry_synthesis: budget sufficient (%.1f >= %.1f)",
                     budget_remaining,
@@ -72,8 +74,11 @@ def make_verification_router():
             return "report_generation"
 
         if route == "retry_research":
+            research_retries = es.get("research_retry_count", 0)
             rr_cost = research_retry_cost(step_costs)
-            if budget_remaining >= rr_cost:
+            # Entry-count semantics: planning increments on every entry.
+            # Allow retry when fewer than 2 entries (initial + 1 retry).
+            if research_retries < 2 and budget_remaining >= rr_cost:
                 logger.info(
                     "retry_research: budget sufficient (%.1f >= %.1f)",
                     budget_remaining,

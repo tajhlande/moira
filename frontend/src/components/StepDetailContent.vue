@@ -1,8 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { NCollapse, NCollapseItem } from "naive-ui";
-import { IconChevronDown, IconChevronRight } from "@tabler/icons-vue";
+import {
+  IconChevronDown,
+  IconChevronRight,
+  IconCircleCheck,
+  IconAlertCircle,
+} from "@tabler/icons-vue";
 import type { ToolExecution } from "../api/client";
+import StructuredOutputRenderer from "./StructuredOutputRenderer.vue";
 import { useToolsStore } from "../stores/tools";
 import "./workflow-artifacts.css";
 
@@ -62,29 +68,6 @@ const generationPath = computed<string | null>(() => {
   return typeof v === "string" ? v : null;
 });
 
-const toolListKeys = computed<string[]>(() => {
-  if (!so.value) return [];
-  return Object.keys(so.value).filter(
-    (k) =>
-      k === "selected_tools" ||
-      k === "default_tools" ||
-      k === "discovered_tools",
-  );
-});
-
-const isVerification = computed(() => {
-  return (
-    so.value &&
-    "outcome" in so.value &&
-    "case" in so.value &&
-    "assessment" in so.value
-  );
-});
-
-const isReport = computed(() => {
-  return so.value && "answer" in so.value && "citations" in so.value;
-});
-
 const hasStructuredOutput = computed(() => {
   return so.value && Object.keys(so.value).length > 0;
 });
@@ -101,29 +84,13 @@ function toggleToolResult(index: number) {
   expandedToolResults.value = next;
 }
 
-function getToolNames(key: string): string[] {
-  return (so.value?.[key] as string[]) ?? [];
-}
-
-function prettyLabel(key: string): string {
-  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-const isKnownKey = new Set([
-  "selected_tools", "default_tools", "discovered_tools",
-  "outcome", "case", "assessment", "retry_declined", "retry_declined_reason",
-  "supported_claims", "unsupported_claims", "contradictions",
-  "answer", "citations",
-]);
-
-const genericEntries = computed<[string, unknown][]>(() => {
-  if (!so.value) return [];
-  return Object.entries(so.value).filter(([k]) => !isKnownKey.has(k));
-});
-
-function claimList(key: string): unknown[] {
-  const arr = so.value?.[key];
-  return Array.isArray(arr) ? arr : [];
+function kvPairs(obj: Record<string, unknown>): [string, string][] {
+  return Object.entries(obj).map(([k, v]) => [
+    k,
+    typeof v === "string" || typeof v === "number" || typeof v === "boolean"
+      ? String(v)
+      : JSON.stringify(v),
+  ]);
 }
 </script>
 
@@ -187,103 +154,7 @@ function claimList(key: string): unknown[] {
       class="detail-section"
     >
       <NCollapseItem title="Structured Output" name="structured">
-        <!-- Tool list pills -->
-        <div v-for="key in toolListKeys" :key="key" class="structured-section">
-          <div class="detail-label">{{ prettyLabel(key) }}</div>
-          <div class="tool-tags">
-            <span
-              v-for="name in getToolNames(key)"
-              :key="name"
-              :class="[
-                'tool-tag',
-                toolsStore.defaultToolNames.includes(name)
-                  ? 'default'
-                  : 'discovered',
-              ]"
-            >
-              {{ name }}
-            </span>
-            <span v-if="getToolNames(key).length === 0" class="tool-tag none"
-              >None</span
-            >
-          </div>
-        </div>
-
-        <!-- Tool calls list -->
-        <!-- (moved to dedicated section below) -->
-
-        <!-- Verification report -->
-        <div v-if="isVerification" class="structured-section">
-          <div class="verification-summary">
-            <span :class="['verification-outcome', String(so!.outcome)]">
-              {{ so!.outcome }}
-            </span>
-            <span v-if="so!.case" class="verification-case"
-              >Case {{ so!.case }}</span
-            >
-          </div>
-          <div v-if="so!.retry_declined" class="retry-declined-note">
-            {{ so!.retry_declined_reason }}
-          </div>
-          <div v-if="so!.assessment" class="verification-assessment">
-            {{ so!.assessment }}
-          </div>
-          <div
-            v-if="claimList('supported_claims').length"
-            class="verification-claims"
-          >
-            <div class="detail-label">Supported Claims</div>
-            <ul>
-              <li v-for="(c, ci) in claimList('supported_claims')" :key="ci">
-                {{ c }}
-              </li>
-            </ul>
-          </div>
-          <div
-            v-if="claimList('unsupported_claims').length"
-            class="verification-claims"
-          >
-            <div class="detail-label">Unsupported Claims</div>
-            <ul>
-              <li v-for="(c, ci) in claimList('unsupported_claims')" :key="ci">
-                {{ c }}
-              </li>
-            </ul>
-          </div>
-          <div
-            v-if="claimList('contradictions').length"
-            class="verification-claims"
-          >
-            <div class="detail-label">Contradictions</div>
-            <ul>
-              <li v-for="(c, ci) in claimList('contradictions')" :key="ci">
-                {{ c }}
-              </li>
-            </ul>
-          </div>
-        </div>
-
-        <!-- Report output -->
-        <div v-if="isReport" class="structured-section">
-          <div class="detail-label">Answer Preview</div>
-          <pre class="detail-text-block">{{ so!.answer }}</pre>
-        </div>
-
-        <!-- Generic key-value renderer for unknown structured output keys -->
-        <div v-if="genericEntries.length > 0" class="structured-section">
-          <div
-            v-for="([key, val], gi) in genericEntries"
-            :key="gi"
-            class="generic-entry"
-          >
-            <div class="detail-label">{{ prettyLabel(key) }}</div>
-            <pre
-              v-if="typeof val === 'string'"
-              class="detail-text-block"
-            >{{ val }}</pre>
-            <pre v-else class="detail-text-block">{{ JSON.stringify(val, null, 2) }}</pre>
-          </div>
-        </div>
+        <StructuredOutputRenderer v-if="so" :so="so" />
       </NCollapseItem>
     </NCollapse>
 
@@ -295,7 +166,7 @@ function claimList(key: string): unknown[] {
           <span
             v-for="name in candidateTools"
             :key="name"
-            class="tool-tag discovered"
+            :class="['tool-tag', toolsStore.defaultToolNames.includes(name) ? 'default' : 'discovered']"
           >{{ name }}</span>
         </div>
       </div>
@@ -334,6 +205,16 @@ function claimList(key: string): unknown[] {
             class="step-tool-result"
           >
             <div class="step-tool-result-header">
+              <IconCircleCheck
+                v-if="tr.success"
+                :size="14"
+                class="tool-status-icon success"
+              />
+              <IconAlertCircle
+                v-else
+                :size="14"
+                class="tool-status-icon error"
+              />
               <span :class="['tool-name', tr.success ? 'success' : 'error']">{{
                 tr.tool
               }}</span>
@@ -353,11 +234,16 @@ function claimList(key: string): unknown[] {
               v-if="expandedToolResults.has(tri)"
               class="step-tool-result-body"
             >
-              <pre
-                v-if="tr.args && Object.keys(tr.args).length > 0"
-                class="tool-output-full"
-              >{{ JSON.stringify(tr.args, null, 2) }}</pre>
-              <pre class="tool-output-full">{{ tr.result }}</pre>
+              <div v-if="tr.args && Object.keys(tr.args).length > 0" class="so-kv-list">
+                <template v-for="([kvKey, kvVal], kvi) in kvPairs(tr.args)" :key="kvi">
+                  <span class="so-kv-key">{{ kvKey }}</span>
+                  <span class="so-kv-val">{{ kvVal }}</span>
+                </template>
+              </div>
+              <div class="so-kv-list">
+                <span class="so-kv-key">Output</span>
+                <pre class="so-kv-val tool-output-full">{{ tr.result }}</pre>
+              </div>
             </div>
           </div>
         </div>

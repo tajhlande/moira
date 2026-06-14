@@ -10,7 +10,12 @@ def config():
     return MoiraConfig()
 
 
-def _make_router_state(route="accept", budget_remaining=60.0, synthesis_retry_count=0):
+def _make_router_state(
+    route="accept",
+    budget_remaining=60.0,
+    synthesis_retry_count=0,
+    research_retry_count=0,
+):
     cw = CostWeights()
     step_costs = {
         "decomposition": cw.decomposition,
@@ -40,6 +45,7 @@ def _make_router_state(route="accept", budget_remaining=60.0, synthesis_retry_co
             "budget_limit": 60.0,
             "step_costs": step_costs,
             "synthesis_retry_count": synthesis_retry_count,
+            "research_retry_count": research_retry_count,
             "tool_costs": {},
             "tool_call_counts": {},
             "candidate_tools": [],
@@ -117,7 +123,16 @@ def test_graph_verification_falls_to_report_generation_on_max_synthesis_retries(
     router = make_verification_router()
     state = _make_router_state(
         route="retry_synthesis", budget_remaining=60.0,
-        synthesis_retry_count=1,
+        synthesis_retry_count=2,
+    )
+    assert router(state) == "report_generation"
+
+
+def test_graph_verification_falls_to_report_generation_on_max_research_retries():
+    router = make_verification_router()
+    state = _make_router_state(
+        route="retry_research", budget_remaining=60.0,
+        research_retry_count=2,
     )
     assert router(state) == "report_generation"
 

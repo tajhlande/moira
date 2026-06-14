@@ -48,8 +48,8 @@ class WorkflowRun:
     total_cost: float = 0.0
     generation_path: str = ""
     started_at: str = ""
-    completed_at: str = ""
-    total_elapsed_ms: int = 0
+    completed_at: str | None = ""
+    total_elapsed_ms: int | None = 0
     updated_at: str = ""
     knowledge_snapshot: str = ""
     state_version: int = 1
@@ -137,6 +137,9 @@ class ConversationRepository(ABC):
 
     @abstractmethod
     async def get_workflow_runs(self, conversation_id: str) -> list[WorkflowRun]: ...
+
+    @abstractmethod
+    async def get_workflow_run(self, run_id: str) -> WorkflowRun | None: ...
 
     @abstractmethod
     async def delete_conversation(self, conversation_id: str) -> bool: ...

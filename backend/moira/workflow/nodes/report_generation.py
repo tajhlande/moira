@@ -10,7 +10,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
 from moira.inference.defaults import DEFAULT_TEMPERATURE
-from moira.models.knowledge import ResearchReport, ResearchState
+from moira.models.knowledge import ResearchReport, ResearchState, knowledge_summary
 from moira.prompts import get_prompt
 from moira.workflow.budget import deduct_cost
 from moira.workflow.nodes._helpers import (
@@ -200,6 +200,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
         "event": "run_complete",
         "payload": {
             "report": dict(report) if report else None,
+            "knowledge": knowledge_summary(knowledge),
             "generation_path": generation_path,
         },
     })

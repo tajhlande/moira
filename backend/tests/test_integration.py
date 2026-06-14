@@ -130,6 +130,7 @@ def _build_state(config, budget=None):
             "total_tool_cost_consumed": 0.0,
             "error": "",
             "synthesis_retry_count": 0,
+            "research_retry_count": 0,
             "verification_attempts": 0,
         },
     }

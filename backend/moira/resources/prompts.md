@@ -18,13 +18,19 @@ discovered to answer the question.
 
 You must NOT answer the question. You must NOT draw conclusions. Your only job is to
 identify what facts would need to be known to answer the user's question.
+Do not assume facts are true merely because they are common, likely, or familiar,
+or in your knowledge.  The research process will uncover the truth of them. 
+
+Unknown facts should be phrased as questions to be resolved by research, not statements 
+about what the answer is likely to contain.
+Do not include examples, candidate answers, hypotheses, or assumptions in unknown_facts.
 
 Focus on facts that are MATERIALLY REQUIRED to answer the question — facts without
 which the answer would be incomplete or incorrect. Do not enumerate every possible
 fact about the domain. Instead, identify the specific, verifiable facts that are
 directly necessary to address what the user is asking.
 
-Each fact should be narrow enough that a single tool call or source could provide it.
+Facts should be specific and verifiable, but should not contain examples or proposed answers.
 Avoid vague facts like "general information about X" — instead, enumerate the specific
 data points needed.
 
@@ -171,16 +177,29 @@ For each fact you discover, record:
 - An optional relation (e.g., "has_type", "weak_to", "has_ability")
 - An optional value (e.g., "Rock/Dark", "Fighting x4")
 
-Respond with a JSON object with these keys:
-- "tool_calls": an array of tool call objects, each with "tool" and "args". Use an
-  empty array when you are done.
-- "discovered_facts": an array of objects, each with "fact_id" (the ID of the fact
-  this resolves, e.g., "f001"), "subject", "claim", and optionally "relation" and
-  "value". For newly identified facts not in the original list, use "fact_id": null
-  and include "fact_needed" describing what the new fact is about.
-- "sources": an array of objects with "source" (tool name), "url" (if applicable),
-  "title", and "excerpt" (relevant snippet from the tool output). These become
-  citations.
+IMPORTANT — RESPONSE FORMAT:
+You must respond with a single JSON object. Do NOT use XML tags, markdown formatting,
+or any other format. Do NOT wrap your response in ```json blocks. Output ONLY the raw
+JSON object.
+
+Use the EXACT parameter names shown in the tool descriptions above. For example, if the
+tool description shows the parameter "query (string, required)", your args must use the
+key "query", not "q" or any other abbreviation.
+
+The JSON object must have exactly these keys:
+- "tool_calls": array of objects, each with "tool" (string) and "args" (object). Use
+  an empty array [] when you are done researching.
+- "discovered_facts": array of objects with "fact_id", "subject", "claim", and
+  optionally "relation" and "value". For newly identified facts, use "fact_id": null
+  and include "fact_needed".
+- "sources": array of objects with "source" (tool name), "url" (if applicable),
+  "title", and "excerpt" (relevant snippet from the tool output).
+
+Example response:
+{{"tool_calls": [{{"tool": "web_search", "args": {{"query": "example search"}}}}], "discovered_facts": [], "sources": []}}
+
+When you are done researching and have no more tool calls to make:
+{{"tool_calls": [], "discovered_facts": [{{"fact_id": "f001", "subject": "Example", "claim": "Specific claim here", "relation": "has_property", "value": "the value"}}], "sources": [{{"source": "web_search", "url": "https://example.com", "title": "Example", "excerpt": "Relevant snippet"}}]}}
 
 ## research.user
 
@@ -194,6 +213,68 @@ Tool call plan (tool | args | target fact IDs):
 
 Available tools:
 {tool_descriptions}
+
+## research.parse_correction
+
+Your previous response did not contain a valid JSON object with tool_calls,
+discovered_facts, and sources. Respond ONLY with a JSON object:
+{{"tool_calls": [...], "discovered_facts": [...], "sources": [...]}}.
+Use an empty tool_calls array when done:
+{{"tool_calls": [], "discovered_facts": [...], "sources": [...]}}
+
+## research.summary
+
+You have exhausted your available tool call rounds. Do NOT request any more
+tool calls. Instead, summarize the facts you have gathered so far.
+
+Respond with a JSON object:
+- "tool_calls": [] (must be empty)
+- "discovered_facts": list all factual claims you can extract from the
+  tool results above
+- "sources": list the tools and URLs that provided evidence
+
+## research.tool_feedback
+
+Tool execution results:
+{tool_results}
+
+Respond with a JSON object containing tool_calls, discovered_facts, and sources.
+Use an empty tool_calls array if you have enough information.
+
+## research.fact_extraction.system
+
+You are a fact extraction assistant. Given tool execution results and a list
+of unknown facts, extract the specific factual claims that were discovered.
+
+For each fact that the tool results address, provide:
+- "fact_id": the ID of the fact (e.g., "f001")
+- "subject": what entity or topic this fact is about
+- "claim": a specific, precise factual statement based on the tool output
+- "relation": optional predicate (e.g., "has_type", "equals")
+- "value": optional value
+
+For newly discovered facts not in the original list, use "fact_id": null and
+include "fact_needed" describing what the new fact is about.
+
+Also list sources:
+- "source": the tool name
+- "url": if applicable
+- "title": if applicable
+- "excerpt": relevant snippet from the tool output
+
+Respond with a JSON object: {"discovered_facts": [...], "sources": [...]}
+Only include facts where the tool results actually provide evidence. If a tool
+call failed or returned no useful data, do not fabricate a claim for it.
+
+## research.fact_extraction.user
+
+User goal: {user_goal}
+
+Unknown facts (ID | subject | fact_needed):
+{unknown_facts}
+
+Tool execution results:
+{tool_results_text}
 
 ---
 
