@@ -1930,13 +1930,16 @@ with new structure. Knowledge endpoint returns valid JSON for completed runs.
 
 ### Phase D1: Verification fact-checking with tool calls
 
-**Status: NOT STARTED**
+**Status: COMPLETE (implemented via inline tool-calling loop, not separate sub-loop)**
 
-**Context:** The verification node has prompts for fact-checking
-(`verification.fact_check.system`, `verification.fact_check.user`,
-`verification.evidence`) but the node does not actually call tools to
-independently verify claims. Currently, verification is purely a model-based
-judgment — the model evaluates claims against the facts it has seen, but it
+**Implementation deviation:** The plan described a separate fact-check sub-loop
+using `verification.fact_check.system` and `verification.fact_check.user` prompts.
+The actual implementation takes a simpler approach: when the model returns
+`tool_calls` instead of a verification verdict, the node executes them and
+re-prompts with evidence (using `verification.evidence`). The
+`verification.fact_check.*` prompts were removed as dead config. The
+`verification.system` prompt instructs the model that it may call tools to
+re-check claims, which is sufficient to trigger inline fact-checking.
 cannot re-check them against independent sources. This is a significant
 quality gap: the verification rubric's hard-fail category "verification quality"
 requires that the system flags weak support and contradictions, which tool-backed

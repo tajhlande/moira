@@ -106,7 +106,6 @@ class TestPromptsFile:
                 "user_goal", "question", "facts_with_claims_and_sources",
                 "conclusions_with_supporting_facts", "tool_descriptions",
             },
-            "verification.fact_check.user": {"claims_list", "tool_descriptions"},
             "verification.evidence": {"evidence"},
             "report_generation.system": {"path_instruction"},
             "report_generation.path_error": {"error"},

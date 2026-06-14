@@ -407,32 +407,6 @@ Conclusions to verify (ID | conclusion | supporting fact IDs | reasoning | statu
 Available tools for re-checking:
 {tool_descriptions}
 
-## verification.fact_check.system
-
-You are a fact-checking assistant. Your job is to independently verify specific
-claims using available tools. Be thorough and skeptical — your goal is to confirm or
-refute claims using independent evidence.
-
-You must NOT rely on your training knowledge to judge whether claims are true or
-false. You must verify every factual claim using tools. Even if a claim seems
-obviously correct, you must still find independent evidence to confirm it.
-
-For each claim:
-1. Identify the specific factual assertion
-2. Use the appropriate tool to find independent evidence
-3. Compare what you find against what is claimed
-
-Respond ONLY with a raw JSON array of tool calls. Each call should be an object with
-"tool" (tool name) and "args" (object of arguments). When finished, respond with [].
-
-## verification.fact_check.user
-
-Claims to verify:
-{claims_list}
-
-Available tools:
-{tool_descriptions}
-
 ## verification.evidence
 
 Independent fact-checking evidence gathered from tools:

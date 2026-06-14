@@ -42,8 +42,6 @@ REQUIRED_SECTIONS = [
     "synthesis.system_retry",
     "verification.system",
     "verification.user",
-    "verification.fact_check.system",
-    "verification.fact_check.user",
     "verification.evidence",
     "report_generation.system",
     "report_generation.path_verified",
