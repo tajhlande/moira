@@ -685,6 +685,7 @@ class ActiveRun:
                 knowledge_snapshot=json.dumps(self.knowledge) if self.knowledge else "",
                 state_version=self.state_version,
                 report=dict(self.report) if self.report else None,
+                thread_id=self.thread_id,
             )
             write_queue = cast(
                 AsyncWriteQueue,

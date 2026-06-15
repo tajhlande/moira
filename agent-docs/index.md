@@ -55,6 +55,7 @@ have not been fully completed yet.
 | **native-function-calling.md** | Design for native function calling — structured tool parameters to LLM APIs, per-model text-based vs. native selection, tradeoffs and model considerations. |
 | **docker-deployment.md** | Plan for single-container Docker deployment — multi-stage build, FastAPI static file serving, volume mounts, deploy script. |
 | **application-deployment-readiness.md** | Assessment of what is needed to deploy this app to family members for testing. |
+| **verification-split.md** | Plan to replace the single verification node with two focused, tool-free steps: research_review (evaluate evidence coverage) and judgment (evaluate conclusion logic). Driven by small-model format mixing problems in the combined verification node. |
 
 ## Completed (in `completed/`)
 

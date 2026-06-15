@@ -17,7 +17,6 @@ import logging
 import uuid
 from typing import Any, cast
 
-from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.persistence.interfaces import (
     ApiSource,
     ApiSourceRepository,
@@ -32,25 +31,13 @@ from moira.services.tool_ingestion.spec_parser import (
 from moira.tools.base import ToolDefinition
 from moira.tools.catalog import ToolCatalog
 from moira.tools.discovery import ToolDiscovery
+from moira.tools.enrichment import enrich_tool_descriptions
 from moira.tools.executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
 
 REST_TOOL_IMPL = "moira.tools.rest_tool.RESTTool"
 MAX_OPERATIONS_PER_INGESTION = 200
-
-_HINT_GENERATION_PROMPT = """\
-You are a tool description writer for a research agent. For each tool below, \
-write a single sentence describing when the agent should use this tool. Be \
-specific about the tool's domain and capabilities. Do not mention other tools \
-or use phrases like "instead of". Write in third person. Each hint should \
-start with a verb like "Retrieves", "Fetches", "Looks up", "Queries", etc.
-
-Respond with ONLY a JSON object mapping tool names to hint strings. No markdown \
-fences, no explanation.
-
-Tools:
-{tool_list}"""
 
 
 def build_argument_schema(
@@ -157,78 +144,47 @@ class ToolProvisioner:
         self._source_repo = source_repo
         self._tool_repo = tool_repo
 
-    async def _generate_usage_hints(
+    async def _enrich_descriptions(
         self,
         operations: list[dict[str, Any]],
+        group_slug: str,
     ) -> dict[str, str]:
-        """Generate a usage hint for each tool via the task model.
+        """Generate enriched descriptions for API tools via the task model.
 
-        Returns a dict mapping tool name → hint string. On failure (model
-        unavailable, parse error, etc.) returns an empty dict — hints are
-        optional enrichment, never blocking."""
-        import json
+        Returns a dict mapping tool name to enriched description. On failure
+        (model unavailable, parse error, etc.) returns an empty dict —
+        enrichment is best-effort and never blocks provisioning."""
+        from moira.tools.base import ToolDefinition as TD
 
-        from moira.inference.registry import ModelRegistry
-
-        registry = cast(ModelRegistry | None, service_provider("model_registry"))
-        if registry is None:
-            logger.debug("No model registry available, skipping hint generation")
-            return {}
-
-        tool_list_parts: list[str] = []
+        tool_defs: list[TD] = []
         for op in operations:
-            params_desc = ""
             params = op.get("parameters", [])
-            if params:
-                param_names = [p.get("name", "?") for p in params[:5]]
-                params_desc = f" Parameters: {', '.join(param_names)}"
-            desc = op.get("description", "")[:200]
-            tool_list_parts.append(f"- {op['name']}: {desc}{params_desc}")
-
-        prompt = _HINT_GENERATION_PROMPT.format(
-            tool_list="\n".join(tool_list_parts),
-        )
-
-        logger.debug(
-            "Hint generation prompt for %d tools:\n%s",
-            len(operations),
-            prompt[:2000],
-        )
-
-        try:
-            resolved = await registry.resolve("task")
-        except (ValueError, KeyError) as e:
-            logger.debug("Task model not available for hint generation: %s", e)
-            return {}
-
-        try:
-            raw = await resolved.client.chat_completion(
-                model=resolved.model_id,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=DEFAULT_TEMPERATURE,
+            body = op.get("request_body")
+            body_schema = body.get("schema_def") if body else None
+            arg_schema = build_argument_schema(
+                [
+                    {
+                        "name": p.get("name", ""),
+                        "location": p.get("location", "query"),
+                        "required": p.get("required", False),
+                        "schema_def": p.get("schema_def", {"type": "string"}),
+                        "description": p.get("description", ""),
+                    }
+                    for p in params
+                ],
+                body_schema,
             )
-        except Exception as e:
-            logger.warning("Hint generation call failed: %s", e)
-            return {}
+            tool_defs.append(
+                TD(
+                    name=op["name"],
+                    description=op.get("description", ""),
+                    argument_schema=arg_schema,
+                    group_name=group_slug,
+                    tags=op.get("tags", []),
+                )
+            )
 
-        content = raw.content if hasattr(raw, "content") else str(raw)
-
-        logger.debug(
-            "Hint generation response (%d chars):\n%s",
-            len(content),
-            content[:2000],
-        )
-
-        try:
-            hints = json.loads(content.strip())
-            if isinstance(hints, dict):
-                valid = {k: str(v) for k, v in hints.items() if isinstance(v, str)}
-                logger.debug("Parsed %d usage hints: %s", len(valid), list(valid.keys()))
-                return valid
-        except (json.JSONDecodeError, ValueError):
-            logger.warning("Failed to parse hint generation response as JSON")
-
-        return {}
+        return await enrich_tool_descriptions(tool_defs)
 
     async def preview(
         self,
@@ -405,11 +361,11 @@ class ToolProvisioner:
             }
         )
 
-        # Generate usage hints via the task model (best-effort, non-blocking)
+        # Generate enriched descriptions via the task model (best-effort)
         selected_op_data = [op_map[n] for n in selected_operations if n in op_map]
-        hints = await self._generate_usage_hints(selected_op_data)
-        if hints:
-            logger.info("Generated usage hints for %d tools", len(hints))
+        enriched = await self._enrich_descriptions(selected_op_data, group_slug)
+        if enriched:
+            logger.info("Enriched descriptions for %d tools", len(enriched))
 
         for tool_name in selected_operations:
             op_data = op_map.get(tool_name)
@@ -423,7 +379,7 @@ class ToolProvisioner:
                 continue
 
             try:
-                hint = hints.get(tool_name, "")
+                enriched_desc = enriched.get(tool_name, "")
                 defn = self._build_tool_definition(
                     op_data=op_data,
                     group_slug=group_slug,
@@ -432,7 +388,7 @@ class ToolProvisioner:
                     source_id=source_id,
                     auth_type=auth_type,
                     is_default=is_default,
-                    usage_hint=hint,
+                    enriched_description=enriched_desc,
                 )
                 await self._tool_repo.save_tool(defn)
                 tools_to_embed.append(defn)
@@ -510,9 +466,13 @@ class ToolProvisioner:
         source_id: str,
         auth_type: str | None,
         is_default: bool,
-        usage_hint: str = "",
+        enriched_description: str = "",
     ) -> ToolDefinition:
-        """Build a ToolDefinition from an operation's preview data."""
+        """Build a ToolDefinition from an operation's preview data.
+
+        If ``enriched_description`` is provided, it replaces the raw spec
+        description in ``description`` (for LanceDB embedding); the raw
+        text is preserved in ``original_description``."""
         method = op_data.get("method", "GET")
         path = op_data.get("path", "/")
         params = op_data.get("parameters", [])
@@ -537,9 +497,8 @@ class ToolProvisioner:
         # Auth-required tools are disabled until credentials are configured
         enabled = auth_type is None
 
-        # Build description with optional usage hint appended
         base_desc = op_data.get("description", "")
-        description = f"{base_desc} {usage_hint}" if usage_hint else base_desc
+        description = enriched_description if enriched_description else base_desc
 
         config: dict[str, Any] = {
             "base_url": server_url,

@@ -125,7 +125,7 @@
   border: none;
   cursor: pointer;
   padding: 2px 4px;
-  color: var(--n-text-color-3, #999);
+  color: var(--n-text-color);
   display: flex;
   align-items: center;
   flex-shrink: 0;
@@ -136,7 +136,7 @@
 }
 
 .step-toggle-placeholder {
-  width: 22px;
+  width: 26px;
   flex-shrink: 0;
 }
 
@@ -165,6 +165,18 @@
 
 .detail-section .n-collapse-item {
   border: none;
+}
+
+/* Push the collapse arrow to the far right edge of the header so it
+   aligns with step-row and tool-result chevrons.  The arrow is a flex
+   child of header-main (not a sibling), so margin-left: auto is needed
+   to push it to the right within the flex container.  !important is
+   required because naive-ui's cssr generates a high-specificity rule
+   (.n-collapse .n-collapse-item.n-collapse-item--right-arrow-placement
+   .n-collapse-item__header .n-collapse-item-arrow { margin-left: 4px })
+   that otherwise wins. */
+.detail-section .n-collapse-item-arrow {
+  margin-left: auto !important;
 }
 
 .detail-message {
@@ -370,7 +382,7 @@
   border: none;
   cursor: pointer;
   padding: 2px 4px;
-  color: var(--n-text-color-3, #999);
+  color: var(--n-text-color);
   display: flex;
   align-items: center;
 }

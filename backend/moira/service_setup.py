@@ -155,20 +155,28 @@ async def init_services(
 
     # Upsert the default tool group and standard tools (idempotent).
     # Built-in tools are overwritten on startup so spec changes propagate,
-    # but user-modified fields (enabled) are preserved for existing tools.
+    # but user-modified fields (enabled, config, cost/limits) are preserved.
+    # Enriched descriptions are also preserved when the code-level description
+    # hasn't changed — if it has, original_description is reset so enrichment
+    # re-runs with the new source text.
     await tool_repo.save_group(DEFAULT_GROUP)
     for tool_def in STANDARD_TOOLS:
         existing = await tool_repo.get_tool(tool_def.name)
         if existing is None:
             await tool_repo.save_tool(tool_def)
         elif existing.built_in:
-            # Preserve user's enabled preference, config values, and
-            # cost/limit settings, update everything else (description,
-            # schema, implementation, etc.)
             tool_def.enabled = existing.enabled
             tool_def.config = existing.config
             tool_def.invocation_cost = existing.invocation_cost
             tool_def.call_limit_per_run = existing.call_limit_per_run
+            if (
+                existing.original_description
+                and existing.original_description == tool_def.description
+            ):
+                tool_def.description = existing.description
+                tool_def.original_description = existing.original_description
+            else:
+                tool_def.original_description = ""
             await tool_repo.save_tool(tool_def)
 
     catalog = ToolCatalog()
@@ -177,6 +185,35 @@ async def init_services(
     db_tools = await tool_repo.get_all_tools()
     catalog.load_from_db(db_tools)
     _services["tool_catalog"] = catalog
+
+    # --- Phase 2: Tool description enrichment ---
+    # Enrich descriptions for tools that haven't been enriched yet.  This
+    # produces richer text for LanceDB embedding so semantic search matches
+    # fact queries to tools more accurately.  Only runs when a task model
+    # is available; silently skipped otherwise.
+    from moira.tools.enrichment import enrich_tool_descriptions
+
+    all_tools = catalog.get_all()
+    tools_to_enrich = [
+        t for t in all_tools if not t.original_description and t.enabled
+    ]
+    if tools_to_enrich:
+        logger.info(
+            "Enriching descriptions for %d tools", len(tools_to_enrich)
+        )
+        enriched = await enrich_tool_descriptions(tools_to_enrich)
+        for tool in tools_to_enrich:
+            enriched_desc = enriched.get(tool.name, "")
+            if enriched_desc:
+                tool.original_description = tool.description
+                tool.description = enriched_desc
+                await tool_repo.save_tool(tool)
+                logger.debug("Enriched description for '%s'", tool.name)
+        logger.info(
+            "Enriched %d/%d tool descriptions",
+            len(enriched),
+            len(tools_to_enrich),
+        )
 
     # --- Phase 2: LanceDB tool embedding repository ---
     from moira.persistence.lancedb.tool_embeddings import ToolEmbeddingRepository
@@ -192,8 +229,7 @@ async def init_services(
         embedding_provider=embedding_provider,
         embedding_repo=embedding_repo,
     )
-    if config.tools:
-        await discovery.ingest_tools(catalog.get_all())
+    await discovery.ingest_tools(catalog.get_all())
     _services["tool_discovery"] = discovery
 
     # --- Phase 2: Tool executor ---

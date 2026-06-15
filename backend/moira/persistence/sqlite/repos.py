@@ -150,8 +150,8 @@ class SqliteConversationRepository(ConversationRepository):
                 "(id, conversation_id, user_message_id, status, "
                 "budget_limit, total_cost, generation_path, started_at, "
                 "completed_at, total_elapsed_ms, updated_at, "
-                "knowledge_snapshot, state_version, report) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "knowledge_snapshot, state_version, report, thread_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "status = excluded.status, "
                 "budget_limit = excluded.budget_limit, "
@@ -162,7 +162,8 @@ class SqliteConversationRepository(ConversationRepository):
                 "updated_at = excluded.updated_at, "
                 "knowledge_snapshot = excluded.knowledge_snapshot, "
                 "state_version = excluded.state_version, "
-                "report = excluded.report",
+                "report = excluded.report, "
+                "thread_id = excluded.thread_id",
                 (
                     run.id,
                     run.conversation_id,
@@ -178,6 +179,7 @@ class SqliteConversationRepository(ConversationRepository):
                     run.knowledge_snapshot or None,
                     run.state_version,
                     json.dumps(run.report) if run.report else None,
+                    run.thread_id,
                 ),
             )
             conn.commit()
@@ -191,7 +193,7 @@ class SqliteConversationRepository(ConversationRepository):
                 "SELECT id, conversation_id, user_message_id, status, "
                 "budget_limit, total_cost, generation_path, started_at, "
                 "completed_at, total_elapsed_ms, updated_at, "
-                "knowledge_snapshot, state_version, report "
+                "knowledge_snapshot, state_version, report, thread_id "
                 "FROM workflow_runs WHERE conversation_id = ? ORDER BY started_at ASC",
                 (conversation_id,),
             ).fetchall()
@@ -215,7 +217,7 @@ class SqliteConversationRepository(ConversationRepository):
                 "SELECT id, conversation_id, user_message_id, status, "
                 "budget_limit, total_cost, generation_path, started_at, "
                 "completed_at, total_elapsed_ms, updated_at, "
-                "knowledge_snapshot, state_version, report "
+                "knowledge_snapshot, state_version, report, thread_id "
                 "FROM workflow_runs WHERE id = ?",
                 (run_id,),
             ).fetchone()

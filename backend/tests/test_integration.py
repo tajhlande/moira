@@ -252,7 +252,7 @@ class TestIntegration:
 
         report = result["knowledge"]["report"]
         assert report is not None
-        assert report["generation_path"] == "budget_exhausted"
+        assert report["generation_path"] == "retry_overruled"
 
     @pytest.mark.asyncio
     async def test_full_cycle_error_path(self, config, mock_writer, mock_model):

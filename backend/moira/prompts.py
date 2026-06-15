@@ -46,8 +46,11 @@ REQUIRED_SECTIONS = [
     "report_generation.system",
     "report_generation.path_verified",
     "report_generation.path_budget_exhausted",
+    "report_generation.path_retry_overruled",
     "report_generation.path_error",
     "report_generation.user",
+    "tool_enrichment.system",
+    "tool_enrichment.user",
 ]
 
 

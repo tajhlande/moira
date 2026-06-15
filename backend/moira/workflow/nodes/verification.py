@@ -362,6 +362,33 @@ async def verification(state: ResearchState, config: RunnableConfig) -> dict:
 
         parsed = _parse_json_object(raw)
 
+    # Fail explicitly if the model produced unparseable JSON.  This makes
+    # model output problems visible rather than silently proceeding with
+    # default values (which would mask the real issue).
+    if not parsed or "route" not in parsed:
+        logger.error(
+            "VERIFICATION: JSON parse failed (parsed=%d keys, "
+            "response=%d chars)",
+            len(parsed),
+            len(raw),
+        )
+        writer({
+            "event": "run_error",
+            "payload": {
+                "error": "Verification model returned unparseable JSON",
+                "budget_remaining": new_budget,
+                "detail": detail,
+                "purpose": NODE_NAME,
+                "model": resolved.model_id,
+                "call_count": total_call_count,
+                "tool_call_count": len(tool_results_log),
+            },
+        })
+        raise RuntimeError(
+            f"Verification model returned unparseable JSON "
+            f"(response={len(raw)} chars, parsed_keys={list(parsed.keys())})"
+        )
+
     # Apply fact results
     for fr in parsed.get("fact_results", []):
         fid = fr.get("fact_id", "")

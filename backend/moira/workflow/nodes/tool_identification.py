@@ -79,6 +79,23 @@ async def tool_identification(state: ResearchState, config: RunnableConfig) -> d
     except Exception:
         logger.debug("Tool catalog unavailable for defaults")
 
+    # Re-hydrate candidate tools from the catalog.  LanceDB search returns
+    # truncated ToolDefinitions (name + description only); the catalog has
+    # full definitions from SQLite including argument_schema,
+    # invocation_cost, and call_limit_per_run.
+    try:
+        catalog = service_provider("tool_catalog")
+        rehydrated: list[ToolDefinition] = []
+        for tool in candidate_tools:
+            full = catalog.get(tool.name)
+            if isinstance(full, ToolDefinition) and full.argument_schema:
+                rehydrated.append(full)
+            else:
+                rehydrated.append(tool)
+        candidate_tools = rehydrated
+    except Exception:
+        logger.debug("Tool catalog unavailable for re-hydration")
+
     new_budget = deduct_cost(es["step_costs"], NODE_NAME, es["budget_remaining"])
 
     # Build tool_costs and tool_call_limits from candidate tools so

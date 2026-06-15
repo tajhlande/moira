@@ -114,6 +114,7 @@ class TestPromptsFile:
                 "verified_conclusions", "contradicted_items",
                 "unknown_facts", "citations",
             },
+            "tool_enrichment.user": {"tool_name", "tool_description", "tool_parameters"},
         }
         import re
 

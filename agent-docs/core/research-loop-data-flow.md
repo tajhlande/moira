@@ -31,7 +31,7 @@ with two sub-objects:
 | `citations` | `list[Citation]` | research | **Replaced** (local copy → append → return) |
 | `verification_history` | `list[VerificationOutcome]`` | verification | Appended each verification pass |
 | `report` | `ResearchReport` | report_generation | Final report dict |
-| `generation_path` | `str` | report_generation | `"verified"` / `"budget_exhausted"` / `"error"` |
+| `generation_path` | `str` | report_generation | `"verified"` / `"retry_overruled"` / `"budget_exhausted"` / `"error"` |
 
 ### `execution_state` — orchestration mechanics
 
@@ -281,6 +281,10 @@ conclusion["verification_note"] = cr.get("reason")
 
 The model returns a `route` field: `"accept"`, `"retry_research"`, or `"retry_synthesis"`. This drives the graph's conditional edge.
 
+#### Parse failure handling
+
+If `_parse_json_object` returns an empty dict or the result is missing `route`, the node emits a `run_error` event with the raw response and raises `RuntimeError`. This makes model output problems (malformed JSON, missing required fields) visible instead of silently proceeding with defaults.
+
 **Detail keys:** `prompt`, `response`, `model`, `tool_results`, `thinking?`, `structured_output`
 
 **Structured output:** always `{fact_results, conclusion_results, new_unknown_facts, goal_met, goal_assessment, route}` — never raw `tool_calls`.
@@ -303,6 +307,7 @@ The model returns a `route` field: `"accept"`, `"retry_research"`, or `"retry_sy
 **Generation path logic:**
 - `error` in state → `"error"`
 - `verification_history[-1].goal_met` AND no contradicted conclusions → `"verified"`
+- `verification_history[-1].route in ("retry_research", "retry_synthesis")` → `"retry_overruled"` (verification requested retry but budget/retry limits prevented it)
 - Otherwise → `"budget_exhausted"`
 
 **Events:** emits `run_complete` (with report + knowledge summary + generation path), then `node_end`.
@@ -348,14 +353,14 @@ END
 
 ### Routing conditions (after verification)
 
-| `route` value | Condition | Target |
-|---------------|-----------|--------|
-| `"accept"` | — | `report_generation` |
-| `"retry_synthesis"` | `synthesis_retry_count < 2` AND budget ≥ synthesis+verification cost | `synthesis` |
-| `"retry_synthesis"` | Out of retries or budget | `report_generation` |
-| `"retry_research"` | `research_retry_count < 2` AND budget ≥ full research cycle cost | `tool_identification` |
-| `"retry_research"` | Out of retries or budget | `report_generation` |
-| (missing/unknown) | — | `report_generation` |
+| `route` value       | Condition                                                            | Target                |
+|---------------------|----------------------------------------------------------------------|-----------------------|
+| `"accept"`          | —                                                                    | `report_generation`   |
+| `"retry_synthesis"` | `synthesis_retry_count < 2` AND budget ≥ synthesis+verification cost | `synthesis`           |
+| `"retry_synthesis"` | Out of retries or budget                                             | `report_generation` (path: `retry_overruled`) |
+| `"retry_research"`  | `research_retry_count < 2` AND budget ≥ full research cycle cost     | `tool_identification` |
+| `"retry_research"`  | Out of retries or budget                                             | `report_generation` (path: `retry_overruled`) |
+| (missing/unknown)   | —                                                                    | `report_generation`   |
 
 **Retry costs:**
 - Synthesis retry: synthesis(5) + verification(8) = **13**
@@ -449,3 +454,31 @@ These were tracked gaps that have been fixed:
    `while` loop. The verification step cost (default 8) is now deducted
    exactly once at the top of the node. Only per-tool-call costs are
    deducted inside the loop.
+
+4. **LanceDB-discovered tools had empty `argument_schema`.** LanceDB
+   stores only `{name, vector, description, enabled}` — not parameter
+   schemas. The `tool_identification` node now re-hydrates each
+   candidate tool from the in-memory `ToolCatalog` (loaded from SQLite)
+   after vector search, replacing the truncated definition with the full
+   one (`argument_schema`, `invocation_cost`, `call_limit_per_run`).
+   Built-in tools were unaffected because they come from the catalog
+   directly. No LanceDB rebuild or tool reingestion required — the fix
+   is purely a runtime catalog lookup.
+
+5. **Verification JSON parse failures were silently masked.** When
+   `_parse_json_object` returned `{}` (e.g., model omitted commas
+   between array items), every field defaulted — `route` became
+   `"accept"`, `goal_met` became `False`, `fact_results` became empty.
+   The verification node now checks for missing `route` after the
+   tool-call loop and raises a `RuntimeError` with the raw response in
+   the error detail, making model output problems visible instead of
+   silently proceeding with defaults.
+
+6. **`retry_overruled` generation path.** When verification returns
+   `route: retry_research` or `route: retry_synthesis` but the router
+   sends to report_generation due to insufficient budget or exhausted
+   retries, the report generation node now sets
+   `generation_path = "retry_overruled"` instead of the generic
+   `"budget_exhausted"`. A dedicated prompt
+   (`report_generation.path_retry_overruled`) instructs the model to
+   acknowledge the gaps and identify what further research is needed.

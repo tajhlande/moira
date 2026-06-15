@@ -100,6 +100,7 @@ function kvPairs(obj: Record<string, unknown>): [string, string][] {
     <NCollapse
       v-if="promptText"
       :default-expanded-names="[]"
+      arrow-placement="right"
       class="detail-section"
     >
       <NCollapseItem title="Prompt" name="prompt">
@@ -111,6 +112,7 @@ function kvPairs(obj: Record<string, unknown>): [string, string][] {
     <NCollapse
       v-if="promptMessages.length > 0"
       :default-expanded-names="[]"
+      arrow-placement="right"
       class="detail-section"
     >
       <NCollapseItem title="Prompt" name="prompt">
@@ -129,6 +131,7 @@ function kvPairs(obj: Record<string, unknown>): [string, string][] {
     <NCollapse
       v-if="thinking"
       :default-expanded-names="[]"
+      arrow-placement="right"
       class="detail-section"
     >
       <NCollapseItem title="Thinking" name="thinking">
@@ -140,6 +143,7 @@ function kvPairs(obj: Record<string, unknown>): [string, string][] {
     <NCollapse
       v-if="response"
       :default-expanded-names="[]"
+      arrow-placement="right"
       class="detail-section"
     >
       <NCollapseItem title="Response" name="response">
@@ -151,6 +155,7 @@ function kvPairs(obj: Record<string, unknown>): [string, string][] {
     <NCollapse
       v-if="hasStructuredOutput"
       :default-expanded-names="[]"
+      arrow-placement="right"
       class="detail-section"
     >
       <NCollapseItem title="Structured Output" name="structured">
@@ -192,6 +197,7 @@ function kvPairs(obj: Record<string, unknown>): [string, string][] {
     <NCollapse
       v-if="toolResults.length > 0"
       :default-expanded-names="[]"
+      arrow-placement="right"
       class="detail-section"
     >
       <NCollapseItem
@@ -225,9 +231,9 @@ function kvPairs(obj: Record<string, unknown>): [string, string][] {
               >
                 <IconChevronDown
                   v-if="expandedToolResults.has(tri)"
-                  :size="14"
+                  :size="18"
                 />
-                <IconChevronRight v-else :size="14" />
+                <IconChevronRight v-else :size="18" />
               </button>
             </div>
             <div

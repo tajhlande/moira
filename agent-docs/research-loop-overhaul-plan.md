@@ -2005,27 +2005,33 @@ section that the verification prompt already references.
 
 ---
 
-### Phase D2: Frontend ChatView spec fixes
+### Phase D2: Tool ingest enrichment
 
-**Goal:** Replace the current hint generation with the enriched description
-prompt from section 6.2. Verify that enriched descriptions improve LanceDB
-search quality.
+**Status: COMPLETE**
 
-**What to build:**
+**What was built:**
 
-1. Update `tool_provisioner.py` to use the new enrichment prompt.
-2. Enrichment runs at startup for built-in tools and at registration for
-   user-added tools.
-3. Verify `original_description` is preserved.
-
-**Testability:** Ingest a tool, verify enriched description is stored. Run
-LanceDB search with fact-style queries and verify improved recall vs. original
-descriptions.
-
-**Exit criteria:**
-- Tools get enriched descriptions at ingest time
-- LanceDB search quality improves for fact-style queries
-- `uv run pytest` passes, `uv run ruff check .` clean
+1. Added `tool_enrichment.system` and `tool_enrichment.user` prompts to
+   `prompts.md`. The batch prompt asks the task model to write rich descriptions
+   describing what QUESTIONS each tool answers and what FACTS it provides.
+2. Created `moira/tools/enrichment.py` — a reusable `enrich_tool_descriptions()`
+   function that sends tools to the task model and returns enriched descriptions.
+   Handles model unavailability, parse errors, and call failures gracefully.
+3. Updated `ToolProvisioner` — replaced `_HINT_GENERATION_PROMPT` and
+   `_generate_usage_hints` with the new enrichment module. API tools now get
+   full enriched descriptions (replacing, not appending to, the raw spec text).
+4. Updated `service_setup.py` startup flow:
+   - Enrichment step after catalog loading: enriches any tool whose
+     `original_description` is empty (not yet enriched). Enriched descriptions
+     are persisted to DB and reflected in the catalog before LanceDB ingest.
+   - Startup sync preserves enriched descriptions across restarts: if
+     `original_description` matches the current code-level description, the
+     enriched `description` is kept. If the code description changed,
+     `original_description` is reset so enrichment re-runs automatically.
+   - Fixed LanceDB ingest gate: tools are always ingested at startup
+     (previously gated on `if config.tools:`, which skipped built-in tools
+     when no YAML tools were configured).
+5. 7 unit tests in `tests/test_enrichment.py`.
 
 ---
 

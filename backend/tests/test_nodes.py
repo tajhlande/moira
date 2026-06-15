@@ -1237,7 +1237,8 @@ class TestVerification:
 
     @pytest.mark.asyncio
     async def test_tool_call_limit_enforced(self, config, mock_writer, mock_model):
-        """Tool calls that exceed the call limit should be skipped."""
+        """Tool calls that exceed the call limit should be skipped, and the
+        node should fail because no verification result was produced."""
         _inject_services(config, mock_model)
 
         tool_call_response = ChatResponse(
@@ -1277,7 +1278,8 @@ class TestVerification:
         state["execution_state"]["tool_call_limits"] = {"web_search": 1}
         state["execution_state"]["tool_call_counts"] = {"web_search": 1}
 
-        await verification(state, _make_run_config(config))
+        with pytest.raises(RuntimeError, match="unparseable JSON"):
+            await verification(state, _make_run_config(config))
 
         # Tool executor should NOT be called (limit already reached)
         executor.execute_batch.assert_not_called()
@@ -1379,7 +1381,7 @@ class TestReportGeneration:
         assert result["knowledge"]["generation_path"] == "error"
 
     @pytest.mark.asyncio
-    async def test_budget_exhausted_path_when_goal_not_met(self, config, mock_writer, mock_model):
+    async def test_retry_overruled_path_when_goal_not_met(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(
             content=REPORT_RESPONSE
@@ -1396,7 +1398,7 @@ class TestReportGeneration:
         ]
 
         result = await report_generation(state, _make_run_config(config))
-        assert result["knowledge"]["generation_path"] == "budget_exhausted"
+        assert result["knowledge"]["generation_path"] == "retry_overruled"
 
     @pytest.mark.asyncio
     async def test_no_verification_history_is_budget_exhausted(

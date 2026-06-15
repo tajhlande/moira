@@ -350,6 +350,14 @@ For each fact that has a claim, evaluate whether the claim is accurate:
 You may call tools to re-check claims against independent sources. Be skeptical —
 do not assume a claim is true just because it came from a tool earlier.
 
+TOOL CALLS: To request a tool call, respond with ONLY this JSON format:
+```json
+{"tool_calls": [{"tool": "tool_name", "args": {"param": "value"}}]}
+```
+Do not include any other keys when requesting tool calls. After the tool
+executes, you will be re-prompted with the evidence. You may request tool
+calls up to 2 times before producing your final verdict.
+
 TASK 2: CONCLUSION VERIFICATION
 For each conclusion, evaluate:
 - Is the logical reasoning valid? Does it follow from the supporting facts?
@@ -389,6 +397,11 @@ For all three tasks together, respond with a single JSON object with these keys:
     calls to resolve, and goal is not met
   - "retry_synthesis": facts are fine but conclusions have logical errors — research
     is not needed, only re-synthesis, but goal is not met
+
+RESPONSE FORMAT SUMMARY:
+- To call a tool: {"tool_calls": [{"tool": "...", "args": {...}}]}
+- To give your verdict: {"fact_results": [...], "conclusion_results": [...], "new_unknown_facts": [...], "goal_met": ..., "goal_assessment": "...", "route": "..."}
+Never mix the two formats. Never include "query" or other bare keys — always use the tool_calls wrapper to request a tool call.
 
 ## verification.user
 
@@ -459,6 +472,14 @@ Verification could not be completed for all claims. Some facts and conclusions r
 unverified. Present the answer with explicit caveats about unverified material.
 Clearly distinguish what is verified from what is uncertain.
 
+## report_generation.path_retry_overruled
+
+Verification determined that the research goal was not fully met and recommended
+another research cycle, but insufficient budget remained to retry. Present the
+answer with explicit caveats: state that verification found gaps or contradictions,
+note which facts remain unverified or contradicted, and identify what further
+research would be needed to reach a confident answer.
+
 ## report_generation.path_error
 
 The workflow was interrupted by an error: {error}. Present whatever findings are
@@ -484,3 +505,35 @@ Unknown facts:
 
 All citations:
 {citations}
+
+---
+
+## tool_enrichment.system
+
+You are a tool description writer for a research agent. Write an enriched
+description that helps a semantic search system match user research questions
+to this tool.
+
+Your description should describe what QUESTIONS the tool can answer and what
+FACTS it can provide. Do NOT describe how to call the tool — the parameters
+are shown for context only. Focus on the information the tool returns and the
+domains it covers.
+
+For example, instead of "API endpoint that accepts a Pokemon name and returns
+JSON data", write "Answers questions about Pokemon species: typing, base stats,
+abilities (including hidden abilities), evolution chains, and move pools.
+Provides factual data about individual Pokemon including type matchups, stat
+distributions, and ability lists."
+
+Be specific about domains and data types. Mention entities and topics the tool
+covers. Include synonyms and related terms that a user might search for. Write
+2-4 sentences.
+
+Respond with ONLY the enriched description text. No JSON, no markdown fences,
+no explanation.
+
+## tool_enrichment.user
+
+Tool name: {tool_name}
+Description: {tool_description}
+Parameters: {tool_parameters}

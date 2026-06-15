@@ -74,9 +74,15 @@ def _parse_json_object(text: str) -> dict:
                 return result
         except json.JSONDecodeError:
             pass
-    # Find first { ... } — try each match from longest to shortest
-    # to handle text containing multiple JSON objects
-    for match in re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.DOTALL):
+    # Find all { ... } matches and try longest first.  Models sometimes
+    # embed small JSON fragments (e.g. {"query": "..."}) before or after
+    # the real response object; trying the longest match first avoids
+    # extracting the wrong fragment.
+    matches = list(
+        re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.DOTALL)
+    )
+    matches.sort(key=lambda m: len(m.group(0)), reverse=True)
+    for match in matches:
         try:
             result = json.loads(match.group(0))
             if isinstance(result, dict):

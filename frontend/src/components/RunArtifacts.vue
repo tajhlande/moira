@@ -239,8 +239,8 @@ function fmt(n: number): string {
                 class="step-toggle"
                 @click="toggleStep(row.stepIndex)"
               >
-                <IconChevronDown v-if="expandedSteps.has(row.stepIndex)" :size="14" />
-                <IconChevronRight v-else :size="14" />
+                <IconChevronDown v-if="expandedSteps.has(row.stepIndex)" :size="18" />
+                <IconChevronRight v-else :size="18" />
               </button>
               <span v-else class="step-toggle-placeholder" />
             </div>
