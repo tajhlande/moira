@@ -1,15 +1,16 @@
 """URL content retrieval tool: fetches a web page and returns its content.
 
-Uses httpx for async HTTP and BeautifulSoup for HTML parsing. Supports
-text-only extraction (strips HTML tags), XPath-based subsetting via lxml,
-and optional summarization via a sub-agent call."""
+Uses httpx for async HTTP fetching and trafilatura for robust main-content
+extraction. By default, returns Markdown that preserves headings, links,
+tables, formatting, and embedded LaTeX/math notation. Supports XPath
+subsetting via lxml and optional plain-text output."""
 
 import logging
 import time
 from typing import Any
 
 import httpx
-from bs4 import BeautifulSoup
+import trafilatura
 from lxml import etree
 
 from moira.tools.base import BaseTool, ToolResult
@@ -17,7 +18,7 @@ from moira.tools.base import BaseTool, ToolResult
 logger = logging.getLogger(__name__)
 
 # Maximum response size to accept (bytes). Prevents loading enormous pages
-# into memory. 5MB is generous enough for most research-quality pages.
+# into memory. 5 MB is generous enough for most research-quality pages.
 _MAX_RESPONSE_SIZE = 5 * 1024 * 1024
 
 # Maximum text length to return in ToolResult. Truncation preserves the
@@ -26,15 +27,21 @@ _MAX_OUTPUT_LENGTH = 100_000
 
 
 class UrlContentTool(BaseTool):
-    """Fetches a URL and returns its content. Supports text-only extraction,
-    XPath subsetting, and optional summarization."""
+    """Fetches a URL and returns its content via trafilatura extraction.
+
+    By default the output is Markdown with links, tables, formatting, and
+    LaTeX/math preserved. Set ``text_only=True`` for plain text without
+    Markdown markup. An optional ``xpath`` expression can narrow the
+    extraction to a subtree of the page.
+    """
 
     tool_name = "url_content"
     tool_description = (
         "Retrieve the content of a web page given its URL. "
-        "Returns text-only content by default (HTML stripped). "
-        "Supports XPath selectors to extract a subset of content "
-        "and optional summarization via a sub-agent."
+        "Returns Markdown by default, preserving structure, links, tables, "
+        "and embedded LaTeX/math notation. Set text_only=true for plain text "
+        "without Markdown formatting. Supports XPath selectors to extract "
+        "a subset of content."
     )
     tool_group = "standard"
     tool_argument_schema = {
@@ -46,15 +53,11 @@ class UrlContentTool(BaseTool):
             },
             "text_only": {
                 "type": "boolean",
-                "description": "Return only text content, stripping HTML (default: true)",
+                "description": "Return plain text without Markdown markup (default: false)",
             },
             "xpath": {
                 "type": "string",
                 "description": "XPath expression to extract a subset of the page",
-            },
-            "summarize": {
-                "type": "boolean",
-                "description": "Summarize the content via a sub-agent (default: false)",
             },
         },
         "required": ["url"],
@@ -70,9 +73,8 @@ class UrlContentTool(BaseTool):
         if not url:
             return self._fail(start, "Missing required parameter: url")
 
-        text_only = args.get("text_only", True)
+        text_only = args.get("text_only", False)
         xpath_expr = args.get("xpath", "")
-        summarize = args.get("summarize", False)
 
         try:
             html = await self._fetch(url)
@@ -80,12 +82,9 @@ class UrlContentTool(BaseTool):
             return self._fail(start, f"Failed to fetch {url}: {e}")
 
         try:
-            content = self._extract(html, text_only=text_only, xpath=xpath_expr)
+            content = self._extract(html, url=url, text_only=text_only, xpath=xpath_expr)
         except Exception as e:
             return self._fail(start, f"Failed to parse content from {url}: {e}")
-
-        if summarize:
-            content = await self._summarize(content, url)
 
         content = content[:_MAX_OUTPUT_LENGTH]
         elapsed_ms = int((time.monotonic() - start) * 1000)
@@ -121,41 +120,71 @@ class UrlContentTool(BaseTool):
                 )
             return resp.text
 
-    def _extract(self, html: str, text_only: bool = True, xpath: str = "") -> str:
-        """Extract content from HTML. If xpath is provided, uses lxml to
-        select a subtree first. If text_only, strips remaining HTML tags."""
+    def _extract(
+        self,
+        html: str,
+        url: str = "",
+        text_only: bool = False,
+        xpath: str = "",
+    ) -> str:
+        """Extract main content from HTML using trafilatura.
+
+        If ``xpath`` is provided, the HTML is first narrowed to the matching
+        subtree via lxml so trafilatura processes only that section.
+
+        ``text_only`` selects between Markdown (default) and plain-text
+        output. Markdown preserves headings, links, tables, formatting, and
+        LaTeX/math delimiters (``$...$``, ``\\(...\\)``, ``\\[...\\]``) that
+        appear in the page text.
+
+        ``url`` is passed to trafilatura so it can resolve relative links in
+        the Markdown output.
+        """
         if xpath:
             tree = etree.HTML(html)
             selected = tree.xpath(xpath)
             if not selected:
                 return ""
-            # xpath results can be elements or strings
             parts = []
             for node in selected:
                 if isinstance(node, etree._Element):
                     parts.append(etree.tostring(node, encoding="unicode", method="html"))
                 else:
                     parts.append(str(node))
-            html = "".join(parts)
+            # Wrap the fragment in a minimal HTML document so trafilatura's
+            # extraction pipeline recognises it as parseable content. Without
+            # this, isolated fragments (e.g. a single <p>) yield None.
+            html = f"<html><body>{''.join(parts)}</body></html>"
 
-        if text_only:
-            soup = BeautifulSoup(html, "lxml")
-            # Remove script and style elements before extracting text
-            for tag in soup(["script", "style", "noscript"]):
-                tag.decompose()
-            return soup.get_text(separator="\n", strip=True)
+        output_format = "txt" if text_only else "markdown"
 
-        return html
+        # Common extraction options for both formats.
+        common_kwargs: dict[str, Any] = dict(
+            output_format=output_format,
+            include_tables=True,
+            include_comments=False,
+            url=url,
+        )
 
-    async def _summarize(self, content: str, url: str) -> str:
-        """Summarize content via the inference service. This is a placeholder
-        — the full sub-agent integration will be wired in later. For now,
-        returns the content unchanged with a note."""
-        # TODO: wire up sub-agent summarization through the inference client.
-        # This requires access to the model registry, which isn't available
-        # in the tool execution context yet. Will be implemented as part of
-        # the sub-agent orchestration feature.
-        return content
+        # Markdown-specific options: preserve links, images (alt text),
+        # and inline formatting (bold/italic) so the result reads like a
+        # structured document. include_formatting also helps retain
+        # math/LaTeX delimiters that rely on formatting markup.
+        if not text_only:
+            common_kwargs.update(
+                include_links=True,
+                include_images=True,
+                include_formatting=True,
+            )
+
+        # Try precision-first for cleaner main-content extraction. Some
+        # pages (e.g. table-based layouts like HN) are rejected entirely
+        # by the precision filter, so fall back to default extraction to
+        # avoid returning empty content.
+        result = trafilatura.extract(html, favor_precision=True, **common_kwargs)
+        if not result:
+            result = trafilatura.extract(html, **common_kwargs)
+        return result or ""
 
     def _fail(self, start: float, error: str) -> ToolResult:
         elapsed_ms = int((time.monotonic() - start) * 1000)

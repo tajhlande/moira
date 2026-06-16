@@ -15,11 +15,20 @@ dependencies = [
     "aiosqlite>=0.22.1",
     "beautifulsoup4>=4.14.3",
     "lxml>=6.1.1",
+    "trafilatura>=2.0",
     "cryptography>=44.0",
     "jsonschema>=4.23",
     "prance>=23",
+    "openapi-spec-validator>=0.7",
     "pandas>=3.0.3",
 ]
+
+[build-system]
+requires = ["setuptools>=80.9"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["moira*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
