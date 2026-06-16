@@ -10,6 +10,71 @@ from moira.tools.base import BaseTool, ToolResult
 
 logger = logging.getLogger(__name__)
 
+_MAX_OUTPUT_CHARS = 10000
+
+
+def _truncate_json_value(
+    obj: Any,
+    max_array_items: int = 10,
+    max_string_len: int = 200,
+) -> Any:
+    """Recursively truncate long arrays and strings in a JSON-compatible object.
+
+    Returns a new object where:
+    - Arrays longer than *max_array_items* keep only the first N items,
+      with a ``"... (M more items)"`` marker string appended.
+    - String values longer than *max_string_len* are cut to N chars,
+      with a ``"... (M more chars)"`` marker appended.
+    - Dicts keep all keys but recurse into values.
+    - Scalars (int, float, bool, None) are unchanged.
+
+    The result is always valid JSON when serialized.
+    """
+    if isinstance(obj, str):
+        if len(obj) > max_string_len:
+            return obj[:max_string_len] + (
+                f"... ({len(obj) - max_string_len} more chars)"
+            )
+        return obj
+    elif isinstance(obj, list):
+        items = [
+            _truncate_json_value(item, max_array_items, max_string_len)
+            for item in obj[:max_array_items]
+        ]
+        if len(obj) > max_array_items:
+            items.append(f"... ({len(obj) - max_array_items} more items)")
+        return items
+    elif isinstance(obj, dict):
+        return {
+            k: _truncate_json_value(v, max_array_items, max_string_len)
+            for k, v in obj.items()
+        }
+    else:
+        return obj
+
+
+def _serialize_json_truncated(
+    data: Any,
+    max_chars: int = _MAX_OUTPUT_CHARS,
+) -> str:
+    """Serialize *data* as indented JSON, truncating if over *max_chars*.
+
+    Applies progressively more aggressive array/string limits until the
+    serialized output fits.  Falls back to character truncation only if
+    all rounds fail (extremely rare).
+    """
+    full = json.dumps(data, indent=2)
+    if len(full) <= max_chars:
+        return full
+
+    for max_items, max_str in [(10, 200), (5, 100), (3, 50)]:
+        trimmed = _truncate_json_value(data, max_items, max_str)
+        result = json.dumps(trimmed, indent=2)
+        if len(result) <= max_chars:
+            return result
+
+    return full[:max_chars]
+
 
 class RESTTool(BaseTool):
     """Execute a tool by calling a REST endpoint. Supports path parameter
@@ -31,6 +96,9 @@ class RESTTool(BaseTool):
     async def execute(self, args: dict[str, Any]) -> ToolResult:
         start = time.monotonic()
         try:
+            # Copy so _resolve_path's pop() doesn't mutate the caller's
+            # dict (research.py reuses it for the tool_result event).
+            args = dict(args)
             config = self.definition.config
             method = (config.get("method") or "GET").upper()
             base_url = config.get("base_url", "")
@@ -58,9 +126,9 @@ class RESTTool(BaseTool):
                 resp.raise_for_status()
                 elapsed_ms = int((time.monotonic() - start) * 1000)
                 try:
-                    output = json.dumps(resp.json(), indent=2)[:10000]
+                    output = _serialize_json_truncated(resp.json())
                 except Exception:
-                    output = resp.text[:10000]
+                    output = resp.text[:_MAX_OUTPUT_CHARS]
                 return ToolResult(
                     tool_name=self.name,
                     output=output,
