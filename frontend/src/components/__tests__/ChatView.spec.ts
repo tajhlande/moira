@@ -593,8 +593,8 @@ describe("ChatView", () => {
         execution_steps: [
           {
             id: "1",
-            node: "verification",
-            label: "Verifying",
+            node: "evaluation",
+            label: "Evaluating",
             status: "stopped",
             cost: 0,
             budget_remaining: 0,

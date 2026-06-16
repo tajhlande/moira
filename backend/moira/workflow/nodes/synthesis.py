@@ -61,15 +61,20 @@ async def synthesis(state: ResearchState, config: RunnableConfig) -> dict:
             },
         }
 
-    retry_count = es.get("synthesis_retry_count", 0)
+    # On retry cycles, evaluation feedback may be available to guide
+    # revised conclusions. Use it if present.
+    evaluation_history = knowledge.get("evaluation_history", [])
     prior_conclusions_section = ""
-    if retry_count > 0:
-        verification_history = knowledge.get("verification_history", [])
-        last_v = verification_history[-1] if verification_history else {}
+    system_prompt = get_prompt("synthesis.system")
+    if evaluation_history and evaluation_history[-1].get("route") == "retry":
+        last_eval = evaluation_history[-1]
         prior_conclusions_section = (
-            "Previous conclusions were rejected by verification. Feedback:\n"
-            f"{last_v.get('goal_assessment', '')}\n\n"
+            "Previous conclusions were rejected during evaluation. Feedback:\n"
+            f"{last_eval.get('goal_assessment', '')}\n\n"
             "Produce revised conclusions addressing this feedback."
+        )
+        system_prompt += "\n\n" + get_prompt("synthesis.system_retry").format(
+            evaluation_feedback=last_eval.get("goal_assessment", ""),
         )
 
     user_prompt = get_prompt("synthesis.user").format(
@@ -81,15 +86,6 @@ async def synthesis(state: ResearchState, config: RunnableConfig) -> dict:
         prior_conclusions_section=prior_conclusions_section,
     )
 
-    system_prompt = get_prompt("synthesis.system")
-    if retry_count > 0:
-        verification_history = knowledge.get("verification_history", [])
-        last_v = verification_history[-1] if verification_history else {}
-        feedback = last_v.get("goal_assessment", "")
-        system_prompt += "\n\n" + get_prompt("synthesis.system_retry").format(
-            verification_feedback=feedback,
-        )
-
     registry = _get_model(config)
     resolved = await registry.resolve("intelligence")
     messages = [
@@ -97,7 +93,7 @@ async def synthesis(state: ResearchState, config: RunnableConfig) -> dict:
         {"role": "user", "content": user_prompt},
     ]
 
-    logger.info("SYNTHESIS Start (retry=%d)", retry_count)
+    logger.info("SYNTHESIS Start")
     response = await resolved.client.chat_completion(
         messages=messages,
         model=resolved.model_id,
@@ -176,6 +172,5 @@ async def synthesis(state: ResearchState, config: RunnableConfig) -> dict:
         "execution_state": {
             **es,
             "budget_remaining": new_budget,
-            "synthesis_retry_count": retry_count + 1,
         },
     }

@@ -330,7 +330,7 @@ def test_batch_set_settings(app_client):
         json={
             "settings": [
                 {"key": "budget.cost.planning", "value": "10"},
-                {"key": "budget.cost.verification", "value": "8"},
+                {"key": "budget.cost.research_review", "value": "3"},
             ],
         },
     )
@@ -338,7 +338,7 @@ def test_batch_set_settings(app_client):
     data = resp.json()
     keys = {s["key"] for s in data["settings"]}
     assert "budget.cost.planning" in keys
-    assert "budget.cost.verification" in keys
+    assert "budget.cost.research_review" in keys
 
 
 def test_reset_settings(app_client):

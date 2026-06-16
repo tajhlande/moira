@@ -393,6 +393,23 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     system_prompt = get_prompt("research.system").format(
         max_extra_rounds=DEFAULT_MAX_ROUNDS,
     )
+
+    # When re-entered from research_review retry, add feedback about gaps
+    review_count = es.get("review_count", 0)
+    review_history = knowledge.get("review_history", [])
+    if (
+        review_count > 0
+        and bool(review_history)
+        and review_history[-1].get("route") == "retry"
+    ):
+        last_review = review_history[-1]
+        system_prompt += "\n\n" + get_prompt("research.system_retry_review").format(
+            coverage_assessment=last_review.get("coverage_assessment", ""),
+            missing_areas="\n".join(
+                f"- {area}" for area in last_review.get("missing_areas", [])
+            ),
+        )
+
     user_prompt = get_prompt("research.user").format(
         user_goal=knowledge.get("user_goal", knowledge["question"]),
         unknown_facts=_format_unknown_facts(facts),

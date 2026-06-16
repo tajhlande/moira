@@ -101,7 +101,7 @@ class SettingsService:
         """Bulk-resolve all settings under a prefix as native Python types.
 
         Returns a dict keyed by the suffix after the prefix (e.g. prefix
-        "budget.cost." yields {"planning": 2, "verification": 4, ...}).
+        "budget.cost." yields {"planning": 2, "research_review": 3, ...}).
         Intended for the run manager to resolve cost weights once at the
         async boundary."""
         entries = await self._repo.get_prefix(prefix, scope, scope_id)

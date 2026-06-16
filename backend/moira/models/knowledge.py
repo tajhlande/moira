@@ -64,13 +64,20 @@ class ToolCallPlan(TypedDict):
     cost: float
 
 
-class VerificationOutcome(TypedDict):
-    fact_results: list[dict]
-    conclusion_results: list[dict]
-    new_unknown_facts: list[str]
+class ReviewOutcome(TypedDict):
+    """Outcome of the research_review node — evaluates evidence coverage."""
+    fact_results: list[dict]       # [{fact_id, result, evidence}]
+    coverage_assessment: str
+    missing_areas: list[str]
+    route: str                     # "continue" | "retry"
+
+
+class EvaluationOutcome(TypedDict):
+    """Outcome of the evaluation node — evaluates conclusion logic and goal."""
+    conclusion_results: list[dict] # [{conclusion_id, result, reason}]
     goal_met: bool
     goal_assessment: str
-    route: str  # "accept" | "retry_research" | "retry_synthesis"
+    route: str                     # "accept" | "retry"
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +94,8 @@ class Knowledge(TypedDict):
     facts: list[Fact]
     conclusions: list[Conclusion]
     citations: list[Citation]
-    verification_history: list[VerificationOutcome]
+    review_history: list[ReviewOutcome]
+    evaluation_history: list[EvaluationOutcome]
     report: NotRequired["ResearchReport"]
     generation_path: NotRequired[str]
 
@@ -109,9 +117,9 @@ class ExecutionState(TypedDict):
     tool_call_counts: dict[str, int]
     total_tool_cost_consumed: float
     error: str
-    synthesis_retry_count: int
     research_retry_count: int
-    verification_attempts: int
+    review_count: int
+    evaluation_count: int
 
 
 # ---------------------------------------------------------------------------

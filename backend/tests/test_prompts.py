@@ -33,7 +33,7 @@ class TestLoadPrompts:
     def test_load_prompts_from_file(self):
         prompts = load_prompts()
         assert "planning.system" in prompts
-        assert "verification.system" in prompts
+        assert "research_review.system" in prompts
         assert "report_generation.system" in prompts
 
     def test_get_prompt_returns_template(self):

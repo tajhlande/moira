@@ -24,7 +24,8 @@ budget:
     planning: 2
     research: 10
     synthesis: 5
-    verification: 8
+    research_review: 3
+    evaluation: 5
     report_generation: 3  # budget-exempt: tracked for accounting, never gates execution
 
 # --- Inference ---

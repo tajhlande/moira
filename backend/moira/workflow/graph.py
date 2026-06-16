@@ -1,13 +1,18 @@
 """Research workflow graph for the overhauled research loop.
 
 Nodes: decomposition -> tool_identification -> planning -> research ->
-synthesis -> verification -> [conditional] -> report_generation -> END
+synthesis -> research_review -> [conditional] -> evaluation ->
+[conditional] -> report_generation -> END
 
-Verification routes:
+Research review routes:
+- continue -> evaluation
+- retry -> research (light retry, max 3 per evaluation cycle)
+- budget exhausted -> evaluation
+
+Evaluation routes:
 - accept -> report_generation
-- retry_synthesis -> synthesis (budget check)
-- retry_research -> tool_identification (budget check)
-- budget exhausted -> report_generation
+- retry -> tool_identification (heavy retry, full pipeline reset, max 2)
+- retry declined -> report_generation
 """
 
 import logging
@@ -17,90 +22,131 @@ from langgraph.graph import END, START, StateGraph
 from moira.config import MoiraConfig
 from moira.models.knowledge import ResearchState
 from moira.workflow.budget import (
-    research_retry_cost,
-    synthesis_retry_cost,
+    evaluation_retry_cost,
+    review_retry_cost,
 )
 from moira.workflow.nodes.decomposition import decomposition
+from moira.workflow.nodes.evaluation import evaluation
 from moira.workflow.nodes.planning import planning
 from moira.workflow.nodes.report_generation import report_generation
 from moira.workflow.nodes.research import research
+from moira.workflow.nodes.research_review import research_review
 from moira.workflow.nodes.synthesis import synthesis
 from moira.workflow.nodes.tool_identification import tool_identification
-from moira.workflow.nodes.verification import verification
 
 logger = logging.getLogger(__name__)
 
+# Default retry attempt limits (configurable via system/conversation settings).
+DEFAULT_REVIEW_MAX_ATTEMPTS = 3
+DEFAULT_EVALUATION_MAX_ATTEMPTS = 2
 
-def make_verification_router():
-    """Return a routing function that checks verification outcome against
+
+def make_review_router():
+    """Return a routing function that checks research_review outcome against
     budget and retry limits."""
 
-    def route_after_verification(state: ResearchState) -> str:
+    def route_after_review(state: ResearchState) -> str:
         es = state.get("execution_state", {})
         knowledge = state.get("knowledge", {})
         step_costs = es.get("step_costs", {})
-        verification_history = knowledge.get("verification_history", [])
+        review_history = knowledge.get("review_history", [])
 
-        if not verification_history:
-            return "report_generation"
+        if not review_history:
+            return "evaluation"
 
-        latest = verification_history[-1]
-        route = latest.get("route", "accept")
+        latest = review_history[-1]
+        route = latest.get("route", "continue")
 
-        if route == "accept":
-            logger.info("Verification accepted, routing to report_generation")
-            return "report_generation"
+        if route == "continue":
+            logger.info("Research review passed, routing to evaluation")
+            return "evaluation"
 
-        budget_remaining = es.get("budget_remaining", 0.0)
+        if route == "retry":
+            review_count = es.get("review_count", 0)
+            budget_remaining = es.get("budget_remaining", 0.0)
+            rr_cost = review_retry_cost(step_costs)
 
-        if route == "retry_synthesis":
-            synthesis_retries = es.get("synthesis_retry_count", 0)
-            sr_cost = synthesis_retry_cost(step_costs)
-            # Entry-count semantics: synthesis increments on every entry.
-            # Allow retry when fewer than 2 entries (initial + 1 retry).
-            if synthesis_retries < 2 and budget_remaining >= sr_cost:
+            # Default limit: 3 attempts (initial + 2 retries within an
+            # evaluation cycle). review_count is reset to 0 by the
+            # evaluation node when it triggers a retry.
+            if review_count < DEFAULT_REVIEW_MAX_ATTEMPTS and budget_remaining >= rr_cost:
                 logger.info(
-                    "retry_synthesis: budget sufficient (%.1f >= %.1f)",
-                    budget_remaining,
-                    sr_cost,
-                )
-                return "synthesis"
-            logger.info(
-                "retry_synthesis declined (retries=%d, budget=%.1f)",
-                synthesis_retries,
-                budget_remaining,
-            )
-            # Fall through to report_generation
-            return "report_generation"
-
-        if route == "retry_research":
-            research_retries = es.get("research_retry_count", 0)
-            rr_cost = research_retry_cost(step_costs)
-            # Entry-count semantics: planning increments on every entry.
-            # Allow retry when fewer than 2 entries (initial + 1 retry).
-            if research_retries < 2 and budget_remaining >= rr_cost:
-                logger.info(
-                    "retry_research: budget sufficient (%.1f >= %.1f)",
+                    "review retry: budget sufficient (%.1f >= %.1f), count=%d/%d",
                     budget_remaining,
                     rr_cost,
+                    review_count,
+                    DEFAULT_REVIEW_MAX_ATTEMPTS,
                 )
-                return "tool_identification"
+                return "research"
+
             logger.info(
-                "retry_research: budget insufficient (%.1f < %.1f)",
+                "review retry declined (count=%d/%d, budget=%.1f, cost=%.1f)",
+                review_count,
+                DEFAULT_REVIEW_MAX_ATTEMPTS,
                 budget_remaining,
                 rr_cost,
             )
+            # Fall through to evaluation — let evaluation decide
+            return "evaluation"
+
+        return "evaluation"
+
+    return route_after_review
+
+
+def make_evaluation_router():
+    """Return a routing function that checks evaluation outcome against
+    budget and retry limits."""
+
+    def route_after_evaluation(state: ResearchState) -> str:
+        es = state.get("execution_state", {})
+        knowledge = state.get("knowledge", {})
+        step_costs = es.get("step_costs", {})
+        evaluation_history = knowledge.get("evaluation_history", [])
+
+        if not evaluation_history:
             return "report_generation"
 
-        # Unknown route or fallback
+        latest = evaluation_history[-1]
+        route = latest.get("route", "accept")
+
+        if route == "accept":
+            logger.info("Evaluation accepted, routing to report_generation")
+            return "report_generation"
+
+        if route == "retry":
+            evaluation_count = es.get("evaluation_count", 0)
+            budget_remaining = es.get("budget_remaining", 0.0)
+            er_cost = evaluation_retry_cost(step_costs)
+
+            # Default limit: 2 attempts (initial + 1 retry).
+            if evaluation_count < DEFAULT_EVALUATION_MAX_ATTEMPTS and budget_remaining >= er_cost:
+                logger.info(
+                    "evaluation retry: budget sufficient (%.1f >= %.1f), count=%d/%d",
+                    budget_remaining,
+                    er_cost,
+                    evaluation_count,
+                    DEFAULT_EVALUATION_MAX_ATTEMPTS,
+                )
+                return "tool_identification"
+
+            logger.info(
+                "evaluation retry declined (count=%d/%d, budget=%.1f, cost=%.1f)",
+                evaluation_count,
+                DEFAULT_EVALUATION_MAX_ATTEMPTS,
+                budget_remaining,
+                er_cost,
+            )
+            return "report_generation"
+
         return "report_generation"
 
-    return route_after_verification
+    return route_after_evaluation
 
 
 def build_graph(config: MoiraConfig) -> StateGraph:
-    """Build the LangGraph research workflow with 7 nodes and conditional
-    routing after verification."""
+    """Build the LangGraph research workflow with 8 nodes and conditional
+    routing after research_review and evaluation."""
     graph = StateGraph(ResearchState)
 
     graph.add_node("decomposition", decomposition)
@@ -108,32 +154,41 @@ def build_graph(config: MoiraConfig) -> StateGraph:
     graph.add_node("planning", planning)
     graph.add_node("research", research)
     graph.add_node("synthesis", synthesis)
-    graph.add_node("verification", verification)
+    graph.add_node("research_review", research_review)
+    graph.add_node("evaluation", evaluation)
     graph.add_node("report_generation", report_generation)
 
-    # Linear path — node errors propagate as exceptions and are caught by
-    # ActiveRun._run_graph, which persists the step detail and stops the run.
     graph.add_edge(START, "decomposition")
     graph.add_edge("decomposition", "tool_identification")
     graph.add_edge("tool_identification", "planning")
     graph.add_edge("planning", "research")
     graph.add_edge("research", "synthesis")
-    graph.add_edge("synthesis", "verification")
+    graph.add_edge("synthesis", "research_review")
 
-    # Conditional routing after verification
+    # Conditional routing after research_review
     graph.add_conditional_edges(
-        "verification",
-        make_verification_router(),
+        "research_review",
+        make_review_router(),
+        {
+            "research": "research",
+            "evaluation": "evaluation",
+            "report_generation": "report_generation",
+        },
+    )
+
+    # Conditional routing after evaluation
+    graph.add_conditional_edges(
+        "evaluation",
+        make_evaluation_router(),
         {
             "tool_identification": "tool_identification",
-            "synthesis": "synthesis",
             "report_generation": "report_generation",
         },
     )
 
     graph.add_edge("report_generation", END)
 
-    logger.info("Research graph built with 7 nodes")
+    logger.info("Research graph built with 8 nodes")
     return graph
 
 

@@ -46,35 +46,38 @@ SYNTHESIS_JSON = json.dumps({
     ],
 })
 
-VERIFICATION_ACCEPT_JSON = json.dumps({
+REVIEW_CONTINUE_JSON = json.dumps({
     "fact_results": [{"fact_id": "f001", "result": "verified", "evidence": "Confirmed"}],
-    "conclusion_results": [{"conclusion_id": "c001", "result": "verified", "reason": "Supported"}],
-    "new_unknown_facts": [],
+    "coverage_assessment": "All facts have sufficient evidence",
+    "missing_areas": [],
+    "route": "continue",
+})
+
+REVIEW_RETRY_JSON = json.dumps({
+    "fact_results": [
+        {"fact_id": "f001", "result": "unverified", "evidence": "Needs more research"}
+    ],
+    "coverage_assessment": "Insufficient evidence",
+    "missing_areas": ["Capital city confirmation"],
+    "route": "retry",
+})
+
+EVALUATION_ACCEPT_JSON = json.dumps({
+    "conclusion_results": [
+        {"conclusion_id": "c001", "result": "verified", "reason": "Well supported"}
+    ],
     "goal_met": True,
     "goal_assessment": "Goal met",
     "route": "accept",
 })
 
-VERIFICATION_RETRY_RESEARCH_JSON = json.dumps({
-    "fact_results": [
-        {"fact_id": "f001", "result": "unverified", "evidence": "Needs more"}
-    ],
-    "conclusion_results": [],
-    "new_unknown_facts": [],
-    "goal_met": False,
-    "goal_assessment": "More research needed",
-    "route": "retry_research",
-})
-
-VERIFICATION_RETRY_SYNTHESIS_JSON = json.dumps({
-    "fact_results": [{"fact_id": "f001", "result": "verified", "evidence": "Confirmed"}],
+EVALUATION_RETRY_JSON = json.dumps({
     "conclusion_results": [
-        {"conclusion_id": "c001", "result": "unverified", "reason": "Weak"}
+        {"conclusion_id": "c001", "result": "unverified", "reason": "Needs more evidence"}
     ],
-    "new_unknown_facts": [],
     "goal_met": False,
-    "goal_assessment": "Synthesis needs improvement",
-    "route": "retry_synthesis",
+    "goal_assessment": "Conclusions need stronger support",
+    "route": "retry",
 })
 
 REPORT_JSON = json.dumps({
@@ -103,7 +106,8 @@ def _build_state(config, budget=None):
         "planning": cw.planning,
         "research": cw.research,
         "synthesis": cw.synthesis,
-        "verification": cw.verification,
+        "research_review": cw.research_review,
+        "evaluation": cw.evaluation,
         "report_generation": cw.report_generation,
     }
     limit = float(budget if budget is not None else config.budget.default_limit)
@@ -117,7 +121,8 @@ def _build_state(config, budget=None):
             "facts": [],
             "conclusions": [],
             "citations": [],
-            "verification_history": [],
+            "review_history": [],
+            "evaluation_history": [],
         },
         "execution_state": {
             "candidate_tools": [],
@@ -129,9 +134,9 @@ def _build_state(config, budget=None):
             "tool_call_counts": {},
             "total_tool_cost_consumed": 0.0,
             "error": "",
-            "synthesis_retry_count": 0,
             "research_retry_count": 0,
-            "verification_attempts": 0,
+            "review_count": 0,
+            "evaluation_count": 0,
         },
     }
 
@@ -165,6 +170,10 @@ def _inject_services(config, mock_model):
                 output="Paris is the capital of France",
                 success=True,
                 duration_ms=100,
+                metadata={"results": [
+                    {"title": "France Wiki", "url": "https://en.wikipedia.org/wiki/France",
+                     "snippet": "Paris is the capital of France"},
+                ]},
             )
         ]
     )
@@ -177,7 +186,8 @@ _STREAM_WRITER_MODULES = [
     "moira.workflow.nodes.planning",
     "moira.workflow.nodes.research",
     "moira.workflow.nodes.synthesis",
-    "moira.workflow.nodes.verification",
+    "moira.workflow.nodes.research_review",
+    "moira.workflow.nodes.evaluation",
     "moira.workflow.nodes.report_generation",
     "moira.workflow.nodes._helpers",
 ]
@@ -213,14 +223,16 @@ def mock_model():
 class TestIntegration:
     @pytest.mark.asyncio
     async def test_full_cycle_verified_path(self, config, mock_writer, mock_model):
+        """Happy path: all nodes succeed, evaluation accepts on first try."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
-            _cr(DECOMPOSITION_JSON),
-            _cr(PLANNING_JSON),
-            _cr(RESEARCH_JSON),
-            _cr(SYNTHESIS_JSON),
-            _cr(VERIFICATION_ACCEPT_JSON),
-            _cr(REPORT_JSON),
+            _cr(DECOMPOSITION_JSON),      # decomposition
+            _cr(PLANNING_JSON),            # planning
+            _cr(RESEARCH_JSON),            # research
+            _cr(SYNTHESIS_JSON),           # synthesis
+            _cr(REVIEW_CONTINUE_JSON),     # research_review → continue
+            _cr(EVALUATION_ACCEPT_JSON),   # evaluation → accept
+            _cr(REPORT_JSON),              # report_generation
         ]
 
         state = _build_state(config)
@@ -236,16 +248,19 @@ class TestIntegration:
 
     @pytest.mark.asyncio
     async def test_full_cycle_budget_exhausted(self, config, mock_writer, mock_model):
+        """With low budget, both review retry and evaluation retry are overruled."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
-            _cr(DECOMPOSITION_JSON),
-            _cr(PLANNING_JSON),
-            _cr(RESEARCH_JSON),
-            _cr(SYNTHESIS_JSON),
-            _cr(VERIFICATION_RETRY_RESEARCH_JSON),
-            _cr(REPORT_JSON),
+            _cr(DECOMPOSITION_JSON),      # decomposition
+            _cr(PLANNING_JSON),            # planning
+            _cr(RESEARCH_JSON),            # research
+            _cr(SYNTHESIS_JSON),           # synthesis
+            _cr(REVIEW_RETRY_JSON),        # research_review → retry (budget insufficient)
+            _cr(EVALUATION_RETRY_JSON),    # evaluation → retry (budget insufficient)
+            _cr(REPORT_JSON),              # report_generation
         ]
 
+        # Budget 35: enough for one pass but not for any retry
         state = _build_state(config, budget=35)
         graph = compile_graph(config)
         result = await graph.ainvoke(state, config=_make_run_config(config))
@@ -256,6 +271,7 @@ class TestIntegration:
 
     @pytest.mark.asyncio
     async def test_full_cycle_error_path(self, config, mock_writer, mock_model):
+        """With zero budget, the graph falls through to report with error path."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
             _cr(REPORT_JSON),
@@ -270,50 +286,58 @@ class TestIntegration:
         assert report["generation_path"] == "error"
 
     @pytest.mark.asyncio
-    async def test_retry_synthesis_path(self, config, mock_writer, mock_model):
+    async def test_review_retry_path(self, config, mock_writer, mock_model):
+        """Research review retries once, then continues to evaluation."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
-            _cr(DECOMPOSITION_JSON),
-            _cr(PLANNING_JSON),
-            _cr(RESEARCH_JSON),
-            _cr(SYNTHESIS_JSON),
-            _cr(VERIFICATION_RETRY_SYNTHESIS_JSON),
-            _cr(SYNTHESIS_JSON),
-            _cr(VERIFICATION_ACCEPT_JSON),
-            _cr(REPORT_JSON),
+            _cr(DECOMPOSITION_JSON),       # decomposition
+            _cr(PLANNING_JSON),             # planning
+            _cr(RESEARCH_JSON),             # research
+            _cr(SYNTHESIS_JSON),            # synthesis
+            _cr(REVIEW_RETRY_JSON),         # research_review → retry (budget sufficient)
+            _cr(RESEARCH_JSON),             # research (retry)
+            _cr(SYNTHESIS_JSON),            # synthesis (after research retry)
+            _cr(REVIEW_CONTINUE_JSON),      # research_review → continue
+            _cr(EVALUATION_ACCEPT_JSON),    # evaluation → accept
+            _cr(REPORT_JSON),               # report_generation
         ]
 
-        state = _build_state(config)
+        state = _build_state(config, budget=100)
         graph = compile_graph(config)
         result = await graph.ainvoke(state, config=_make_run_config(config))
 
         report = result["knowledge"]["report"]
         assert report is not None
         assert report["generation_path"] == "verified"
-        assert result["execution_state"]["verification_attempts"] >= 2
-        assert len(result["knowledge"]["verification_history"]) >= 2
+        assert result["execution_state"]["review_count"] >= 2
+        assert len(result["knowledge"]["review_history"]) >= 2
 
     @pytest.mark.asyncio
-    async def test_retry_research_path(self, config, mock_writer, mock_model):
+    async def test_evaluation_retry_path(self, config, mock_writer, mock_model):
+        """Evaluation retries once (full pipeline reset), then accepts."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
-            _cr(DECOMPOSITION_JSON),
-            _cr(PLANNING_JSON),
-            _cr(RESEARCH_JSON),
-            _cr(SYNTHESIS_JSON),
-            _cr(VERIFICATION_RETRY_RESEARCH_JSON),
-            _cr(PLANNING_JSON),
-            _cr(RESEARCH_JSON),
-            _cr(SYNTHESIS_JSON),
-            _cr(VERIFICATION_ACCEPT_JSON),
-            _cr(REPORT_JSON),
+            _cr(DECOMPOSITION_JSON),       # decomposition
+            _cr(PLANNING_JSON),             # planning
+            _cr(RESEARCH_JSON),             # research
+            _cr(SYNTHESIS_JSON),            # synthesis
+            _cr(REVIEW_CONTINUE_JSON),      # research_review → continue
+            _cr(EVALUATION_RETRY_JSON),     # evaluation → retry (budget sufficient)
+            # After evaluation retry → tool_identification (no chat call)
+            _cr(PLANNING_JSON),             # planning (retry)
+            _cr(RESEARCH_JSON),             # research (retry)
+            _cr(SYNTHESIS_JSON),            # synthesis (retry)
+            _cr(REVIEW_CONTINUE_JSON),      # research_review → continue
+            _cr(EVALUATION_ACCEPT_JSON),    # evaluation → accept
+            _cr(REPORT_JSON),               # report_generation
         ]
 
-        state = _build_state(config, budget=80)
+        state = _build_state(config, budget=200)
         graph = compile_graph(config)
         result = await graph.ainvoke(state, config=_make_run_config(config))
 
         report = result["knowledge"]["report"]
         assert report is not None
         assert report["generation_path"] == "verified"
-        assert len(result["knowledge"]["verification_history"]) >= 2
+        assert result["execution_state"]["evaluation_count"] >= 2
+        assert len(result["knowledge"]["evaluation_history"]) >= 2

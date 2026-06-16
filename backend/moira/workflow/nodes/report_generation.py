@@ -77,8 +77,8 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
         path_instruction = get_prompt("report_generation.path_error").format(
             error=error,
         )
-    elif knowledge.get("verification_history"):
-        latest = knowledge["verification_history"][-1]
+    elif knowledge.get("evaluation_history"):
+        latest = knowledge["evaluation_history"][-1]
         route = latest.get("route", "accept")
         if latest.get("goal_met") and not any(
             c["status"] == "contradicted"
@@ -86,7 +86,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
         ):
             generation_path = "verified"
             path_instruction = get_prompt("report_generation.path_verified")
-        elif route in ("retry_research", "retry_synthesis"):
+        elif route == "retry":
             generation_path = "retry_overruled"
             path_instruction = get_prompt(
                 "report_generation.path_retry_overruled",

@@ -19,7 +19,8 @@ STAGE_LABELS = {
     "planning": "Planning research approach",
     "research": "Researching",
     "synthesis": "Synthesizing conclusions",
-    "verification": "Verifying facts and conclusions",
+    "research_review": "Reviewing research",
+    "evaluation": "Evaluating conclusions",
     "report_generation": "Generating report",
 }
 
@@ -158,7 +159,7 @@ class ActiveRun:
 
         Phase 4: only replays the canonical run_snapshot. The frontend
         ignores legacy event types (node_start, node_end, tool_result,
-        budget_update, verification_report, run_complete)."""
+        budget_update, evaluation_report, run_complete)."""
         return [
             {
                 "event": "run_snapshot",
@@ -926,7 +927,8 @@ class RunManager:
                 "planning": cw.planning,
                 "research": cw.research,
                 "synthesis": cw.synthesis,
-                "verification": cw.verification,
+                "research_review": cw.research_review,
+                "evaluation": cw.evaluation,
                 "report_generation": cw.report_generation,
             }
 

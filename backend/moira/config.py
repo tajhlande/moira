@@ -19,7 +19,8 @@ class CostWeights(BaseModel):
     planning: int = 2
     research: int = 10
     synthesis: int = 5
-    verification: int = 8
+    research_review: int = 3
+    evaluation: int = 5
     report_generation: int = 3
 
 
@@ -92,7 +93,8 @@ class MoiraConfig(BaseModel):
             + cw.planning
             + cw.research
             + cw.synthesis
-            + cw.verification
+            + cw.research_review
+            + cw.evaluation
         )
 
 

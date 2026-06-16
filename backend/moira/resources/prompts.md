@@ -97,22 +97,23 @@ Available tools (name | description | cost per call | calls remaining):
 {tool_descriptions_with_costs_and_limits}
 
 Budget remaining: {budget_remaining}
-Cost reserved for remaining pipeline steps (synthesis + verification + report): {reserved_budget}
+Cost reserved for remaining pipeline steps (synthesis + research_review + evaluation + report): {reserved_budget}
 Available for tool calls: {available_for_tools}
 
-## planning.system_retry
+## planning.system_retry_evaluation
 
-Previous research plan was insufficient. Verification feedback:
+Previous approach was insufficient. The evaluation found problems with the
+conclusions.
 
-{verification_feedback}
+Evaluation feedback:
+{evaluation_feedback}
 
-Facts that remain unresolved:
-{unresolved_facts}
+Failed conclusions (ID | result | reason):
+{failed_conclusions}
 
-Revised unknown facts (including new facts identified during verification):
-{all_unknown_facts}
-
-Produce a revised plan that addresses the verification feedback.
+Produce a revised plan that takes a different approach to the research.
+Consider using different tools, different queries, or investigating the
+facts from a different angle.
 
 ## planning.system_prior_report
 
@@ -189,9 +190,11 @@ key "query", not "q" or any other abbreviation.
 The JSON object must have exactly these keys:
 - "tool_calls": array of objects, each with "tool" (string) and "args" (object). Use
   an empty array [] when you are done researching.
-- "discovered_facts": array of objects with "fact_id", "subject", "claim", and
-  optionally "relation" and "value". For newly identified facts, use "fact_id": null
-  and include "fact_needed".
+- "discovered_facts": array of objects with "fact_id", "subject", "claim",
+  optionally "relation" and "value", and "citation_ids" — a list of the source
+  IDs (e.g., ["cit001"]) that support the claim. Source IDs are shown in
+  square brackets at the start of each tool result above (e.g., "[cit001]").
+  For newly identified facts, use "fact_id": null and include "fact_needed".
 - "sources": array of objects with "source" (tool name), "url" (if applicable),
   "title", and "excerpt" (relevant snippet from the tool output).
 
@@ -199,7 +202,7 @@ Example response:
 {{"tool_calls": [{{"tool": "web_search", "args": {{"query": "example search"}}}}], "discovered_facts": [], "sources": []}}
 
 When you are done researching and have no more tool calls to make:
-{{"tool_calls": [], "discovered_facts": [{{"fact_id": "f001", "subject": "Example", "claim": "Specific claim here", "relation": "has_property", "value": "the value"}}], "sources": [{{"source": "web_search", "url": "https://example.com", "title": "Example", "excerpt": "Relevant snippet"}}]}}
+{{"tool_calls": [], "discovered_facts": [{{"fact_id": "f001", "subject": "Example", "claim": "Specific claim here", "relation": "has_property", "value": "the value", "citation_ids": ["cit001"]}}], "sources": [{{"source": "web_search", "url": "https://example.com", "title": "Example", "excerpt": "Relevant snippet"}}]}}
 
 ## research.user
 
@@ -240,6 +243,21 @@ Tool execution results:
 
 Respond with a JSON object containing tool_calls, discovered_facts, and sources.
 Use an empty tool_calls array if you have enough information.
+
+## research.system_retry_review
+
+The research review identified gaps in the previous research pass. Focus your
+tool calls on filling these specific gaps.
+
+Coverage assessment from review:
+{coverage_assessment}
+
+Missing areas that need further investigation:
+{missing_areas}
+
+Use the same tools available to you. Focus on the gaps identified above. Do not
+repeat queries that have already been answered — look for new information to
+fill the missing areas.
 
 ## research.fact_extraction.system
 
@@ -321,89 +339,50 @@ Discovered facts:
 
 ## synthesis.system_retry
 
-Previous conclusions were rejected during verification. The verification assessment
+Previous conclusions were rejected during evaluation. The evaluation assessment
 is below.
 
 Facts have NOT changed — only conclusions need revision.
 
-Verification feedback:
-{verification_feedback}
+Evaluation feedback:
+{evaluation_feedback}
 
 Produce revised conclusions that address these specific issues. The facts are
 provided again for reference.
 
 ---
 
-## verification.system
+## research_review.system
 
-You are a verification judge. Your job is to evaluate whether the discovered facts
-and derived conclusions are correct and whether they sufficiently answer the user's
-question. You have three tasks:
+You are a research reviewer. Your job is to evaluate whether the research
+gathered sufficient evidence to answer the user's question.
 
-TASK 1: FACT VERIFICATION
-For each fact that has a claim, evaluate whether the claim is accurate:
-- "verified": the claim is confirmed by the cited source or by new evidence from
-  tool calls
-- "contradicted": the claim is contradicted by evidence
-- "unverified": insufficient evidence to confirm or refute (no new source found)
+For each fact that has a claim, review the claim against its cited evidence:
+- "verified": the claim is well-supported by the cited source
+- "contradicted": the claim conflicts with the cited evidence
+- "unverified": insufficient evidence to confirm or refute
 
-You may call tools to re-check claims against independent sources. Be skeptical —
-do not assume a claim is true just because it came from a tool earlier.
+Then assess overall coverage:
+- Are the materially required facts answered?
+- What specific information is still missing (if any)?
 
-TOOL CALLS: To request a tool call, respond with ONLY this JSON format:
-```json
-{"tool_calls": [{"tool": "tool_name", "args": {"param": "value"}}]}
-```
-Do not include any other keys when requesting tool calls. After the tool
-executes, you will be re-prompted with the evidence. You may request tool
-calls up to 2 times before producing your final verdict.
+If critical facts remain unknown or contradicted, recommend retrying research.
+If the research is sufficient, recommend continuing to evaluation.
 
-TASK 2: CONCLUSION VERIFICATION
-For each conclusion, evaluate:
-- Is the logical reasoning valid? Does it follow from the supporting facts?
-- Are the supporting facts themselves verified?
-- Does the combination of facts actually support the conclusion as stated?
+Respond with ONLY a JSON object, structured exactly like this:
 
-A conclusion is:
-- "verified": reasoning is sound and all supporting facts are verified
-- "contradicted": reasoning contains a logical error, or a supporting fact is
-  contradicted
-- "unverified": one or more supporting facts are unverified, so the conclusion
-  cannot be confirmed
+{{"fact_results": [{{"fact_id": "f001", "result": "verified", "evidence": "brief note on what confirmed it"}}, {{"fact_id": "f002", "result": "contradicted", "evidence": "what contradicted it"}}], "coverage_assessment": "Brief assessment of whether the research sufficiently covered the question", "missing_areas": ["specific description of what is still needed"], "route": "continue"}}
 
-TASK 3: GOAL ASSESSMENT
-Evaluate whether the verified facts and conclusions together sufficiently address
-the user's goal. The goal is met when the MATERIALLY REQUIRED facts are verified
-and support conclusions that answer the user's question. Not every decomposed fact
-must be resolved — only the facts necessary to support the answer. Consider:
-- Are the material facts verified, or are key ones still unknown or contradicted?
-- Do the conclusions drawn from verified facts adequately answer what the user asked?
-- Would resolving remaining unknown facts meaningfully improve the answer?
+where each item in fact_results has:
+- fact_id matching one of the facts you were given
+- result: one of "verified", "contradicted", or "unverified"
+- evidence: your short description of the cited evidence supporting the result
+the coverage_assessment is a brief written review,
+the missing_areas are a list of short text descriptions of specific
+gaps in claims or subject matter areas that need further research to answer the question,
+and route is one of "continue" or "retry".
 
-For all three tasks together, respond with a single JSON object with these keys:
-- "fact_results": list of objects with "fact_id" (the fact's ID, e.g. "f001"),
-  "result" (verified/contradicted/unverified), and "evidence" (brief note on
-  what confirmed or contradicted it)
-- "conclusion_results": list of objects with "conclusion_id" (the conclusion's
-  ID, e.g. "c001"), "result" (verified/contradicted/unverified), and "reason"
-  (explanation)
-- "new_unknown_facts": list of strings describing additional facts that should be
-  researched to improve the answer (empty if none needed)
-- "goal_met": true/false — does the evidence sufficiently answer the user's question?
-- "goal_assessment": explanation of why the goal is or isn't met
-- "route": choose one of:
-  - "accept": facts and conclusions are verified, goal is met
-  - "retry_research": some facts are contradicted or unverified and need new tool
-    calls to resolve, and goal is not met
-  - "retry_synthesis": facts are fine but conclusions have logical errors — research
-    is not needed, only re-synthesis, but goal is not met
-
-RESPONSE FORMAT SUMMARY:
-- To call a tool: {"tool_calls": [{"tool": "...", "args": {...}}]}
-- To give your verdict: {"fact_results": [...], "conclusion_results": [...], "new_unknown_facts": [...], "goal_met": ..., "goal_assessment": "...", "route": "..."}
-Never mix the two formats. Never include "query" or other bare keys — always use the tool_calls wrapper to request a tool call.
-
-## verification.user
+## research_review.user
 
 User goal:
 {user_goal}
@@ -411,22 +390,58 @@ User goal:
 Question:
 {question}
 
-Facts to verify (ID | subject | fact_needed | claim | status | citations):
+Facts to review (ID | subject | fact_needed | claim | status | citations):
 {facts_with_claims_and_sources}
 
-Conclusions to verify (ID | conclusion | supporting fact IDs | reasoning | status):
+Conclusions drawn from these facts (for context on what needs supporting):
+{conclusions_context}
+
+---
+
+## evaluation.system
+
+You are an evaluation evaluator. Examine the conclusions drawn from the research.
+
+For each conclusion:
+- Is the logical reasoning valid? Does it follow from the supporting facts?
+- Are the supporting facts themselves verified?
+- Does the combination of facts actually support the conclusion?
+
+A conclusion is:
+- "verified": reasoning is sound and all supporting facts are verified
+- "contradicted": reasoning contains a logical error, or a supporting fact is contradicted
+- "unverified": one or more supporting facts are unverified
+
+Then assess: do the verified conclusions sufficiently answer the user's question?
+It is acceptable if some facts remain unverified, as long as the verified facts
+and conclusions are sufficient to answer the question.
+
+Respond with ONLY a JSON object, structured exactly like this:
+
+{{"conclusion_results": [{{"conclusion_id": "c001", "result": "verified", "reason": "why it is valid"}}, {{"conclusion_id": "c002", "result": "contradicted", "reason": "what is wrong"}}], "goal_met": true, "goal_assessment": "Explanation of why the goal is or is not met", "route": "accept"}}
+
+where each item in conclusion_results has:
+- conclusion_id referencing one of the conclusions you were given
+- result: one of "verified", "unverified", or "contradicted"
+- reason: your short description of the reason for your result value
+goal_met is either true or false, judging whether the set of verified facts and conclusions
+are sufficient to answer the user's question,
+goal_assessment is your short text explanation of why the goal was or was not met, and
+route is one of "accept" or "retry", aligned with the goal_met outcome.
+
+## evaluation.user
+
+User goal:
+{user_goal}
+
+Question:
+{question}
+
+Facts (ID | subject | claim | status | citations):
+{facts_with_statuses}
+
+Conclusions to evaluate (ID | conclusion | supporting fact IDs | reasoning | status):
 {conclusions_with_supporting_facts}
-
-Available tools for re-checking:
-{tool_descriptions}
-
-## verification.evidence
-
-Independent fact-checking evidence gathered from tools:
-
-{evidence}
-
-Use this evidence to ground your verification verdict.
 
 ---
 
@@ -474,9 +489,9 @@ Clearly distinguish what is verified from what is uncertain.
 
 ## report_generation.path_retry_overruled
 
-Verification determined that the research goal was not fully met and recommended
+Evaluation determined that the research goal was not fully met and recommended
 another research cycle, but insufficient budget remained to retry. Present the
-answer with explicit caveats: state that verification found gaps or contradictions,
+answer with explicit caveats: state that evaluation found gaps or contradictions,
 note which facts remain unverified or contradicted, and identify what further
 research would be needed to reach a confident answer.
 

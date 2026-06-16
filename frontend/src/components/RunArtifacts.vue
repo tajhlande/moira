@@ -113,11 +113,13 @@ function toolCallCount(step: ExecutionStep): number {
 }
 
 function isRetryBranch(step: ExecutionStep): boolean {
-  if (step.node !== "verification" || step.status !== "completed") return false;
+  if (step.status !== "completed") return false;
   const so = step.detail?.structured_output as
     | Record<string, unknown>
     | undefined;
-  return so?.route === "retry_research" || so?.route === "retry_synthesis";
+  if (step.node === "research_review") return so?.route === "retry";
+  if (step.node === "evaluation") return so?.route === "retry";
+  return false;
 }
 
 function hasStoppedStep(): boolean {

@@ -124,7 +124,8 @@ async def send_message(
             "planning": cw.planning,
             "research": cw.research,
             "synthesis": cw.synthesis,
-            "verification": cw.verification,
+            "research_review": cw.research_review,
+            "evaluation": cw.evaluation,
             "report_generation": cw.report_generation,
         }
 
@@ -164,7 +165,8 @@ async def send_message(
             "facts": [],
             "conclusions": [],
             "citations": [],
-            "verification_history": [],
+            "review_history": [],
+            "evaluation_history": [],
         },
         "execution_state": {
             "candidate_tools": [],
@@ -177,9 +179,9 @@ async def send_message(
             "tool_call_counts": {},
             "total_tool_cost_consumed": 0.0,
             "error": "",
-            "synthesis_retry_count": 0,
             "research_retry_count": 0,
-            "verification_attempts": 0,
+            "review_count": 0,
+            "evaluation_count": 0,
         },
     }
 
@@ -287,7 +289,8 @@ async def rerun_message(
             "planning": cw.planning,
             "research": cw.research,
             "synthesis": cw.synthesis,
-            "verification": cw.verification,
+            "research_review": cw.research_review,
+            "evaluation": cw.evaluation,
             "report_generation": cw.report_generation,
         }
 
@@ -326,7 +329,8 @@ async def rerun_message(
             "facts": [],
             "conclusions": [],
             "citations": [],
-            "verification_history": [],
+            "review_history": [],
+            "evaluation_history": [],
         },
         "execution_state": {
             "candidate_tools": [],
@@ -339,9 +343,9 @@ async def rerun_message(
             "tool_call_counts": {},
             "total_tool_cost_consumed": 0.0,
             "error": "",
-            "synthesis_retry_count": 0,
             "research_retry_count": 0,
-            "verification_attempts": 0,
+            "review_count": 0,
+            "evaluation_count": 0,
         },
     }
 

@@ -1,12 +1,11 @@
 """Offline test fixtures for research loop evaluation (Phase 0).
 
-These fixtures define concrete test data that the overhauled research loop
-must handle correctly. They are designed to be run against the current
-system (where they will likely fail) and then against the overhauled system
-to demonstrate improvement.
+These fixtures define concrete test data that the research loop must handle
+correctly. They are designed to validate fact-level review (research_review)
+and conclusion-level evaluation (evaluation) behavior.
 
 Three fixtures:
-1. Verification stress - planted mistakes in type, ability, moves, legality, synergy
+1. Review stress - planted mistakes in type, ability, moves, legality, synergy
 2. Tool routing - decomposed facts matched against a fixed tool catalog
 3. Synthesis trap - individually true facts that tempt an unjustified conclusion
 
@@ -38,7 +37,8 @@ def mock_writer():
     def write(event):
         events.append(event)
 
-    with patch("moira.workflow.nodes.verification.get_stream_writer", return_value=write), \
+    with patch("moira.workflow.nodes.research_review.get_stream_writer", return_value=write), \
+         patch("moira.workflow.nodes.evaluation.get_stream_writer", return_value=write), \
          patch("moira.workflow.nodes.synthesis.get_stream_writer", return_value=write), \
          patch("moira.workflow.nodes.decomposition.get_stream_writer", return_value=write), \
          patch("moira.workflow.nodes.planning.get_stream_writer", return_value=write), \
@@ -77,7 +77,8 @@ def _build_state(config, question: str, facts: list[Fact] | None = None) -> Rese
         "planning": cw.planning,
         "research": cw.research,
         "synthesis": cw.synthesis,
-        "verification": cw.verification,
+        "research_review": cw.research_review,
+        "evaluation": cw.evaluation,
         "report_generation": cw.report_generation,
     }
     return {
@@ -90,7 +91,8 @@ def _build_state(config, question: str, facts: list[Fact] | None = None) -> Rese
             "facts": facts or [],
             "conclusions": [],
             "citations": [],
-            "verification_history": [],
+            "review_history": [],
+            "evaluation_history": [],
         },
         "execution_state": {
             "candidate_tools": [],
@@ -102,36 +104,20 @@ def _build_state(config, question: str, facts: list[Fact] | None = None) -> Rese
             "tool_call_counts": {},
             "total_tool_cost_consumed": 0.0,
             "error": "",
-            "synthesis_retry_count": 0,
             "research_retry_count": 0,
-            "verification_attempts": 0,
+            "review_count": 0,
+            "evaluation_count": 0,
         },
     }
 
 
 # ---------------------------------------------------------------------------
-# Fixture 1: Verification Stress
+# Fixture 1: Review Stress
 # ---------------------------------------------------------------------------
 # A short Tyranitar-partner draft with planted mistakes in type matchups,
 # abilities, typical moves, OU legality, and synergy reasoning.
-# The verification system should catch these errors.
-#
-# Planted errors:
-# 1. TYPE: Claims Tyranitar is weak to Ground (actually takes neutral from Ground
-#    due to Rock resisting it). Real weakness: Fighting x4, Fairy, Water, Grass,
-#    Bug, Steel, Ground (x2), but the draft says Ground x4 which is wrong.
-# 2. ABILITY: Claims Tyranitar's Sand Stream sets sand for 8 turns (actually 5).
-# 3. TYPICAL MOVE: Lists Fire Blast as a typical Tyranitar OU move (it's niche,
-#    not typical). Also lists Draco Meteor (Tyranitar cannot learn Draco Meteor).
-# 4. OU LEGALITY: Claims Tera Blast is "common in Gen9 OU Tyranitar" without
-#    distinguishing between legal and typical. Also implies Tyranitar is always
-#    S-rank viability (it fluctuates).
-# 5. SYNERGY: Claims Corviknight pairs well because it's "immune to Ground"
-#    (Corviknight takes neutral from Ground, not immune). The real synergy is
-#    that Corviknight resists Fighting and is immune to Ground... wait, actually
-#    Corviknight IS immune to Ground due to Levitate? No - Corviknight does NOT
-#    have Levitate. It has Pressure and Defiant. So it takes neutral from Ground
-#    (x2 vs Rock, resisted by Steel = neutral). The claim of Ground immunity is wrong.
+# The research_review node should catch fact-level errors, and the
+# evaluation node should catch conclusion-level errors.
 
 VERIFICATION_STRESS_DRAFT = """\
 Tyranitar Partners in Gen9 OU
@@ -156,50 +142,12 @@ Synergy Summary: Corviknight's Ground immunity perfectly covers Tyranitar's
 biggest weakness, making it the top partner choice.
 """
 
-# Expected errors the verification system should flag
-VERIFICATION_STRESS_EXPECTED_ERRORS = [
-    {
-        "category": "type_correctness",
-        "error": "Claims Ground x4 weakness. Tyranitar is Rock/Dark: Ground is x2 "
-        "(super effective vs Rock, neutral vs Dark). Not x4.",
-    },
-    {
-        "category": "ability_correctness",
-        "error": "Claims Sand Stream lasts 8 turns. In Gen 9, Sand Stream sets "
-        "sandstorm for 5 turns (changed from permanent weather in earlier gens).",
-    },
-    {
-        "category": "typical_move_discipline",
-        "error": "Lists Draco Meteor as a typical Tyranitar move. Tyranitar cannot "
-        "learn Draco Meteor in any generation.",
-    },
-    {
-        "category": "typical_move_discipline",
-        "error": "Lists Fire Blast as typical. Fire Blast is niche on Tyranitar, "
-        "not a standard OU moveset pick.",
-    },
-    {
-        "category": "ou_legality",
-        "error": "Claims Tera Blast is 'very common' and Tyranitar is 'S-rank'. "
-        "These are relevance claims, not legality claims. Tera Blast's prevalence "
-        "and Tyranitar's viability tier should be distinguished from OU legality.",
-    },
-    {
-        "category": "synthesis_discipline",
-        "error": "Claims Corviknight is 'immune to Ground'. Corviknight does not have "
-        "Levitate (abilities are Pressure/Defiant). Ground deals neutral damage to "
-        "Corviknight (x2 to Rock type, resisted by Steel type = neutral). The central "
-        "synergy claim is based on a factual error.",
-    },
-]
 
+class TestReviewStressFixture:
+    """Research review and evaluation should catch planted errors.
 
-class TestVerificationStressFixture:
-    """Verification should catch planted errors in the stress-test draft.
-
-    These tests use the current system's verification node. They are expected
-    to FAIL against the current system (the verification is not robust enough)
-    and PASS against the overhauled system with claim-level verification.
+    These tests verify that research_review catches fact-level errors
+    and evaluation catches conclusion-level errors in the stress-test draft.
     """
 
     @pytest.fixture
@@ -233,10 +181,10 @@ class TestVerificationStressFixture:
         ]
         return state
 
-    async def test_flags_ground_weakness_error(
+    async def test_review_flags_ground_weakness_error(
         self, config, mock_writer, mock_model, stress_state
     ):
-        """Verification should catch that Ground is not x4 on Tyranitar."""
+        """Research review should catch that Ground is not x4 on Tyranitar."""
         _inject_services(config, mock_model)
 
         mock_model["client"].chat_completion.return_value = ChatResponse(
@@ -246,29 +194,27 @@ class TestVerificationStressFixture:
                         {"fact_id": "f003", "result": "contradicted",
                          "evidence": "Ground is x2, not x4"},
                     ],
-                    "conclusion_results": [],
-                    "new_unknown_facts": [],
-                    "goal_met": False,
-                    "goal_assessment": "Ground weakness is wrong",
-                    "route": "retry_research",
+                    "coverage_assessment": "Ground weakness claim is wrong",
+                    "missing_areas": [],
+                    "route": "retry",
                 }
             )
         )
 
-        from moira.workflow.nodes.verification import verification
+        from moira.workflow.nodes.research_review import research_review
 
-        result = await verification(stress_state, _make_run_config(config))
+        result = await research_review(stress_state, _make_run_config(config))
 
-        all_text = json.dumps(result["knowledge"]["verification_history"]).lower()
+        all_text = json.dumps(result["knowledge"]["review_history"]).lower()
         assert "ground" in all_text, (
-            "Verification should flag the Ground x4 error. "
+            "Research review should flag the Ground x4 error. "
             f"Got: {all_text[:300]}"
         )
 
-    async def test_flags_sand_stream_duration_error(
+    async def test_review_flags_sand_stream_duration_error(
         self, config, mock_writer, mock_model, stress_state
     ):
-        """Verification should catch that Sand Stream lasts 5 turns, not 8."""
+        """Research review should catch that Sand Stream lasts 5 turns, not 8."""
         _inject_services(config, mock_model)
 
         mock_model["client"].chat_completion.side_effect = [
@@ -278,29 +224,27 @@ class TestVerificationStressFixture:
                         {"fact_id": "f002", "result": "contradicted",
                          "evidence": "Sand Stream lasts 5 turns, not 8"},
                     ],
-                    "conclusion_results": [],
-                    "new_unknown_facts": [],
-                    "goal_met": False,
-                    "goal_assessment": "Sand Stream duration wrong",
-                    "route": "retry_research",
+                    "coverage_assessment": "Sand Stream duration wrong",
+                    "missing_areas": [],
+                    "route": "retry",
                 }
             )),
         ]
 
-        from moira.workflow.nodes.verification import verification
+        from moira.workflow.nodes.research_review import research_review
 
-        result = await verification(stress_state, _make_run_config(config))
+        result = await research_review(stress_state, _make_run_config(config))
 
-        all_text = json.dumps(result["knowledge"]["verification_history"]).lower()
+        all_text = json.dumps(result["knowledge"]["review_history"]).lower()
         assert "sand" in all_text or "5 turn" in all_text, (
-            "Verification should flag the Sand Stream duration error. "
+            "Research review should flag the Sand Stream duration error. "
             f"Got: {all_text[:300]}"
         )
 
-    async def test_flags_draco_meteor_impossibility(
+    async def test_review_flags_draco_meteor_impossibility(
         self, config, mock_writer, mock_model, stress_state
     ):
-        """Verification should catch that Tyranitar cannot learn Draco Meteor."""
+        """Research review should catch that Tyranitar cannot learn Draco Meteor."""
         _inject_services(config, mock_model)
 
         mock_model["client"].chat_completion.side_effect = [
@@ -310,29 +254,27 @@ class TestVerificationStressFixture:
                         {"fact_id": "f004", "result": "contradicted",
                          "evidence": "Draco Meteor not in learnset"},
                     ],
-                    "conclusion_results": [],
-                    "new_unknown_facts": [],
-                    "goal_met": False,
-                    "goal_assessment": "Draco Meteor is impossible",
-                    "route": "retry_research",
+                    "coverage_assessment": "Draco Meteor is impossible",
+                    "missing_areas": [],
+                    "route": "retry",
                 }
             )),
         ]
 
-        from moira.workflow.nodes.verification import verification
+        from moira.workflow.nodes.research_review import research_review
 
-        result = await verification(stress_state, _make_run_config(config))
+        result = await research_review(stress_state, _make_run_config(config))
 
-        all_text = json.dumps(result["knowledge"]["verification_history"]).lower()
+        all_text = json.dumps(result["knowledge"]["review_history"]).lower()
         assert "draco" in all_text or "learnset" in all_text, (
-            "Verification should flag Draco Meteor as impossible. "
+            "Research review should flag Draco Meteor as impossible. "
             f"Got: {all_text[:300]}"
         )
 
-    async def test_flags_corviknight_ground_immunity_error(
+    async def test_review_flags_corviknight_ground_immunity_error(
         self, config, mock_writer, mock_model, stress_state
     ):
-        """Verification should catch that Corviknight is NOT immune to Ground."""
+        """Research review should catch that Corviknight is NOT immune to Ground."""
         _inject_services(config, mock_model)
 
         mock_model["client"].chat_completion.side_effect = [
@@ -342,22 +284,58 @@ class TestVerificationStressFixture:
                         {"fact_id": "f005", "result": "contradicted",
                          "evidence": "Corviknight has no Levitate"},
                     ],
-                    "conclusion_results": [],
-                    "new_unknown_facts": [],
-                    "goal_met": False,
-                    "goal_assessment": "Corviknight Ground immunity wrong",
-                    "route": "retry_research",
+                    "coverage_assessment": "Corviknight Ground immunity wrong",
+                    "missing_areas": [],
+                    "route": "retry",
                 }
             )),
         ]
 
-        from moira.workflow.nodes.verification import verification
+        from moira.workflow.nodes.research_review import research_review
 
-        result = await verification(stress_state, _make_run_config(config))
+        result = await research_review(stress_state, _make_run_config(config))
 
-        all_text = json.dumps(result["knowledge"]["verification_history"]).lower()
+        all_text = json.dumps(result["knowledge"]["review_history"]).lower()
         assert "corviknight" in all_text and ("ground" in all_text or "immune" in all_text), (
-            "Verification should flag the Corviknight Ground immunity error. "
+            "Research review should flag the Corviknight Ground immunity error. "
+            f"Got: {all_text[:300]}"
+        )
+
+    async def test_evaluation_flags_goal_not_met(
+        self, config, mock_writer, mock_model, stress_state
+    ):
+        """Evaluation should route retry when conclusions are unsupported."""
+        _inject_services(config, mock_model)
+
+        stress_state["knowledge"]["conclusions"] = [
+            {"id": "c001",
+             "conclusion": "Corviknight is the best partner",
+             "supporting_fact_ids": ["f005"],
+             "reasoning": "Ground immunity covers Tyranitar",
+             "status": "unverified"},
+        ]
+
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(content=json.dumps(
+                {
+                    "conclusion_results": [
+                        {"conclusion_id": "c001", "result": "contradicted",
+                         "reason": "Corviknight is not immune to Ground"},
+                    ],
+                    "goal_met": False,
+                    "goal_assessment": "Central synergy claim is based on error",
+                    "route": "retry",
+                }
+            )),
+        ]
+
+        from moira.workflow.nodes.evaluation import evaluation
+
+        result = await evaluation(stress_state, _make_run_config(config))
+
+        all_text = json.dumps(result["knowledge"]["evaluation_history"]).lower()
+        assert "retry" in all_text, (
+            "Evaluation should route retry when conclusions are contradicted. "
             f"Got: {all_text[:300]}"
         )
 
@@ -369,7 +347,6 @@ class TestVerificationStressFixture:
 # The system should rank Pokemon-specific tools ahead of web_search for
 # structured facts.
 
-# The decomposed facts that the canary question should produce.
 CANARY_DECOMPOSED_FACTS = [
     {"fact_needed": "Tyranitar typing", "subject": "Tyranitar"},
     {"fact_needed": "Tyranitar abilities including hidden ability", "subject": "Tyranitar"},
@@ -381,7 +358,6 @@ CANARY_DECOMPOSED_FACTS = [
     {"fact_needed": "Tyranitar common teammate statistics", "subject": "Tyranitar"},
 ]
 
-# A fixed tool catalog for testing routing decisions.
 TOOL_CATALOG = [
     ToolDefinition(
         name="pokeapi",
@@ -428,8 +404,6 @@ TOOL_CATALOG = [
     ),
 ]
 
-# Expected routing: which tool should be preferred for which fact.
-# Each entry maps a fact subject pattern to the expected primary tool.
 EXPECTED_TOOL_ROUTING = {
     "Tyranitar typing": "pokeapi",
     "Tyranitar abilities": "pokeapi",
@@ -447,36 +421,19 @@ class TestToolRoutingFixture:
     structured facts.
 
     These tests verify that the tool discovery/selection process ranks
-    domain-specific tools ahead of generic search. They test against the
-    current system and will be used as regression tests for the overhauled
-    system's tool_identification node.
+    domain-specific tools ahead of generic search.
     """
 
     def test_pokeapi_ranked_above_web_search_for_typing(self):
-        """For Tyranitar typing facts, pokeapi should rank higher than web_search."""
-        # The key assertion: for species-specific facts, a Pokemon API
-        # should produce a higher similarity score than generic search.
-        # This is a structural assertion about the LanceDB embedding match.
-        #
-        # In the current system, this may not hold because the embeddings
-        # may not capture "this tool answers species data questions" well.
-        # The overhauled system's enriched tool descriptions should fix this.
-        #
-        # For now, we document the expected behavior:
         pokeapi_desc = TOOL_CATALOG[0].description
         web_search_desc = TOOL_CATALOG[3].description
-
-        # The Pokemon API description explicitly mentions "typing" and "species"
-        # which should produce a stronger match for the typing query.
         assert "typing" in pokeapi_desc.lower()
         assert "typing" not in web_search_desc.lower()
 
     def test_pokemon_db_ranked_above_web_search_for_ou_legality(self):
-        """For OU legality facts, pokemon_db should rank higher than web_search."""
         pokemon_db_desc = TOOL_CATALOG[1].description
         pokemon_db_tags = TOOL_CATALOG[1].tags
         web_search_desc = TOOL_CATALOG[3].description
-
         assert "tier" in pokemon_db_desc.lower()
         assert any(t.lower() == "ou" for t in pokemon_db_tags), (
             f"pokemon_db tags should contain 'ou': {pokemon_db_tags}"
@@ -484,7 +441,6 @@ class TestToolRoutingFixture:
         assert "legality" not in web_search_desc.lower()
 
     def test_catalog_structure_matches_routing_expectations(self):
-        """Validate that our test catalog has the expected structure."""
         tool_names = [t.name for t in TOOL_CATALOG]
         assert "pokeapi" in tool_names
         assert "pokemon_db" in tool_names
@@ -498,26 +454,17 @@ class TestToolRoutingFixture:
         assert "datetime" in default_names
 
     def test_decomposed_facts_cover_key_areas(self):
-        """Validate that the decomposed facts cover the evaluation rubric areas."""
         facts = CANARY_DECOMPOSED_FACTS
         fact_texts = [f["fact_needed"].lower() for f in facts]
-
-        # Must cover typing
         assert any("typing" in f for f in fact_texts)
-        # Must cover abilities
         assert any("abilit" in f for f in fact_texts)
-        # Must cover weaknesses
         assert any("weakness" in f for f in fact_texts)
-        # Must cover moves
         assert any("move" in f for f in fact_texts)
-        # Must cover legality
         assert any("legal" in f for f in fact_texts)
 
     async def test_tool_discovery_ranks_specialized_first(
         self, config, mock_writer, mock_model
     ):
-        """When discovering tools for Pokemon-specific facts, specialized tools
-        should be in the candidate list."""
         _inject_services(config, mock_model)
 
         from moira.workflow.nodes.tool_identification import tool_identification
@@ -553,14 +500,6 @@ class TestToolRoutingFixture:
 # unjustified conclusion. The system should qualify the claim or refuse
 # to overstate it.
 
-# The trap: from these facts, one might conclude "Corviknight is the BEST partner"
-# because it resists some of Tyranitar's weaknesses. But the facts don't support
-# "best" — they only support "covers some weaknesses." The synthesis should NOT:
-# 1. Claim Corviknight is "the best" or "top" partner without usage/stat backing
-# 2. Claim Corviknight makes Tyranitar "easy to use" without battle data
-# 3. Ignore that Corviknight takes neutral from Fighting (Tyranitar's x4 weakness)
-# 4. Claim Flying-type Ground immunity is the "main" synergy (it's one factor)
-
 SYNTHESIS_TRAP_EXPECTED_BEHAVIORS = [
     "Should NOT claim Corviknight is the best partner without usage data",
     "Should NOT claim Corviknight makes Tyranitar viable without battle data",
@@ -573,14 +512,9 @@ SYNTHESIS_TRAP_EXPECTED_BEHAVIORS = [
 class TestSynthesisTrapFixture:
     """Synthesis should not overstate conclusions from individually true facts.
 
-    These tests verify that the draft_synthesis and verification nodes don't
-    draw unjustified conclusions from fact bundles. The facts are individually
-    true but don't support strong recommendations.
-
-    NOTE: These tests are expected to FAIL against the current system.
-    The current synthesis prompt does not enforce strict fact-only reasoning,
-    so the model's output (which we mock) passes through unchecked. These
-    tests document the behavior the overhauled system must achieve.
+    These tests verify that the synthesis node doesn't draw unjustified
+    conclusions from fact bundles. The facts are individually true but
+    don't support strong recommendations.
     """
 
     @pytest.fixture

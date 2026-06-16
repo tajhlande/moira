@@ -79,12 +79,29 @@ def _step_summary(step: WorkflowStep, ordinal: int = 1) -> dict[str, Any]:
     }
 
 
-def _verification_attempts(steps: list[WorkflowStep]) -> list[dict[str, Any]]:
+def _review_attempts(steps: list[WorkflowStep]) -> list[dict[str, Any]]:
+    """Extract research_review outcomes from step details."""
     attempts: list[dict[str, Any]] = []
     attempt_num = 0
     for step in steps:
         detail = step.detail if isinstance(step.detail, dict) else None
-        if step.node_name != "verification" or not detail:
+        if step.node_name != "research_review" or not detail:
+            continue
+        structured = detail.get("structured_output")
+        if not structured:
+            continue
+        attempt_num += 1
+        attempts.append({"report": structured, "attempt": attempt_num})
+    return attempts
+
+
+def _evaluation_attempts(steps: list[WorkflowStep]) -> list[dict[str, Any]]:
+    """Extract evaluation outcomes from step details."""
+    attempts: list[dict[str, Any]] = []
+    attempt_num = 0
+    for step in steps:
+        detail = step.detail if isinstance(step.detail, dict) else None
+        if step.node_name != "evaluation" or not detail:
             continue
         structured = detail.get("structured_output")
         if not structured:
@@ -175,7 +192,8 @@ def _coalesced_run_snapshot(
         "execution_steps": step_summaries,
         "attempts": attempt_summaries,
         "tool_executions": merged_tool_executions,
-        "verification_attempts": _verification_attempts(merged_steps),
+        "review_attempts": _review_attempts(merged_steps),
+        "evaluation_attempts": _evaluation_attempts(merged_steps),
         "state_version": latest.state_version,
         "started_at": latest.started_at,
         "completed_at": latest.completed_at,

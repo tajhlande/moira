@@ -94,7 +94,8 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
     step_costs = es["step_costs"]
     reserved_budget = (
         step_costs.get("synthesis", 5)
-        + step_costs.get("verification", 8)
+        + step_costs.get("research_review", 3)
+        + step_costs.get("evaluation", 5)
         + step_costs.get("report_generation", 3)
     )
     available_for_tools = max(es["budget_remaining"] - reserved_budget, 0)
@@ -117,20 +118,20 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
     )
 
     system_prompt = get_prompt("planning.system")
-    # On retry, append retry appendix
+    # On retry from evaluation, append evaluation feedback
     research_retry_count = es.get("research_retry_count", 0)
     if research_retry_count > 0:
-        verification_history = knowledge.get("verification_history", [])
-        last_v = verification_history[-1] if verification_history else {}
-        feedback = last_v.get("goal_assessment", "")
-        unresolved = [
-            f for f in knowledge["facts"]
-            if f["status"] in ("unknown", "contradicted")
+        evaluation_history = knowledge.get("evaluation_history", [])
+        last_eval = evaluation_history[-1] if evaluation_history else {}
+        feedback = last_eval.get("goal_assessment", "")
+        failed_conclusions = [
+            f"{r.get('conclusion_id', '')} | {r.get('result', '')} | {r.get('reason', '')}"
+            for r in last_eval.get("conclusion_results", [])
+            if r.get("result") != "verified"
         ]
-        system_prompt += "\n\n" + get_prompt("planning.system_retry").format(
-            verification_feedback=feedback,
-            unresolved_facts=_format_unknown_facts(unresolved),
-            all_unknown_facts=_format_unknown_facts(knowledge["facts"]),
+        system_prompt += "\n\n" + get_prompt("planning.system_retry_evaluation").format(
+            evaluation_feedback=feedback,
+            failed_conclusions="\n".join(failed_conclusions) if failed_conclusions else "(none)",
         )
 
     # Prior conversation context (multi-turn)

@@ -19,7 +19,8 @@ const STAGE_LABELS: Record<string, string> = {
   planning: "Planning research approach",
   research: "Researching",
   synthesis: "Synthesizing conclusions",
-  verification: "Verifying facts and conclusions",
+  research_review: "Reviewing research",
+  evaluation: "Evaluating conclusions",
   report_generation: "Generating report",
 };
 

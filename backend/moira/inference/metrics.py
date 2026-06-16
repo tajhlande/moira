@@ -8,7 +8,7 @@ from dataclasses import dataclass
 class TokenCounts:
     """Accumulates token counts and inference timing across multiple
     ``chat_completion()`` calls within a single graph node invocation.
-    Used by tool-loop nodes (research_execution, verification) to
+    Used by tool-loop nodes (research_execution, research_review) to
     aggregate metrics before recording a single workflow step row."""
 
     input_tokens: int = 0

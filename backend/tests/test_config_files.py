@@ -32,7 +32,7 @@ class TestConfigTemplate:
         config = MoiraConfig.model_validate(raw)
         assert config.budget.default_limit > 0
         assert config.database.sqlite_path
-        assert len(CostWeights.model_fields) == 7
+        assert len(CostWeights.model_fields) == 8
 
     def test_template_has_all_cost_weight_keys(self):
         with open(CONFIG_TEMPLATE) as f:
@@ -45,7 +45,8 @@ class TestConfigTemplate:
             "planning",
             "research",
             "synthesis",
-            "verification",
+            "research_review",
+            "evaluation",
             "report_generation",
         ]
         for key in expected:
@@ -87,8 +88,8 @@ class TestPromptsFile:
                 "unknown_facts", "tool_descriptions_with_costs_and_limits",
                 "budget_remaining", "reserved_budget", "available_for_tools",
             },
-            "planning.system_retry": {
-                "verification_feedback", "unresolved_facts", "all_unknown_facts",
+            "planning.system_retry_evaluation": {
+                "evaluation_feedback", "failed_conclusions",
             },
             "planning.system_earlier_turns": {"earlier_turns"},
             "planning.system_prior_report": {"prior_question", "prior_report_answer"},
@@ -97,16 +98,20 @@ class TestPromptsFile:
                 "user_goal", "unknown_facts", "tool_call_plan",
                 "tool_descriptions",
             },
+            "research.system_retry_review": {"coverage_assessment", "missing_areas"},
             "synthesis.user": {
                 "user_goal", "topic", "entities", "concepts",
                 "facts_with_claims", "prior_conclusions_section",
             },
-            "synthesis.system_retry": {"verification_feedback"},
-            "verification.user": {
+            "synthesis.system_retry": {"evaluation_feedback"},
+            "research_review.user": {
                 "user_goal", "question", "facts_with_claims_and_sources",
-                "conclusions_with_supporting_facts", "tool_descriptions",
+                "conclusions_context",
             },
-            "verification.evidence": {"evidence"},
+            "evaluation.user": {
+                "user_goal", "question", "facts_with_statuses",
+                "conclusions_with_supporting_facts",
+            },
             "report_generation.system": {"path_instruction"},
             "report_generation.path_error": {"error"},
             "report_generation.user": {

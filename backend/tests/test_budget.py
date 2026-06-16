@@ -2,10 +2,10 @@ from moira.config import CostWeights
 from moira.workflow.budget import (
     can_execute,
     deduct_cost,
+    evaluation_retry_cost,
     full_cycle_cost,
     get_node_cost,
-    research_retry_cost,
-    synthesis_retry_cost,
+    review_retry_cost,
 )
 
 
@@ -17,7 +17,8 @@ def _default_step_costs():
         "planning": cw.planning,
         "research": cw.research,
         "synthesis": cw.synthesis,
-        "verification": cw.verification,
+        "research_review": cw.research_review,
+        "evaluation": cw.evaluation,
         "report_generation": cw.report_generation,
     }
 
@@ -29,7 +30,8 @@ def test_get_node_cost_returns_correct_cost():
     assert get_node_cost(sc, "planning") == 2
     assert get_node_cost(sc, "research") == 10
     assert get_node_cost(sc, "synthesis") == 5
-    assert get_node_cost(sc, "verification") == 8
+    assert get_node_cost(sc, "research_review") == 3
+    assert get_node_cost(sc, "evaluation") == 5
     assert get_node_cost(sc, "report_generation") == 3
 
 
@@ -62,15 +64,20 @@ def test_deduct_cost_can_go_negative():
 
 
 def test_full_cycle_cost():
+    # decomposition(2) + tool_identification(1) + planning(2) + research(10)
+    # + synthesis(5) + research_review(3) + evaluation(5) = 28
     assert full_cycle_cost(_default_step_costs()) == 28
 
 
-def test_research_retry_cost():
-    assert research_retry_cost(_default_step_costs()) == 26
+def test_review_retry_cost():
+    # research(10) + synthesis(5) + research_review(3) = 18
+    assert review_retry_cost(_default_step_costs()) == 18
 
 
-def test_synthesis_retry_cost():
-    assert synthesis_retry_cost(_default_step_costs()) == 13
+def test_evaluation_retry_cost():
+    # tool_identification(1) + planning(2) + research(10) + synthesis(5)
+    # + research_review(3) + evaluation(5) = 26
+    assert evaluation_retry_cost(_default_step_costs()) == 26
 
 
 def test_deduct_cost_with_zero_cost_node():

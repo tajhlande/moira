@@ -2,7 +2,12 @@ import pytest
 from langgraph.graph import START
 
 from moira.config import CostWeights, MoiraConfig
-from moira.workflow.graph import build_graph, compile_graph, make_verification_router
+from moira.workflow.graph import (
+    build_graph,
+    compile_graph,
+    make_evaluation_router,
+    make_review_router,
+)
 
 
 @pytest.fixture
@@ -10,11 +15,10 @@ def config():
     return MoiraConfig()
 
 
-def _make_router_state(
-    route="accept",
+def _make_review_router_state(
+    route="continue",
     budget_remaining=60.0,
-    synthesis_retry_count=0,
-    research_retry_count=0,
+    review_count=1,
 ):
     cw = CostWeights()
     step_costs = {
@@ -23,20 +27,19 @@ def _make_router_state(
         "planning": cw.planning,
         "research": cw.research,
         "synthesis": cw.synthesis,
-        "verification": cw.verification,
+        "research_review": cw.research_review,
+        "evaluation": cw.evaluation,
         "report_generation": cw.report_generation,
     }
     return {
         "knowledge": {
             "question": "test",
-            "verification_history": [
+            "review_history": [
                 {
                     "route": route,
-                    "goal_met": route == "accept",
-                    "goal_assessment": "",
                     "fact_results": [],
-                    "conclusion_results": [],
-                    "new_unknown_facts": [],
+                    "coverage_assessment": "",
+                    "missing_areas": [],
                 }
             ],
         },
@@ -44,20 +47,65 @@ def _make_router_state(
             "budget_remaining": budget_remaining,
             "budget_limit": 60.0,
             "step_costs": step_costs,
-            "synthesis_retry_count": synthesis_retry_count,
-            "research_retry_count": research_retry_count,
+            "review_count": review_count,
+            "research_retry_count": 0,
+            "evaluation_count": 0,
             "tool_costs": {},
             "tool_call_counts": {},
             "candidate_tools": [],
             "tool_call_plan": [],
             "total_tool_cost_consumed": 0.0,
             "error": "",
-            "verification_attempts": 1,
         },
     }
 
 
-def test_graph_has_seven_nodes(config):
+def _make_evaluation_router_state(
+    route="accept",
+    budget_remaining=60.0,
+    evaluation_count=1,
+):
+    cw = CostWeights()
+    step_costs = {
+        "decomposition": cw.decomposition,
+        "tool_identification": cw.tool_identification,
+        "planning": cw.planning,
+        "research": cw.research,
+        "synthesis": cw.synthesis,
+        "research_review": cw.research_review,
+        "evaluation": cw.evaluation,
+        "report_generation": cw.report_generation,
+    }
+    return {
+        "knowledge": {
+            "question": "test",
+            "evaluation_history": [
+                {
+                    "route": route,
+                    "goal_met": route == "accept",
+                    "goal_assessment": "",
+                    "conclusion_results": [],
+                }
+            ],
+        },
+        "execution_state": {
+            "budget_remaining": budget_remaining,
+            "budget_limit": 60.0,
+            "step_costs": step_costs,
+            "evaluation_count": evaluation_count,
+            "review_count": 0,
+            "research_retry_count": 0,
+            "tool_costs": {},
+            "tool_call_counts": {},
+            "candidate_tools": [],
+            "tool_call_plan": [],
+            "total_tool_cost_consumed": 0.0,
+            "error": "",
+        },
+    }
+
+
+def test_graph_has_eight_nodes(config):
     graph = build_graph(config)
     expected = {
         "decomposition",
@@ -65,7 +113,8 @@ def test_graph_has_seven_nodes(config):
         "planning",
         "research",
         "synthesis",
-        "verification",
+        "research_review",
+        "evaluation",
         "report_generation",
     }
     assert set(graph.nodes) == expected
@@ -80,67 +129,54 @@ def test_graph_linear_path(config):
     assert ("tool_identification", "planning") in edges
     assert ("planning", "research") in edges
     assert ("research", "synthesis") in edges
-    assert ("synthesis", "verification") in edges
+    assert ("synthesis", "research_review") in edges
 
 
-def test_graph_verification_routes_to_report_generation_on_accept():
-    router = make_verification_router()
-    state = _make_router_state(route="accept")
+def test_review_router_continue_routes_to_evaluation():
+    router = make_review_router()
+    state = _make_review_router_state(route="continue")
+    assert router(state) == "evaluation"
+
+
+def test_review_router_retry_routes_to_research():
+    router = make_review_router()
+    state = _make_review_router_state(route="retry", budget_remaining=60.0, review_count=1)
+    assert router(state) == "research"
+
+
+def test_review_router_retry_falls_to_evaluation_on_insufficient_budget():
+    router = make_review_router()
+    state = _make_review_router_state(route="retry", budget_remaining=0.0, review_count=1)
+    assert router(state) == "evaluation"
+
+
+def test_review_router_retry_falls_to_evaluation_on_max_attempts():
+    router = make_review_router()
+    state = _make_review_router_state(route="retry", budget_remaining=60.0, review_count=3)
+    assert router(state) == "evaluation"
+
+
+def test_evaluation_router_accept_routes_to_report_generation():
+    router = make_evaluation_router()
+    state = _make_evaluation_router_state(route="accept")
     assert router(state) == "report_generation"
 
 
-def test_graph_verification_routes_to_synthesis_on_retry():
-    router = make_verification_router()
-    state = _make_router_state(
-        route="retry_synthesis", budget_remaining=60.0,
-        synthesis_retry_count=0,
-    )
-    assert router(state) == "synthesis"
-
-
-def test_graph_verification_routes_to_tool_identification_on_retry_research():
-    router = make_verification_router()
-    state = _make_router_state(route="retry_research", budget_remaining=60.0)
+def test_evaluation_router_retry_routes_to_tool_identification():
+    router = make_evaluation_router()
+    state = _make_evaluation_router_state(route="retry", budget_remaining=60.0, evaluation_count=1)
     assert router(state) == "tool_identification"
 
 
-def test_graph_verification_falls_to_report_generation_on_insufficient_budget_retry_synthesis():
-    router = make_verification_router()
-    state = _make_router_state(
-        route="retry_synthesis", budget_remaining=0.0,
-        synthesis_retry_count=0,
-    )
+def test_evaluation_router_retry_falls_to_report_on_insufficient_budget():
+    router = make_evaluation_router()
+    state = _make_evaluation_router_state(route="retry", budget_remaining=0.0, evaluation_count=1)
     assert router(state) == "report_generation"
 
 
-def test_graph_verification_falls_to_report_generation_on_insufficient_budget_retry_research():
-    router = make_verification_router()
-    state = _make_router_state(route="retry_research", budget_remaining=0.0)
-    assert router(state) == "report_generation"
-
-
-def test_graph_verification_falls_to_report_generation_on_max_synthesis_retries():
-    router = make_verification_router()
-    state = _make_router_state(
-        route="retry_synthesis", budget_remaining=60.0,
-        synthesis_retry_count=2,
-    )
-    assert router(state) == "report_generation"
-
-
-def test_graph_verification_falls_to_report_generation_on_max_research_retries():
-    router = make_verification_router()
-    state = _make_router_state(
-        route="retry_research", budget_remaining=60.0,
-        research_retry_count=2,
-    )
-    assert router(state) == "report_generation"
-
-
-def test_graph_no_verification_history_routes_to_report_generation():
-    router = make_verification_router()
-    state = _make_router_state()
-    state["knowledge"]["verification_history"] = []
+def test_evaluation_router_retry_falls_to_report_on_max_attempts():
+    router = make_evaluation_router()
+    state = _make_evaluation_router_state(route="retry", budget_remaining=60.0, evaluation_count=2)
     assert router(state) == "report_generation"
 
 

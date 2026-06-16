@@ -12,7 +12,7 @@ import pytest
 from moira.config import MoiraConfig
 from moira.inference.client import ChatResponse, InferenceClient
 from moira.inference.registry import ModelRegistry, ResolvedModel
-from moira.models.knowledge import Conclusion, Fact, ToolCallPlan, VerificationOutcome
+from moira.models.knowledge import Conclusion, Fact, ToolCallPlan
 from moira.service_setup import _services
 from moira.tools.base import ToolDefinition, ToolResult
 
@@ -35,7 +35,8 @@ def mock_writer():
 
     with patch("moira.workflow.nodes.decomposition.get_stream_writer", return_value=write), \
          patch("moira.workflow.nodes.synthesis.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes.verification.get_stream_writer", return_value=write), \
+         patch("moira.workflow.nodes.research_review.get_stream_writer", return_value=write), \
+         patch("moira.workflow.nodes.evaluation.get_stream_writer", return_value=write), \
          patch("moira.workflow.nodes.planning.get_stream_writer", return_value=write), \
          patch("moira.workflow.nodes.research.get_stream_writer", return_value=write), \
          patch("moira.workflow.nodes.report_generation.get_stream_writer", return_value=write), \
@@ -72,7 +73,8 @@ def _build_state(config, question="Test question", facts=None, conclusions=None)
         "planning": cw.planning,
         "research": cw.research,
         "synthesis": cw.synthesis,
-        "verification": cw.verification,
+        "research_review": cw.research_review,
+        "evaluation": cw.evaluation,
         "report_generation": cw.report_generation,
     }
     return {
@@ -85,7 +87,8 @@ def _build_state(config, question="Test question", facts=None, conclusions=None)
             "facts": facts or [],
             "conclusions": conclusions or [],
             "citations": [],
-            "verification_history": [],
+            "review_history": [],
+            "evaluation_history": [],
         },
         "execution_state": {
             "candidate_tools": [],
@@ -98,9 +101,9 @@ def _build_state(config, question="Test question", facts=None, conclusions=None)
             "tool_call_counts": {},
             "total_tool_cost_consumed": 0.0,
             "error": "",
-            "synthesis_retry_count": 0,
             "research_retry_count": 0,
-            "verification_attempts": 0,
+            "review_count": 0,
+            "evaluation_count": 0,
         },
     }
 
@@ -143,21 +146,44 @@ SYNTHESIS_RESPONSE = json.dumps({
     ],
 })
 
-VERIFICATION_RESPONSE = json.dumps({
+REVIEW_RESPONSE = json.dumps({
     "fact_results": [
         {"fact_id": "f001", "result": "verified", "evidence": "Confirmed by source"},
     ],
+    "coverage_assessment": "Research sufficiently covered the question",
+    "missing_areas": [],
+    "route": "continue",
+})
+
+REVIEW_RETRY_RESPONSE = json.dumps({
+    "fact_results": [
+        {"fact_id": "f001", "result": "contradicted", "evidence": "Wrong"},
+    ],
+    "coverage_assessment": "Missing critical info",
+    "missing_areas": ["Need more data on X"],
+    "route": "retry",
+})
+
+EVALUATION_RESPONSE = json.dumps({
     "conclusion_results": [
         {"conclusion_id": "c001", "result": "verified", "reason": "Supported by facts"},
     ],
-    "new_unknown_facts": [],
     "goal_met": True,
     "goal_assessment": "Goal fully met",
     "route": "accept",
 })
 
+EVALUATION_RETRY_RESPONSE = json.dumps({
+    "conclusion_results": [
+        {"conclusion_id": "c001", "result": "contradicted", "reason": "Based on wrong fact"},
+    ],
+    "goal_met": False,
+    "goal_assessment": "Conclusions flawed",
+    "route": "retry",
+})
+
 REPORT_RESPONSE = json.dumps({
-    "answer": "Entity1 is confirmed based on research.",
+    "answer": "Entity1 is confirmed based on research. [1]",
     "citations": [],
     "verified_facts": [],
     "verified_conclusions": [],
@@ -938,20 +964,20 @@ class TestSynthesis:
 
 
 # ===========================================================================
-# VERIFICATION
+# RESEARCH REVIEW
 # ===========================================================================
 
 
-class TestVerification:
+class TestResearchReview:
 
     @pytest.mark.asyncio
     async def test_happy_path(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=VERIFICATION_RESPONSE
+            content=REVIEW_RESPONSE
         )
 
-        from moira.workflow.nodes.verification import verification
+        from moira.workflow.nodes.research_review import research_review
 
         state = _build_state(config, "Test question")
         state["knowledge"]["user_goal"] = "Find info"
@@ -969,33 +995,31 @@ class TestVerification:
             ),
         ]
 
-        result = await verification(state, _make_run_config(config))
+        result = await research_review(state, _make_run_config(config))
 
         assert result["knowledge"]["facts"][0]["status"] == "verified"
         assert result["knowledge"]["facts"][0]["verification_note"] == "Confirmed by source"
-        assert result["knowledge"]["conclusions"][0]["status"] == "verified"
 
-        history = result["knowledge"]["verification_history"]
+        history = result["knowledge"]["review_history"]
         assert len(history) == 1
-        assert history[0]["goal_met"] is True
-        assert history[0]["route"] == "accept"
+        assert history[0]["route"] == "continue"
 
-        step_cost = config.budget.cost_weights.verification
+        step_cost = config.budget.cost_weights.research_review
         assert result["execution_state"]["budget_remaining"] == (
             config.budget.default_limit - step_cost
         )
-        assert result["execution_state"]["verification_attempts"] == 1
+        assert result["execution_state"]["review_count"] == 1
 
     @pytest.mark.asyncio
     async def test_budget_exhaustion(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
 
-        from moira.workflow.nodes.verification import verification
+        from moira.workflow.nodes.research_review import research_review
 
         state = _build_state(config, "Test question")
         state["execution_state"]["budget_remaining"] = 0.0
 
-        result = await verification(state, _make_run_config(config))
+        result = await research_review(state, _make_run_config(config))
 
         assert "error" in result["execution_state"]
         assert "Insufficient budget" in result["execution_state"]["error"]
@@ -1005,7 +1029,7 @@ class TestVerification:
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = RuntimeError("Model error")
 
-        from moira.workflow.nodes.verification import verification
+        from moira.workflow.nodes.research_review import research_review
 
         state = _build_state(config, "Test question")
         state["knowledge"]["facts"] = [
@@ -1013,216 +1037,81 @@ class TestVerification:
         ]
 
         with pytest.raises(RuntimeError, match="Model error"):
-            await verification(state, _make_run_config(config))
+            await research_review(state, _make_run_config(config))
 
     @pytest.mark.asyncio
-    async def test_new_unknown_facts_added(self, config, mock_writer, mock_model):
+    async def test_contradicted_facts(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps({
-                "fact_results": [],
-                "conclusion_results": [],
-                "new_unknown_facts": ["Additional detail needed"],
-                "goal_met": False,
-                "goal_assessment": "Missing info",
-                "route": "retry_research",
-            })
+            content=REVIEW_RETRY_RESPONSE
         )
 
-        from moira.workflow.nodes.verification import verification
+        from moira.workflow.nodes.research_review import research_review
 
         state = _build_state(config, "Test question")
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", claim="z", status="unverified"),
         ]
 
-        result = await verification(state, _make_run_config(config))
-
-        fact_ids = [f["id"] for f in result["knowledge"]["facts"]]
-        assert len(fact_ids) == 2
-        assert result["knowledge"]["facts"][1]["fact_needed"] == "Additional detail needed"
-        assert result["knowledge"]["facts"][1]["status"] == "unknown"
-
-    @pytest.mark.asyncio
-    async def test_contradicted_facts_and_conclusions(self, config, mock_writer, mock_model):
-        _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps({
-                "fact_results": [
-                    {"fact_id": "f001", "result": "contradicted", "evidence": "Wrong"},
-                ],
-                "conclusion_results": [
-                    {"conclusion_id": "c001", "result": "contradicted",
-                     "reason": "Based on wrong fact"},
-                ],
-                "new_unknown_facts": [],
-                "goal_met": False,
-                "goal_assessment": "Contradictions found",
-                "route": "retry_research",
-            })
-        )
-
-        from moira.workflow.nodes.verification import verification
-
-        state = _build_state(config, "Test question")
-        state["knowledge"]["facts"] = [
-            Fact(id="f001", subject="x", fact_needed="y", claim="z", status="unverified"),
-        ]
-        state["knowledge"]["conclusions"] = [
-            Conclusion(id="c001", conclusion="Something",
-                       supporting_fact_ids=["f001"], status="unverified"),
-        ]
-
-        result = await verification(state, _make_run_config(config))
+        result = await research_review(state, _make_run_config(config))
 
         assert result["knowledge"]["facts"][0]["status"] == "contradicted"
-        assert result["knowledge"]["conclusions"][0]["status"] == "contradicted"
-        assert result["knowledge"]["verification_history"][0]["route"] == "retry_research"
+        assert result["knowledge"]["review_history"][0]["route"] == "retry"
+        assert len(result["knowledge"]["review_history"][0]["missing_areas"]) == 1
 
     @pytest.mark.asyncio
-    async def test_increments_verification_attempts(self, config, mock_writer, mock_model):
+    async def test_increments_review_count(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=VERIFICATION_RESPONSE
+            content=REVIEW_RESPONSE
         )
 
-        from moira.workflow.nodes.verification import verification
+        from moira.workflow.nodes.research_review import research_review
 
         state = _build_state(config, "Test question")
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", claim="z", status="unverified"),
         ]
-        state["execution_state"]["verification_attempts"] = 2
+        state["execution_state"]["review_count"] = 2
 
-        result = await verification(state, _make_run_config(config))
-        assert result["execution_state"]["verification_attempts"] == 3
+        result = await research_review(state, _make_run_config(config))
+        assert result["execution_state"]["review_count"] == 3
 
     @pytest.mark.asyncio
-    async def test_tool_calls_executed_and_re_prompted(self, config, mock_writer, mock_model):
-        """When the model returns tool_calls instead of fact_results, the
-        node should execute them and re-prompt for a verification result."""
+    async def test_parse_failure_raises(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
-
-        tool_call_response = ChatResponse(
-            content=json.dumps({
-                "tool_calls": [
-                    {"tool": "web_search", "args": {"query": "verify entity1"}},
-                ],
-            })
-        )
-        verification_result = ChatResponse(
-            content=json.dumps({
-                "fact_results": [
-                    {"fact_id": "f001", "result": "verified", "evidence": "Confirmed via search"},
-                ],
-                "conclusion_results": [
-                    {"conclusion_id": "c001", "result": "verified", "reason": "Fact confirmed"},
-                ],
-                "new_unknown_facts": [],
-                "goal_met": True,
-                "goal_assessment": "All verified",
-                "route": "accept",
-            })
-        )
-        mock_model["client"].chat_completion = AsyncMock(
-            side_effect=[tool_call_response, verification_result]
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content="This is not JSON at all"
         )
 
-        executor = AsyncMock()
-        executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(
-                tool_name="web_search",
-                output="Search confirmed entity1",
-                duration_ms=100,
-                success=True,
-            ),
-        ])
-        _services["tool_executor"] = executor
-
-        from moira.workflow.nodes.verification import verification
+        from moira.workflow.nodes.research_review import research_review
 
         state = _build_state(config, "Test question")
         state["knowledge"]["facts"] = [
-            Fact(id="f001", subject="entity1", fact_needed="some fact",
-                 claim="Entity1 confirmed", status="unverified"),
+            Fact(id="f001", subject="x", fact_needed="y", claim="z", status="unverified"),
         ]
-        state["knowledge"]["conclusions"] = [
-            Conclusion(id="c001", conclusion="Entity1 is confirmed",
-                       supporting_fact_ids=["f001"], status="unverified"),
-        ]
-        state["execution_state"]["candidate_tools"] = [
-            ToolDefinition(name="web_search", description="Search the web"),
-        ]
-        state["execution_state"]["tool_costs"] = {"web_search": 5.0}
-        state["execution_state"]["tool_call_limits"] = {"web_search": 3}
 
-        result = await verification(state, _make_run_config(config))
-
-        assert result["knowledge"]["facts"][0]["status"] == "verified"
-        assert result["knowledge"]["facts"][0]["verification_note"] == "Confirmed via search"
-        assert result["knowledge"]["conclusions"][0]["status"] == "verified"
-        assert result["knowledge"]["verification_history"][0]["route"] == "accept"
-
-        # Tool executor was called
-        executor.execute_batch.assert_called_once()
-
-        # Model was called twice: initial + re-prompt
-        assert mock_model["client"].chat_completion.call_count == 2
-
-        # Tool costs deducted
-        assert result["execution_state"]["total_tool_cost_consumed"] == 5.0
-
-        # Call counts updated
-        assert result["execution_state"]["tool_call_counts"]["web_search"] == 1
+        with pytest.raises(RuntimeError, match="unparseable JSON"):
+            await research_review(state, _make_run_config(config))
 
     @pytest.mark.asyncio
-    async def test_structured_output_always_has_verification_schema(
+    async def test_structured_output_has_review_schema(
         self, config, mock_writer, mock_model
     ):
-        """structured_output should contain verification fields, not tool_calls."""
         _inject_services(config, mock_model)
-
-        tool_call_response = ChatResponse(
-            content=json.dumps({
-                "tool_calls": [
-                    {"tool": "web_search", "args": {"query": "test"}},
-                ],
-            })
-        )
-        verification_result = ChatResponse(
-            content=json.dumps({
-                "fact_results": [{"fact_id": "f001", "result": "verified", "evidence": "OK"}],
-                "conclusion_results": [],
-                "new_unknown_facts": [],
-                "goal_met": True,
-                "goal_assessment": "Done",
-                "route": "accept",
-            })
-        )
-        mock_model["client"].chat_completion = AsyncMock(
-            side_effect=[tool_call_response, verification_result]
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=REVIEW_RESPONSE
         )
 
-        executor = AsyncMock()
-        executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(tool_name="web_search", output="result", duration_ms=50, success=True),
-        ])
-        _services["tool_executor"] = executor
-
-        from moira.workflow.nodes.verification import verification
+        from moira.workflow.nodes.research_review import research_review
 
         state = _build_state(config, "Test question")
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", claim="z", status="unverified"),
         ]
-        state["execution_state"]["candidate_tools"] = [
-            ToolDefinition(name="web_search", description="Search"),
-        ]
-        state["execution_state"]["tool_costs"] = {"web_search": 5.0}
 
-        await verification(state, _make_run_config(config))
+        await research_review(state, _make_run_config(config))
 
-        # Find the node_end event and check structured_output
         node_end_events = [
             e for e in mock_writer
             if isinstance(e, dict) and e.get("event") == "node_end"
@@ -1230,59 +1119,177 @@ class TestVerification:
         assert len(node_end_events) == 1
         so = node_end_events[0]["payload"]["detail"]["structured_output"]
         assert "fact_results" in so
-        assert "conclusion_results" in so
-        assert "goal_met" in so
+        assert "coverage_assessment" in so
+        assert "missing_areas" in so
         assert "route" in so
-        assert "tool_calls" not in so
 
     @pytest.mark.asyncio
-    async def test_tool_call_limit_enforced(self, config, mock_writer, mock_model):
-        """Tool calls that exceed the call limit should be skipped, and the
-        node should fail because no verification result was produced."""
+    async def test_model_uses_status_key_instead_of_result(
+        self, config, mock_writer, mock_model
+    ):
+        """Models sometimes return 'status' instead of the documented 'result'
+        field name. The node should handle this gracefully — the verdict is
+        critical for routing (regression test for field name mismatch bug)."""
         _inject_services(config, mock_model)
-
-        tool_call_response = ChatResponse(
+        mock_model["client"].chat_completion.return_value = ChatResponse(
             content=json.dumps({
-                "tool_calls": [
-                    {"tool": "web_search", "args": {"query": "test"}},
+                "fact_results": [
+                    {"fact_id": "f001", "status": "verified",
+                     "evaluation": "Confirmed by source"},
                 ],
+                "coverage_assessment": "All good",
+                "missing_areas": [],
+                "route": "continue",
             })
         )
-        verification_result = ChatResponse(
-            content=json.dumps({
-                "fact_results": [],
-                "conclusion_results": [],
-                "new_unknown_facts": [],
-                "goal_met": True,
-                "goal_assessment": "Done",
-                "route": "accept",
-            })
-        )
-        mock_model["client"].chat_completion = AsyncMock(
-            side_effect=[tool_call_response, verification_result]
-        )
 
-        executor = AsyncMock()
-        executor.execute_batch = AsyncMock(return_value=[])
-        _services["tool_executor"] = executor
-
-        from moira.workflow.nodes.verification import verification
+        from moira.workflow.nodes.research_review import research_review
 
         state = _build_state(config, "Test question")
         state["knowledge"]["facts"] = [
-            Fact(id="f001", subject="x", fact_needed="y", claim="z", status="unverified"),
+            Fact(id="f001", subject="x", fact_needed="y",
+                 claim="z", status="unverified"),
         ]
-        state["execution_state"]["candidate_tools"] = [
-            ToolDefinition(name="web_search", description="Search"),
+
+        result = await research_review(state, _make_run_config(config))
+
+        assert result["knowledge"]["facts"][0]["status"] == "verified"
+
+
+# ===========================================================================
+# EVALUATION
+# ===========================================================================
+
+
+class TestEvaluation:
+
+    @pytest.mark.asyncio
+    async def test_happy_path(self, config, mock_writer, mock_model):
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=EVALUATION_RESPONSE
+        )
+
+        from moira.workflow.nodes.evaluation import evaluation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y",
+                 claim="z", status="verified"),
         ]
-        state["execution_state"]["tool_call_limits"] = {"web_search": 1}
-        state["execution_state"]["tool_call_counts"] = {"web_search": 1}
+        state["knowledge"]["conclusions"] = [
+            Conclusion(
+                id="c001", conclusion="Entity1 is confirmed",
+                supporting_fact_ids=["f001"], status="unverified",
+            ),
+        ]
+
+        result = await evaluation(state, _make_run_config(config))
+
+        assert result["knowledge"]["conclusions"][0]["status"] == "verified"
+
+        history = result["knowledge"]["evaluation_history"]
+        assert len(history) == 1
+        assert history[0]["goal_met"] is True
+        assert history[0]["route"] == "accept"
+
+        step_cost = config.budget.cost_weights.evaluation
+        assert result["execution_state"]["budget_remaining"] == (
+            config.budget.default_limit - step_cost
+        )
+        assert result["execution_state"]["evaluation_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_budget_exhaustion(self, config, mock_writer, mock_model):
+        _inject_services(config, mock_model)
+
+        from moira.workflow.nodes.evaluation import evaluation
+
+        state = _build_state(config, "Test question")
+        state["execution_state"]["budget_remaining"] = 0.0
+
+        result = await evaluation(state, _make_run_config(config))
+
+        assert "error" in result["execution_state"]
+        assert "Insufficient budget" in result["execution_state"]["error"]
+
+    @pytest.mark.asyncio
+    async def test_model_failure(self, config, mock_writer, mock_model):
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.side_effect = RuntimeError("Model error")
+
+        from moira.workflow.nodes.evaluation import evaluation
+
+        state = _build_state(config, "Test question")
+
+        with pytest.raises(RuntimeError, match="Model error"):
+            await evaluation(state, _make_run_config(config))
+
+    @pytest.mark.asyncio
+    async def test_retry_route_resets_review_count(
+        self, config, mock_writer, mock_model
+    ):
+        """When evaluation route is 'retry', review_count should be reset to 0."""
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=EVALUATION_RETRY_RESPONSE
+        )
+
+        from moira.workflow.nodes.evaluation import evaluation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["conclusions"] = [
+            Conclusion(id="c001", conclusion="Something",
+                       supporting_fact_ids=["f001"], status="unverified"),
+        ]
+        state["execution_state"]["review_count"] = 2
+
+        result = await evaluation(state, _make_run_config(config))
+
+        assert result["knowledge"]["evaluation_history"][0]["route"] == "retry"
+        assert result["execution_state"]["review_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_accept_route_preserves_review_count(
+        self, config, mock_writer, mock_model
+    ):
+        """When evaluation route is 'accept', review_count should NOT be reset."""
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=EVALUATION_RESPONSE
+        )
+
+        from moira.workflow.nodes.evaluation import evaluation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["conclusions"] = [
+            Conclusion(id="c001", conclusion="Something",
+                       supporting_fact_ids=["f001"], status="unverified"),
+        ]
+        state["execution_state"]["review_count"] = 2
+
+        result = await evaluation(state, _make_run_config(config))
+
+        assert result["execution_state"]["review_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_parse_failure_raises(self, config, mock_writer, mock_model):
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content="not json"
+        )
+
+        from moira.workflow.nodes.evaluation import evaluation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["conclusions"] = [
+            Conclusion(id="c001", conclusion="X",
+                       supporting_fact_ids=["f001"], status="unverified"),
+        ]
 
         with pytest.raises(RuntimeError, match="unparseable JSON"):
-            await verification(state, _make_run_config(config))
-
-        # Tool executor should NOT be called (limit already reached)
-        executor.execute_batch.assert_not_called()
+            await evaluation(state, _make_run_config(config))
 
 
 # ===========================================================================
@@ -1390,18 +1397,16 @@ class TestReportGeneration:
         from moira.workflow.nodes.report_generation import report_generation
 
         state = _build_state(config, "Test question")
-        state["knowledge"]["verification_history"] = [
-            VerificationOutcome(
-                fact_results=[], conclusion_results=[], new_unknown_facts=[],
-                goal_met=False, goal_assessment="Incomplete", route="retry_research",
-            ),
+        state["knowledge"]["evaluation_history"] = [
+            {"conclusion_results": [], "goal_met": False,
+             "goal_assessment": "Incomplete", "route": "retry"},
         ]
 
         result = await report_generation(state, _make_run_config(config))
         assert result["knowledge"]["generation_path"] == "retry_overruled"
 
     @pytest.mark.asyncio
-    async def test_no_verification_history_is_budget_exhausted(
+    async def test_no_evaluation_history_is_budget_exhausted(
         self, config, mock_writer, mock_model,
     ):
         _inject_services(config, mock_model)
@@ -1431,11 +1436,9 @@ class TestReportGeneration:
         state["knowledge"]["conclusions"] = [
             Conclusion(id="c001", conclusion="A", supporting_fact_ids=[], status="contradicted"),
         ]
-        state["knowledge"]["verification_history"] = [
-            VerificationOutcome(
-                fact_results=[], conclusion_results=[], new_unknown_facts=[],
-                goal_met=True, goal_assessment="Done", route="accept",
-            ),
+        state["knowledge"]["evaluation_history"] = [
+            {"conclusion_results": [], "goal_met": True,
+             "goal_assessment": "Done", "route": "accept"},
         ]
 
         result = await report_generation(state, _make_run_config(config))
