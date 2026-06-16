@@ -578,9 +578,16 @@ class TestResearch:
 
         mock_executor = AsyncMock()
         mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(tool_name="web_search",
-                       output="Entity1 is confirmed",
-                       success=True, duration_ms=100),
+            ToolResult(
+                tool_name="web_search",
+                output="Entity1 is confirmed",
+                success=True,
+                duration_ms=100,
+                metadata={"results": [
+                    {"title": "Entity1 Page", "url": "https://example.com/entity1",
+                     "snippet": "Entity1 is confirmed"},
+                ]},
+            ),
         ])
         _services["tool_executor"] = mock_executor
 
@@ -591,7 +598,8 @@ class TestResearch:
             ChatResponse(content=json.dumps({
                 "tool_calls": [],
                 "discovered_facts": [
-                    {"fact_id": "f001", "claim": "Entity1 confirmed"},
+                    {"fact_id": "f001", "claim": "Entity1 confirmed",
+                     "citation_ids": ["cit001"]},
                 ],
                 "sources": [],
             })),
@@ -620,6 +628,12 @@ class TestResearch:
         assert "confirmed" in result["knowledge"]["facts"][0]["claim"].lower()
 
         assert len(result["knowledge"]["citations"]) >= 1
+        cit = result["knowledge"]["citations"][0]
+        assert cit["url"] == "https://example.com/entity1"
+        assert cit["title"] == "Entity1 Page"
+        assert len(result["knowledge"]["facts"][0].get("citation_ids", [])) >= 1, (
+            "Fact should be linked to at least one citation from tool execution"
+        )
         assert result["execution_state"]["tool_call_counts"]["web_search"] == 1
         assert result["execution_state"]["total_tool_cost_consumed"] == 1.0
 
@@ -727,6 +741,649 @@ class TestResearch:
         result = await research(state, _make_run_config(config))
 
         assert result["knowledge"]["facts"][0]["status"] == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_citation_linked_when_discovered_facts_come_first(
+        self, config, mock_writer, mock_model
+    ):
+        """Citations must be linked to facts even when the model returns
+        discovered_facts in the same round as tool_calls (before tools run).
+        _apply_discovered_facts changes status to 'unverified' before tool
+        execution, so plan-matching must accept 'unverified' facts too.
+
+        Regression test for citation_ids=[] bug where all report citations
+        collapsed to [1] because no facts were linked to any sources."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[
+            ToolResult(tool_name="web_search", output="Result data",
+                       success=True, duration_ms=100),
+        ])
+        _services["tool_executor"] = mock_executor
+
+        # Round 1: model returns tool_calls. Round 2: model sees [cit001]
+        # labeled result and returns discovered_facts with citation_ids.
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(content=json.dumps({
+                "tool_calls": [{"tool": "web_search", "args": {"query": "test"}}],
+                "discovered_facts": [],
+                "sources": [],
+            })),
+            ChatResponse(content=json.dumps({
+                "tool_calls": [],
+                "discovered_facts": [
+                    {"fact_id": "f001", "claim": "Entity1 confirmed",
+                     "citation_ids": ["cit001"]},
+                ],
+                "sources": [],
+            })),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="entity1", fact_needed="some fact",
+                 status="unknown"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(tool="web_search", args={"query": "entity1"},
+                         target_fact_ids=["f001"], cost=1.0),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search the web"),
+        ]
+
+        result = await research(state, _make_run_config(config))
+
+        fact = result["knowledge"]["facts"][0]
+        assert fact["status"] == "unverified"
+        assert "cit001" in fact.get("citation_ids", []), (
+            "Fact should have citation_ids linked from the model's "
+            "discovered_facts response. "
+            f"Got citation_ids={fact.get('citation_ids', [])}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_structured_results_create_per_result_citations(
+        self, config, mock_writer, mock_model
+    ):
+        """When web_search metadata carries structured results, one citation
+        is created per search result, each with url/title/excerpt."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[
+            ToolResult(
+                tool_name="web_search",
+                output="formatted text output",
+                success=True,
+                duration_ms=100,
+                metadata={"results": [
+                    {"title": "First", "url": "https://a.com",
+                     "snippet": "snippet A"},
+                    {"title": "Second", "url": "https://b.com",
+                     "snippet": "snippet B"},
+                    {"title": "Third", "url": "https://c.com",
+                     "snippet": "snippet C"},
+                ]},
+            ),
+        ])
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(content=json.dumps({
+                "tool_calls": [{"tool": "web_search", "args": {"query": "test"}}],
+                "discovered_facts": [],
+                "sources": [],
+            })),
+            ChatResponse(content=json.dumps({
+                "tool_calls": [],
+                "discovered_facts": [
+                    {"fact_id": "f001", "claim": "found it",
+                     "citation_ids": ["cit002"]},
+                ],
+                "sources": [],
+            })),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(tool="web_search", args={"query": "x"},
+                         target_fact_ids=["f001"], cost=1.0),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search the web"),
+        ]
+
+        result = await research(state, _make_run_config(config))
+
+        citations = result["knowledge"]["citations"]
+        assert len(citations) == 3
+        assert citations[0]["id"] == "cit001"
+        assert citations[0]["url"] == "https://a.com"
+        assert citations[0]["title"] == "First"
+        assert citations[0]["excerpt"] == "snippet A"
+        assert citations[0]["snippets"] == ["snippet A"]
+        assert citations[1]["id"] == "cit002"
+        assert citations[1]["url"] == "https://b.com"
+        assert citations[2]["id"] == "cit003"
+        assert citations[2]["url"] == "https://c.com"
+
+    @pytest.mark.asyncio
+    async def test_no_metadata_falls_back_to_single_citation(
+        self, config, mock_writer, mock_model
+    ):
+        """Tools without metadata (e.g., url_content, calculator) still
+        get a single citation with text excerpt."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[
+            ToolResult(tool_name="url_content",
+                       output="# Some Page\n\nLots of content here.",
+                       success=True, duration_ms=100),
+        ])
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(content=json.dumps({
+                "tool_calls": [{"tool": "url_content", "args": {"url": "https://x.com"}}],
+                "discovered_facts": [],
+                "sources": [],
+            })),
+            ChatResponse(content=json.dumps({
+                "tool_calls": [],
+                "discovered_facts": [
+                    {"fact_id": "f001", "claim": "found it",
+                     "citation_ids": ["cit001"]},
+                ],
+                "sources": [],
+            })),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(tool="url_content", args={"url": "https://x.com"},
+                         target_fact_ids=["f001"], cost=1.0),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="url_content", description="Fetch a URL"),
+        ]
+
+        result = await research(state, _make_run_config(config))
+
+        citations = result["knowledge"]["citations"]
+        assert len(citations) == 1
+        assert citations[0]["id"] == "cit001"
+        assert "url" not in citations[0] or citations[0].get("url") is None
+        assert "Some Page" in citations[0].get("excerpt", "")
+
+    @pytest.mark.asyncio
+    async def test_tool_result_display_truncation_note(
+        self, config, mock_writer, mock_model
+    ):
+        """When tool output exceeds the display limit, the writer event
+        should include a truncation note."""
+        _inject_services(config, mock_model)
+
+        long_output = "x" * 5000
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[
+            ToolResult(tool_name="url_content",
+                       output=long_output,
+                       success=True, duration_ms=100),
+        ])
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(content=json.dumps({
+                "tool_calls": [{"tool": "url_content", "args": {"url": "https://x.com"}}],
+                "discovered_facts": [],
+                "sources": [],
+            })),
+            ChatResponse(content=json.dumps({
+                "tool_calls": [],
+                "discovered_facts": [
+                    {"fact_id": "f001", "claim": "found it",
+                     "citation_ids": ["cit001"]},
+                ],
+                "sources": [],
+            })),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(tool="url_content", args={"url": "https://x.com"},
+                         target_fact_ids=["f001"], cost=1.0),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="url_content", description="Fetch a URL"),
+        ]
+
+        await research(state, _make_run_config(config))
+
+        # Find the tool_result event in mock_writer
+        tool_events = [
+            e for e in mock_writer
+            if isinstance(e, dict) and e.get("event") == "tool_result"
+        ]
+        assert len(tool_events) >= 1
+        payload = tool_events[0]["payload"]
+        assert "more chars not shown" in payload["output"]
+        assert len(payload["output"]) < len(long_output)
+
+    @pytest.mark.asyncio
+    async def test_citation_dedup_same_url_across_rounds(
+        self, config, mock_writer, mock_model
+    ):
+        """When the same URL appears in search results across multiple
+        research rounds, snippets are merged into a single citation."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+
+        async def _execute_batch(calls):
+            return [
+                ToolResult(
+                    tool_name="web_search",
+                    output="text",
+                    success=True,
+                    duration_ms=100,
+                    metadata={"results": [
+                        {"title": "Result", "url": "https://shared.com",
+                         "snippet": f"snippet from query '{calls[i][1]['query']}'"},
+                    ]},
+                )
+                for i in range(len(calls))
+            ]
+
+        mock_executor.execute_batch = AsyncMock(side_effect=_execute_batch)
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.side_effect = [
+            # Round 1: search
+            ChatResponse(content=json.dumps({
+                "tool_calls": [{"tool": "web_search", "args": {"query": "alpha"}}],
+                "discovered_facts": [],
+                "sources": [],
+            })),
+            # Round 2: search again (different query, same URL in results)
+            ChatResponse(content=json.dumps({
+                "tool_calls": [{"tool": "web_search", "args": {"query": "beta"}}],
+                "discovered_facts": [],
+                "sources": [],
+            })),
+            # Round 3: done
+            ChatResponse(content=json.dumps({
+                "tool_calls": [],
+                "discovered_facts": [
+                    {"fact_id": "f001", "claim": "found it",
+                     "citation_ids": ["cit001"]},
+                ],
+                "sources": [],
+            })),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(tool="web_search", args={"query": "x"},
+                         target_fact_ids=["f001"], cost=1.0),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search the web"),
+        ]
+
+        result = await research(state, _make_run_config(config))
+
+        citations = result["knowledge"]["citations"]
+        assert len(citations) == 1
+        assert citations[0]["url"] == "https://shared.com"
+        assert citations[0]["snippets"] == [
+            "snippet from query 'alpha'",
+            "snippet from query 'beta'",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_citation_dedup_same_url_same_batch(
+        self, config, mock_writer, mock_model
+    ):
+        """Two web_search calls in the same batch returning the same URL
+        should merge into one citation with two snippets."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[
+            ToolResult(
+                tool_name="web_search",
+                output="text",
+                success=True,
+                duration_ms=100,
+                metadata={"results": [
+                    {"title": "Shared", "url": "https://dup.com",
+                     "snippet": "snippet from first search"},
+                ]},
+            ),
+            ToolResult(
+                tool_name="web_search",
+                output="text",
+                success=True,
+                duration_ms=100,
+                metadata={"results": [
+                    {"title": "Shared", "url": "https://dup.com",
+                     "snippet": "snippet from second search"},
+                    {"title": "Unique", "url": "https://unique.com",
+                     "snippet": "only here"},
+                ]},
+            ),
+        ])
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.side_effect = [
+            # Round 1: two searches
+            ChatResponse(content=json.dumps({
+                "tool_calls": [
+                    {"tool": "web_search", "args": {"query": "a"}},
+                    {"tool": "web_search", "args": {"query": "b"}},
+                ],
+                "discovered_facts": [],
+                "sources": [],
+            })),
+            # Round 2: done
+            ChatResponse(content=json.dumps({
+                "tool_calls": [],
+                "discovered_facts": [],
+                "sources": [],
+            })),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(tool="web_search", args={"query": "x"},
+                         target_fact_ids=["f001"], cost=1.0),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search the web"),
+        ]
+
+        result = await research(state, _make_run_config(config))
+
+        citations = result["knowledge"]["citations"]
+        # dedup: dup.com merged, unique.com new
+        assert len(citations) == 2
+        dup = [c for c in citations if c.get("url") == "https://dup.com"][0]
+        assert dup["snippets"] == [
+            "snippet from first search",
+            "snippet from second search",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_apply_sources_dedup_by_url(
+        self, config, mock_writer, mock_model
+    ):
+        """Model-emitted sources with a URL that already has a citation
+        should merge instead of creating a duplicate."""
+        from moira.workflow.nodes.research import _find_or_merge_citation
+
+        citations: list = []
+        seen_urls: dict[str, str] = {}
+
+        # First call: creates a new citation
+        cit_id_1, is_new_1 = _find_or_merge_citation(
+            citations, seen_urls,
+            source="web_search",
+            url="https://example.com",
+            title="Example",
+            snippet="first snippet",
+        )
+        assert is_new_1 is True
+        assert cit_id_1 == "cit001"
+        assert len(citations) == 1
+        assert citations[0]["snippets"] == ["first snippet"]
+
+        # Second call: same URL, different snippet → merge
+        cit_id_2, is_new_2 = _find_or_merge_citation(
+            citations, seen_urls,
+            source="web_search",
+            url="https://example.com",
+            title="Example",
+            snippet="second snippet",
+        )
+        assert is_new_2 is False
+        assert cit_id_2 == "cit001"
+        assert len(citations) == 1
+        assert citations[0]["snippets"] == ["first snippet", "second snippet"]
+
+        # Third call: new URL → new citation
+        cit_id_3, is_new_3 = _find_or_merge_citation(
+            citations, seen_urls,
+            source="web_search",
+            url="https://other.com",
+            title="Other",
+            snippet="other snippet",
+        )
+        assert is_new_3 is True
+        assert cit_id_3 == "cit002"
+        assert len(citations) == 2
+
+    @pytest.mark.asyncio
+    async def test_find_or_merge_no_url_always_creates_new(
+        self, config, mock_writer, mock_model
+    ):
+        """When url is None (e.g., calculator results), each call creates
+        a new citation since there's nothing to dedup on."""
+        from moira.workflow.nodes.research import _find_or_merge_citation
+
+        citations: list = []
+        seen_urls: dict[str, str] = {}
+
+        cit_id_1, is_new_1 = _find_or_merge_citation(
+            citations, seen_urls,
+            source="calculator",
+            snippet="42",
+        )
+        cit_id_2, is_new_2 = _find_or_merge_citation(
+            citations, seen_urls,
+            source="calculator",
+            snippet="99",
+        )
+        assert is_new_1 is True
+        assert is_new_2 is True
+        assert cit_id_1 == "cit001"
+        assert cit_id_2 == "cit002"
+        assert len(citations) == 2
+
+    # ---- Overlap-aware snippet merge tests ----
+
+    def test_try_merge_snippets_suffix_prefix(self):
+        """A's suffix overlaps B's prefix → merged into one string."""
+        from moira.workflow.nodes.research import _try_merge_snippets
+
+        a = "The recipe uses cherries and sugar for maceration"
+        b = "cherries and sugar for maceration over one month"
+        result = _try_merge_snippets(a, b)
+        assert result == "The recipe uses cherries and sugar for maceration over one month"
+
+    def test_try_merge_snippets_reverse_direction(self):
+        """B's suffix overlaps A's prefix → merged (reverse direction)."""
+        from moira.workflow.nodes.research import _try_merge_snippets
+
+        a = "cherries and sugar for maceration over one month"
+        b = "The recipe uses cherries and sugar for maceration"
+        result = _try_merge_snippets(a, b)
+        assert result == "The recipe uses cherries and sugar for maceration over one month"
+
+    def test_try_merge_snippets_no_overlap(self):
+        """No meaningful overlap → None."""
+        from moira.workflow.nodes.research import _try_merge_snippets
+
+        result = _try_merge_snippets(
+            "Cherries are harvested in June",
+            "Bottling happens in December",
+        )
+        assert result is None
+
+    def test_try_merge_snippets_substring_is_handled(self):
+        """When one is a token-level substring of the other, overlap merge
+        finds the full overlap and produces the longer string."""
+        from moira.workflow.nodes.research import _try_merge_snippets
+
+        a = "Need cherries sugar brandy"
+        b = "Need cherries sugar brandy cinnamon cloves"
+        result = _try_merge_snippets(a, b)
+        assert result == "Need cherries sugar brandy cinnamon cloves"
+
+    def test_try_merge_snippets_case_insensitive(self):
+        """Overlap detection should be case-insensitive."""
+        from moira.workflow.nodes.research import _try_merge_snippets
+
+        a = "Add the Sugar and stir well"
+        b = "and stir well until dissolved"
+        result = _try_merge_snippets(a, b)
+        assert result is not None
+        assert "dissolved" in result
+
+    def test_try_merge_snippets_min_words_threshold(self):
+        """Overlap below min_words threshold should not merge."""
+        from moira.workflow.nodes.research import _try_merge_snippets
+
+        # Only 2 words overlap, default min is 3
+        result = _try_merge_snippets(
+            "the end",
+            "the beginning",
+            min_words=3,
+        )
+        assert result is None
+
+    def test_dedup_substring_keeps_longer(self):
+        """When new snippet is substring of existing, existing is kept."""
+        from moira.workflow.nodes.research import _find_or_merge_citation
+
+        citations: list = []
+        seen_urls: dict[str, str] = {}
+
+        # First: long snippet
+        _find_or_merge_citation(
+            citations, seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="Need cherries sugar brandy cinnamon cloves",
+        )
+        # Second: shorter version of same content
+        cit_id, is_new = _find_or_merge_citation(
+            citations, seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="Need cherries sugar",
+        )
+        assert is_new is False
+        assert len(citations) == 1
+        assert len(citations[0]["snippets"]) == 1
+        assert citations[0]["snippets"][0] == "Need cherries sugar brandy cinnamon cloves"
+
+    def test_dedup_existing_substring_replaced_by_longer(self):
+        """When existing snippet is substring of new, existing is replaced."""
+        from moira.workflow.nodes.research import _find_or_merge_citation
+
+        citations: list = []
+        seen_urls: dict[str, str] = {}
+
+        # First: short snippet
+        _find_or_merge_citation(
+            citations, seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="Need cherries sugar",
+        )
+        # Second: longer version
+        _find_or_merge_citation(
+            citations, seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="Need cherries sugar brandy cinnamon cloves",
+        )
+        assert len(citations) == 1
+        assert len(citations[0]["snippets"]) == 1
+        assert citations[0]["snippets"][0] == "Need cherries sugar brandy cinnamon cloves"
+
+    def test_dedup_overlap_merges_two_snippets(self):
+        """Suffix-prefix overlap → two snippets merged into one."""
+        from moira.workflow.nodes.research import _find_or_merge_citation
+
+        citations: list = []
+        seen_urls: dict[str, str] = {}
+
+        _find_or_merge_citation(
+            citations, seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="The recipe uses cherries and sugar for maceration",
+        )
+        _find_or_merge_citation(
+            citations, seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="cherries and sugar for maceration over one month",
+        )
+        assert len(citations) == 1
+        assert len(citations[0]["snippets"]) == 1
+        assert citations[0]["snippets"][0] == (
+            "The recipe uses cherries and sugar for maceration over one month"
+        )
+
+    def test_dedup_no_overlap_keeps_both(self):
+        """Genuinely different snippets for same URL → both kept."""
+        from moira.workflow.nodes.research import _find_or_merge_citation
+
+        citations: list = []
+        seen_urls: dict[str, str] = {}
+
+        _find_or_merge_citation(
+            citations, seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="Cherries are harvested in June",
+        )
+        _find_or_merge_citation(
+            citations, seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="Bottling happens in December",
+        )
+        assert len(citations) == 1
+        assert len(citations[0]["snippets"]) == 2
 
     @pytest.mark.asyncio
     async def test_empty_tool_plan(self, config, mock_writer, mock_model):
@@ -1317,19 +1974,30 @@ class TestReportGeneration:
             Conclusion(id="c001", conclusion="Confirmed",
                        supporting_fact_ids=["f001"], status="verified"),
         ]
-        state["knowledge"]["verification_history"] = [
-            VerificationOutcome(
-                fact_results=[], conclusion_results=[], new_unknown_facts=[],
-                goal_met=True, goal_assessment="Done", route="accept",
-            ),
+        state["knowledge"]["citations"] = [
+            {"id": "cit001", "source": "web_search",
+             "url": "https://example.com/result1",
+             "title": "First Result", "excerpt": "snippet A"},
+        ]
+        state["knowledge"]["evaluation_history"] = [
+            {"conclusion_results": [], "goal_met": True,
+             "goal_assessment": "Done", "route": "accept"},
         ]
 
         result = await report_generation(state, _make_run_config(config))
 
         assert result["knowledge"]["report"] is not None
-        assert result["knowledge"]["report"]["answer"] == "Entity1 is confirmed based on research."
+        assert "[1]" in result["knowledge"]["report"]["answer"]
         assert result["knowledge"]["report"]["generation_path"] == "verified"
         assert result["knowledge"]["generation_path"] == "verified"
+
+        # Report citations come from the knowledge model, not model JSON output.
+        # [1] in the answer references the first citation, so it's "cited".
+        report_citations = result["knowledge"]["report"]["citations"]
+        assert len(report_citations) == 1
+        assert report_citations[0]["url"] == "https://example.com/result1"
+        assert report_citations[0]["title"] == "First Result"
+        assert result["knowledge"]["report"]["uncited_sources"] == []
 
         step_cost = config.budget.cost_weights.report_generation
         assert result["execution_state"]["budget_remaining"] == (
@@ -1460,6 +2128,114 @@ class TestReportGeneration:
         result = await report_generation(state, _make_run_config(config))
 
         assert result["knowledge"]["report"]["tool_call_total_cost"] == 7.5
+
+    @pytest.mark.asyncio
+    async def test_citation_pruning_and_renumbering(
+        self, config, mock_writer, mock_model,
+    ):
+        """Citations not referenced in the answer are moved to
+        uncited_sources.  Referenced citations are renumbered sequentially."""
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps({
+                "answer": "Result from [1] and also [3].",
+                "citations": [],
+                "verified_facts": [],
+                "verified_conclusions": [],
+                "contradicted": [],
+                "unknown_facts": [],
+                "critiques": [],
+            })
+        )
+
+        from moira.workflow.nodes.report_generation import report_generation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["citations"] = [
+            {"id": "cit001", "source": "web_search",
+             "url": "https://a.com", "title": "A", "excerpt": "aa"},
+            {"id": "cit002", "source": "web_search",
+             "url": "https://b.com", "title": "B", "excerpt": "bb"},
+            {"id": "cit003", "source": "web_search",
+             "url": "https://c.com", "title": "C", "excerpt": "cc"},
+            {"id": "cit004", "source": "web_search",
+             "url": "https://d.com", "title": "D", "excerpt": "dd"},
+        ]
+
+        result = await report_generation(state, _make_run_config(config))
+        report = result["knowledge"]["report"]
+
+        # [1] and [3] cited → renumbered to [1] and [2]
+        assert "[1]" in report["answer"]
+        assert "[2]" in report["answer"]
+        assert "[3]" not in report["answer"]
+
+        assert len(report["citations"]) == 2
+        assert report["citations"][0]["url"] == "https://a.com"
+        assert report["citations"][1]["url"] == "https://c.com"
+
+        assert len(report["uncited_sources"]) == 2
+        assert report["uncited_sources"][0]["url"] == "https://b.com"
+        assert report["uncited_sources"][1]["url"] == "https://d.com"
+
+    @pytest.mark.asyncio
+    async def test_no_citation_markers_all_uncited(
+        self, config, mock_writer, mock_model,
+    ):
+        """When the model doesn't use [n] markers, all citations
+        go to uncited_sources."""
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps({
+                "answer": "Just a plain answer with no markers.",
+                "citations": [],
+                "verified_facts": [],
+                "verified_conclusions": [],
+                "contradicted": [],
+                "unknown_facts": [],
+                "critiques": [],
+            })
+        )
+
+        from moira.workflow.nodes.report_generation import report_generation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["citations"] = [
+            {"id": "cit001", "source": "web_search",
+             "url": "https://a.com", "title": "A", "excerpt": "aa"},
+            {"id": "cit002", "source": "web_search",
+             "url": "https://b.com", "title": "B", "excerpt": "bb"},
+        ]
+
+        result = await report_generation(state, _make_run_config(config))
+        report = result["knowledge"]["report"]
+
+        assert report["citations"] == []
+        assert len(report["uncited_sources"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_model_failure_puts_all_in_uncited(
+        self, config, mock_writer, mock_model,
+    ):
+        """When the model fails, the fallback answer has no markers,
+        so all citations go to uncited_sources."""
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.side_effect = RuntimeError("Model crashed")
+
+        from moira.workflow.nodes.report_generation import report_generation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["citations"] = [
+            {"id": "cit001", "source": "web_search",
+             "url": "https://a.com", "title": "A", "excerpt": "aa"},
+        ]
+
+        result = await report_generation(state, _make_run_config(config))
+        report = result["knowledge"]["report"]
+
+        assert report["citations"] == []
+        assert len(report["uncited_sources"]) == 1
+        assert report["uncited_sources"][0]["url"] == "https://a.com"
 
 
 # ===========================================================================

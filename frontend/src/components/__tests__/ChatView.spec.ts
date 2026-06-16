@@ -188,6 +188,7 @@ describe("ChatView", () => {
         report: {
           answer: "Mocked SSE response",
           citations: [],
+          uncited_sources: [],
           verified_facts: [],
           verified_conclusions: [],
           contradicted: [],
@@ -253,6 +254,7 @@ describe("ChatView", () => {
         report: {
           answer: "Done",
           citations: [],
+          uncited_sources: [],
           critiques: [],
           verified_facts: [],
           verified_conclusions: [],
@@ -325,6 +327,7 @@ describe("ChatView", () => {
         report: {
           answer: "Final answer",
           citations: [],
+          uncited_sources: [],
           critiques: [],
           verified_facts: [],
           verified_conclusions: [],
@@ -452,6 +455,7 @@ describe("ChatView", () => {
         report: {
           answer: "Rendered answer",
           citations: [],
+          uncited_sources: [],
           critiques: [],
           verified_facts: [],
           verified_conclusions: [],
@@ -526,6 +530,7 @@ describe("ChatView", () => {
         report: {
           answer: "Persisted answer",
           citations: [],
+          uncited_sources: [],
           critiques: [],
           verified_facts: [],
           verified_conclusions: [],

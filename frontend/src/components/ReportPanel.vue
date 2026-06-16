@@ -18,6 +18,7 @@ const props = defineProps<{ report: ResearchReport }>();
 const report = computed(() => ({
   ...props.report,
   citations: props.report.citations ?? [],
+  uncited_sources: props.report.uncited_sources ?? [],
   verified_facts: props.report.verified_facts ?? [],
   verified_conclusions: props.report.verified_conclusions ?? [],
   contradicted: props.report.contradicted ?? [],
@@ -63,7 +64,16 @@ function buildFullReport(): string {
     for (const c of report.value.citations) {
       let line = `- ${c.source}`;
       if (c.url) line += ` — ${c.url}`;
-      if (c.excerpt) line += `\n  > ${c.excerpt}`;
+      const snippets = c.snippets ?? (c.excerpt ? [c.excerpt] : []);
+      for (const s of snippets) line += `\n  > ${s}`;
+      parts.push(line);
+    }
+  }
+  if (report.value.uncited_sources.length > 0) {
+    parts.push("\n\n## Additional Sources (consulted but not cited)\n");
+    for (const c of report.value.uncited_sources) {
+      let line = `- ${c.source}`;
+      if (c.url) line += ` — ${c.url}`;
       parts.push(line);
     }
   }
@@ -77,7 +87,14 @@ function buildFullReport(): string {
   }
   if (report.value.contradicted.length > 0) {
     parts.push("\n\n## Contradicted\n");
-    for (const c of report.value.contradicted) parts.push(`- ~~${c.subject ?? c.conclusion ?? c.id}~~`);
+    for (const c of report.value.contradicted) {
+      const main = c.claim
+        ? `${c.subject ? c.subject + ": " : ""}${c.claim}`
+        : (c.conclusion ?? c.id);
+      let line = `- ~~${main}~~`;
+      if (c.verification_note) line += `\n  → ${c.verification_note}`;
+      parts.push(line);
+    }
   }
   if (report.value.critiques.length > 0) {
     parts.push("\n\n## Critiques\n");
@@ -195,9 +212,43 @@ function handleTooltipLeave() {
             rel="noopener noreferrer"
             >{{ c.url }}</a
           >
-          <span v-if="c.excerpt" class="citation-excerpt">{{ c.excerpt }}</span>
+          <span
+            v-if="c.snippets && c.snippets.length"
+            class="citation-snippets"
+          >
+            <span
+              v-for="(s, si) in c.snippets"
+              :key="si"
+              class="citation-snippet"
+              >{{ s }}</span
+            >
+          </span>
+          <span v-else-if="c.excerpt" class="citation-excerpt">{{ c.excerpt }}</span>
         </li>
       </ol>
+    </div>
+
+    <div
+      v-if="report.uncited_sources.length > 0"
+      class="report-secondary-section report-uncited-sources"
+    >
+      <h4>Additional Sources <span class="uncited-count">({{ report.uncited_sources.length }} consulted, not cited)</span></h4>
+      <ul>
+        <li
+          v-for="(c, ci) in report.uncited_sources"
+          :key="ci"
+          class="uncited-source"
+        >
+          {{ c.source }}
+          <a
+            v-if="c.url"
+            :href="c.url"
+            target="_blank"
+            rel="noopener noreferrer"
+            >{{ c.url }}</a
+          >
+        </li>
+      </ul>
     </div>
 
     <div v-if="report.verified_facts.length > 0" class="report-secondary-section">
@@ -235,9 +286,12 @@ function handleTooltipLeave() {
           class="contradicted"
         >
           <MarkdownContent
-            :content="c.subject ?? c.conclusion ?? c.id"
+            :content="c.claim ? `${c.subject ? c.subject + ': ' : ''}${c.claim}` : (c.conclusion ?? c.id)"
             inline
           />
+          <span v-if="c.verification_note" class="contradiction-note">{{
+            c.verification_note
+          }}</span>
         </li>
       </ul>
     </div>

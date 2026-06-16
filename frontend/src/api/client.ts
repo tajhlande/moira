@@ -75,6 +75,7 @@ export interface CitationRecord {
   url?: string;
   title?: string;
   excerpt?: string;
+  snippets?: string[];
 }
 
 export interface KnowledgeSummary {
@@ -90,10 +91,11 @@ export interface KnowledgeSummary {
 
 export interface ResearchReport {
   answer: string;
-  citations: { source: string; url?: string; excerpt?: string }[];
+  citations: { source: string; url?: string; title?: string; excerpt?: string; snippets?: string[] }[];
+  uncited_sources: { source: string; url?: string; title?: string; excerpt?: string; snippets?: string[] }[];
   verified_facts: { id: string; subject: string; claim: string; status: string }[];
   verified_conclusions: { id: string; conclusion: string; status: string }[];
-  contradicted: { id: string; subject?: string; conclusion?: string; status: string }[];
+  contradicted: { id: string; subject?: string; conclusion?: string; claim?: string; verification_note?: string; status: string }[];
   unknown_facts: { id: string; subject: string; fact_needed: string; status: string }[];
   critiques: string[];
   total_cost: number;

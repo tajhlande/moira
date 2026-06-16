@@ -9,6 +9,7 @@ SearXNG supports standard search engine query syntax including ``site:``
 filters — the LLM can construct those directly in the query string."""
 
 import logging
+import re
 import time
 from typing import Any
 
@@ -20,6 +21,20 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 30.0
 _DEFAULT_MAX_RESULTS = 5
+
+# SearXNG / underlying engines (primarily Google) append "Missing: … |
+# Show results with:…" to snippet content when query terms aren't all
+# found.  This is a search-engine artifact, not real page content, so
+# we strip it at the source.
+_MISSING_RE = re.compile(
+    r"\s*Missing:.*?(?:Show results with:.*)?$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _clean_snippet(content: str) -> str:
+    """Remove SearXNG 'Missing:' / 'Show results with:' artifacts."""
+    return _MISSING_RE.sub("", content).strip()
 
 
 class WebSearchTool(BaseTool):
@@ -154,18 +169,32 @@ class WebSearchTool(BaseTool):
                 duration_ms=elapsed_ms,
             )
 
-        output = self._format_results(results[:max_results])
+        trimmed = results[:max_results]
+        output = self._format_results(trimmed)
         elapsed_ms = int((time.monotonic() - start) * 1000)
         logger.info(
             "web_search returned %d results for query '%s'",
-            min(len(results), max_results),
+            len(trimmed),
             query[:80],
         )
+
+        # Carry structured per-result data so downstream nodes can create
+        # citations with proper url/title without re-parsing the text output.
+        structured_results = [
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": _clean_snippet(r.get("content", "")),
+            }
+            for r in trimmed
+        ]
+
         return ToolResult(
             tool_name=self.name,
             output=output,
             success=True,
             duration_ms=elapsed_ms,
+            metadata={"results": structured_results},
         )
 
     @staticmethod
@@ -174,7 +203,7 @@ class WebSearchTool(BaseTool):
         for i, r in enumerate(results, 1):
             title = r.get("title", "Untitled")
             url = r.get("url", "")
-            snippet = r.get("content", "")
+            snippet = _clean_snippet(r.get("content", ""))
             engines = r.get("engines", [])
             engine_str = ", ".join(engines) if isinstance(engines, list) else str(engines)
             parts.append(f"[{i}] {title}")

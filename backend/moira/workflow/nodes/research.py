@@ -39,6 +39,21 @@ NODE_NAME = "research"
 DEFAULT_MAX_ROUNDS = 3
 DEFAULT_MAX_PARSE_RETRIES = 2
 
+_DISPLAY_OUTPUT_LIMIT = 2000
+
+
+def _truncate_for_display(text: str | None, limit: int = _DISPLAY_OUTPUT_LIMIT) -> str:
+    """Truncate text for the tool_result display event.
+
+    Adds a note at the end when content is omitted so the user knows
+    the full output was longer.
+    """
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n... ({len(text) - limit:,} more chars not shown)"
+
 
 def _format_tool_descriptions(tools: list[ToolDefinition]) -> str:
     """Format tool definitions with argument schemas for LLM consumption."""
@@ -203,6 +218,14 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
                         fact["relation"] = disc["relation"]
                     if disc.get("value"):
                         fact["value"] = disc["value"]
+                    # Merge citation_ids from the model's response into the
+                    # fact's existing set. The model references source IDs
+                    # (e.g., "cit001") that were labeled in the tool feedback.
+                    disc_cites = disc.get("citation_ids", [])
+                    if disc_cites:
+                        existing = set(fact.get("citation_ids", []))
+                        existing.update(c for c in disc_cites if isinstance(c, str))
+                        fact["citation_ids"] = sorted(existing)
                     fact["status"] = "unverified"
                     break
         elif disc.get("fact_needed"):
@@ -217,27 +240,122 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
             )
 
 
-def _apply_sources(parsed: dict, citations: list[Citation]) -> None:
-    """Apply sources from a model response to the citations list."""
+def _try_merge_snippets(a: str, b: str, min_words: int = 3) -> str | None:
+    """Merge two snippets if A's suffix overlaps B's prefix (or vice versa).
+
+    Returns the merged string, or ``None`` if no meaningful overlap
+    exists.  Uses word-level token comparison for robustness against
+    minor whitespace/punctuation differences.
+    """
+    t1 = a.split()
+    t2 = b.split()
+    if not t1 or not t2:
+        return None
+    # Try A-suffix overlaps B-prefix, then B-suffix overlaps A-prefix
+    for first, second in [(t1, t2), (t2, t1)]:
+        max_k = min(len(first), len(second))
+        for k in range(max_k, min_words - 1, -1):
+            if [w.lower() for w in first[-k:]] == [
+                w.lower() for w in second[:k]
+            ]:
+                return " ".join(first + second[k:])
+    return None
+
+
+def _find_or_merge_citation(
+    citations: list[Citation],
+    seen_urls: dict[str, str],
+    source: str,
+    url: str | None = None,
+    title: str | None = None,
+    snippet: str | None = None,
+) -> tuple[str, bool]:
+    """Find an existing citation by URL, or create a new one.
+
+    When the URL already has a citation, the snippet is merged into the
+    existing citation's ``snippets`` list using overlap-aware logic:
+
+    * Exact match (case-insensitive) → skip.
+    * One is a substring of the other → keep the longer version.
+    * Suffix-prefix token overlap (≥ 3 words) → merge into one.
+    * Otherwise → append as a genuinely distinct snippet.
+
+    Returns ``(citation_id, is_new)``.  ``is_new`` is ``False`` when the
+    citation was found and merged — callers can use this to annotate the
+    tool feedback (e.g. "recurring source").
+    """
+    if url and url in seen_urls:
+        cit_id = seen_urls[url]
+        for c in citations:
+            if c["id"] == cit_id:
+                if snippet:
+                    snippets = c.get("snippets", [])
+                    snippet_norm = snippet.strip().lower()
+                    merged_into = False
+                    for i, existing in enumerate(snippets):
+                        existing_norm = existing.strip().lower()
+                        # Exact duplicate → skip
+                        if snippet_norm == existing_norm:
+                            merged_into = True
+                            break
+                        # New is substring of existing → existing is more complete
+                        if snippet_norm in existing_norm:
+                            merged_into = True
+                            break
+                        # Existing is substring of new → replace with longer
+                        if existing_norm in snippet_norm:
+                            snippets[i] = snippet[:500]
+                            merged_into = True
+                            break
+                        # Suffix-prefix overlap → merge into one
+                        merged = _try_merge_snippets(existing, snippet)
+                        if merged:
+                            snippets[i] = merged[:500]
+                            merged_into = True
+                            break
+                    if not merged_into:
+                        snippets.append(snippet[:500])
+                    c["snippets"] = snippets
+                break
+        return cit_id, False
+
+    cit_id = next_id("cit", citations)
+    citation: Citation = {"id": cit_id, "source": source}
+    if url:
+        citation["url"] = url
+        seen_urls[url] = cit_id
+    if title:
+        citation["title"] = title
+    if snippet:
+        citation["excerpt"] = snippet
+        citation["snippets"] = [snippet[:500]]
+    citations.append(citation)
+    return cit_id, True
+
+
+def _apply_sources(
+    parsed: dict,
+    citations: list[Citation],
+    seen_urls: dict[str, str],
+) -> None:
+    """Apply sources from a model response to the citations list.
+
+    Deduplicates against existing citations by URL via *seen_urls*.
+    """
     sources = parsed.get("sources", [])
     if not isinstance(sources, list):
         return
-    seen_ids = {c["id"] for c in citations}
     for src in sources:
         if not isinstance(src, dict):
             continue
-        cit_id = next_id("cit", citations)
-        if cit_id not in seen_ids:
-            citations.append(
-                Citation(
-                    id=cit_id,
-                    source=src.get("source", ""),
-                    url=src.get("url"),
-                    title=src.get("title"),
-                    excerpt=src.get("excerpt"),
-                )
-            )
-            seen_ids.add(cit_id)
+        _find_or_merge_citation(
+            citations,
+            seen_urls,
+            source=src.get("source", ""),
+            url=src.get("url"),
+            title=src.get("title"),
+            snippet=src.get("excerpt"),
+        )
 
 
 async def _extract_facts_from_results(
@@ -336,6 +454,13 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
 
     facts = list(knowledge["facts"])
     citations = list(knowledge["citations"])
+
+    # Build URL → citation_id index for deduplication.  When multiple
+    # searches return the same URL, the snippet is merged into the
+    # existing citation rather than creating a duplicate.
+    _seen_urls: dict[str, str] = {
+        c["url"]: c["id"] for c in citations if c.get("url")
+    }
 
     candidate_tools = es.get("candidate_tools", [])
     tool_plan = es.get("tool_call_plan", [])
@@ -487,7 +612,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
 
         # Apply discovered facts and sources each round
         _apply_discovered_facts(parsed, facts)
-        _apply_sources(parsed, citations)
+        _apply_sources(parsed, citations, _seen_urls)
 
         # Extract tool calls from the parsed object
         parsed_calls = _extract_tool_calls(parsed)
@@ -532,7 +657,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
 
                 parsed = _parse_json_object(raw)
                 _apply_discovered_facts(parsed, facts)
-                _apply_sources(parsed, citations)
+                _apply_sources(parsed, citations, _seen_urls)
                 parsed_calls = _extract_tool_calls(parsed)
                 if not parsed_calls and "tool_calls" not in parsed:
                     parsed_calls = _parse_tool_calls(raw)
@@ -598,22 +723,53 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
                 "payload": {
                     "tool": result.tool_name,
                     "args": args,
-                    "output": result.output[:2000] if result.output else "",
+                    "output": _truncate_for_display(result.output),
                     "duration_ms": result.duration_ms,
                     "success": result.success,
                     "node": NODE_NAME,
+                    "metadata": result.metadata,
                 },
             })
 
-            # Create citation
-            cit_id = next_id("cit", citations)
-            citations.append(
-                Citation(
-                    id=cit_id,
-                    source=result.tool_name,
-                    excerpt=result.output[:500] if result.output else "",
+            structured = result.metadata.get("results")
+            if structured:
+                # Create or merge one citation per structured result
+                # (e.g., each web_search hit).  When a URL was already
+                # seen in a previous search, the snippet is merged into
+                # the existing citation instead of creating a duplicate.
+                for sr in structured:
+                    cit_id, is_new = _find_or_merge_citation(
+                        citations,
+                        _seen_urls,
+                        source=result.tool_name,
+                        url=sr.get("url") or None,
+                        title=sr.get("title") or None,
+                        snippet=sr.get("snippet") or None,
+                    )
+                    status = "SUCCESS" if result.success else "FAILED"
+                    recurring = "" if is_new else " (recurring source)"
+                    tool_summary_parts.append(
+                        f"[{cit_id}] Tool: {name}\nStatus: {status}{recurring}\n"
+                        f"Title: {sr.get('title', '')}\n"
+                        f"URL: {sr.get('url', '')}\n"
+                        f"Snippet: {sr.get('snippet', '')}"
+                    )
+            else:
+                # No structured metadata — create a single citation from
+                # the tool's text output (e.g., url_content, calculator).
+                cit_id = next_id("cit", citations)
+                citations.append(
+                    Citation(
+                        id=cit_id,
+                        source=result.tool_name,
+                        excerpt=result.output[:500] if result.output else "",
+                    )
                 )
-            )
+                status = "SUCCESS" if result.success else "FAILED"
+                tool_summary_parts.append(
+                    f"[{cit_id}] Tool: {name}\nStatus: {status}\n"
+                    f"Result:\n{result.output}"
+                )
 
             tool_results_log.append({
                 "tool": result.tool_name,
@@ -621,13 +777,12 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
                 "output": result.output[:500] if result.output else "",
                 "duration_ms": result.duration_ms,
                 "success": result.success,
+                "metadata": result.metadata,
             })
 
-            # Update any target facts from the plan that match this tool.
-            # Only mark as unverified if the call succeeded and produced output.
-            # Do NOT set the claim here — the model's discovered_facts or
-            # post-loop extraction will provide a proper claim. Setting the raw
-            # tool output as the claim produces poor synthesis input.
+            # Mark target facts as having evidence if the tool succeeded.
+            # Citation linking is handled by the model's discovered_facts
+            # (which include citation_ids referencing the source labels).
             if result.success and result.output:
                 for planned in tool_plan:
                     if planned["tool"] == name:
@@ -638,20 +793,12 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
                                 and fact["status"] == "unknown"
                             ):
                                 fact["status"] = "unverified"
-                                if fact.get("citation_ids") is None:
-                                    fact["citation_ids"] = []
-                                fact["citation_ids"].append(cit_id)
 
             # Track call counts and per-call tool cost
             call_counts[name] = call_counts.get(name, 0) + 1
             per_call_cost = tool_costs.get(name, 1.0)
             new_budget -= per_call_cost
             total_tool_cost += per_call_cost
-
-            status = "SUCCESS" if result.success else "FAILED"
-            tool_summary_parts.append(
-                f"Tool: {name}\nStatus: {status}\nResult:\n{result.output}"
-            )
 
         # Feed results back to model for next round
         tool_summary = "\n\n---\n\n".join(tool_summary_parts)
@@ -693,7 +840,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
                 last_thinking = getattr(summary_response, "thinking", "") or ""
                 summary_parsed = _parse_json_object(summary_raw)
                 _apply_discovered_facts(summary_parsed, facts)
-                _apply_sources(summary_parsed, citations)
+                _apply_sources(summary_parsed, citations, _seen_urls)
         except Exception:
             logger.warning("RESEARCH: final summary round failed", exc_info=True)
 

@@ -49,13 +49,20 @@ class ToolDefinition:
 @dataclass
 class ToolResult:
     """Structured result from tool execution. Always produced, even on
-    failure, so the model can reason about what went wrong."""
+    failure, so the model can reason about what went wrong.
+
+    ``metadata`` carries structured data that tools want to expose to the
+    pipeline (e.g., per-result url/title from web_search). The ``output``
+    field remains the human/LLM-readable text; ``metadata`` is the
+    machine-readable complement that downstream nodes (citation creation,
+    persistence) can inspect."""
 
     tool_name: str
     output: str
     success: bool = True
     duration_ms: int = 0
     error: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class BaseTool(ABC):

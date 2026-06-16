@@ -32,7 +32,8 @@ class Citation(TypedDict):
     source: str
     url: NotRequired[str]
     title: NotRequired[str]
-    excerpt: NotRequired[str]
+    excerpt: NotRequired[str]        # primary snippet (first search result)
+    snippets: NotRequired[list[str]] # all snippets from different searches
 
 
 class Fact(TypedDict):
@@ -140,6 +141,7 @@ class ResearchState(TypedDict):
 class ResearchReport(TypedDict):
     answer: str
     citations: list[dict]
+    uncited_sources: list[dict]
     verified_facts: list[dict]
     verified_conclusions: list[dict]
     contradicted: list[dict]
@@ -212,6 +214,7 @@ def knowledge_summary(knowledge: Knowledge) -> dict:
                 "url": c.get("url"),
                 "title": c.get("title"),
                 "excerpt": c.get("excerpt"),
+                "snippets": c.get("snippets"),
             }
             for c in knowledge.get("citations", [])
         ],

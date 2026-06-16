@@ -119,6 +119,37 @@ class TestWebSearchUnit:
         assert "[3] Third Result" in r.output
 
     @pytest.mark.asyncio
+    async def test_metadata_has_structured_results(self):
+        """ToolResult.metadata should carry per-result title/url/snippet
+        so downstream nodes can create citations without re-parsing text."""
+        tool = _make_tool(handler=_searxng_handler(SEARXNG_RESPONSE))
+        r = await tool.execute({"query": "test query"})
+        assert r.success
+        assert "results" in r.metadata
+        structured = r.metadata["results"]
+        assert len(structured) == 3
+        assert structured[0]["title"] == "First Result"
+        assert structured[0]["url"] == "https://example.com/result1"
+        assert structured[0]["snippet"] == "This is the first search result snippet."
+        assert structured[2]["url"] == "https://example.net/result3"
+
+    @pytest.mark.asyncio
+    async def test_metadata_respects_max_results(self):
+        tool = _make_tool(handler=_searxng_handler(SEARXNG_RESPONSE))
+        r = await tool.execute({"query": "test", "max_results": 2})
+        assert r.success
+        assert len(r.metadata["results"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_metadata_empty_on_no_results(self):
+        tool = _make_tool(
+            handler=_searxng_handler({"query": "obscure", "results": []}),
+        )
+        r = await tool.execute({"query": "obscure"})
+        assert r.success
+        assert r.metadata == {}
+
+    @pytest.mark.asyncio
     async def test_max_results_limits_output(self):
         tool = _make_tool(handler=_searxng_handler(SEARXNG_RESPONSE))
         r = await tool.execute({"query": "test", "max_results": 2})
@@ -263,3 +294,48 @@ class TestWebSearchUnit:
         r = await tool.execute({"query": "test"})
         assert r.success
         assert r.duration_ms >= 0
+
+    @pytest.mark.asyncio
+    async def test_missing_artifact_stripped_from_metadata(self):
+        """SearXNG/Google 'Missing:' text should be stripped from snippets."""
+        response = {
+            "results": [
+                {
+                    "url": "https://example.com/recipe",
+                    "title": "Recipe",
+                    "content": (
+                        "Need 2 cups cherries, 1 mesh strainer"
+                        "Missing: variety | Show results with:variety"
+                    ),
+                    "engines": ["google"],
+                },
+            ],
+        }
+        tool = _make_tool(handler=_searxng_handler(response))
+        r = await tool.execute({"query": "cherry recipe"})
+        assert r.success
+        structured = r.metadata["results"]
+        assert "Missing:" not in structured[0]["snippet"]
+        assert "Show results" not in structured[0]["snippet"]
+        assert structured[0]["snippet"] == "Need 2 cups cherries, 1 mesh strainer"
+
+    @pytest.mark.asyncio
+    async def test_missing_artifact_stripped_from_output(self):
+        """SearXNG/Google 'Missing:' text should also be stripped from
+        the formatted text output given to the model."""
+        response = {
+            "results": [
+                {
+                    "url": "https://example.com/recipe",
+                    "title": "Recipe",
+                    "content": "Some content here Missing: sugar | Show results with:sugar",
+                    "engines": ["google"],
+                },
+            ],
+        }
+        tool = _make_tool(handler=_searxng_handler(response))
+        r = await tool.execute({"query": "recipe"})
+        assert r.success
+        assert "Missing:" not in r.output
+        assert "Show results" not in r.output
+        assert "Some content here" in r.output
