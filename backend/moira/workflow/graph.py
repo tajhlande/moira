@@ -36,14 +36,14 @@ from moira.workflow.nodes.tool_identification import tool_identification
 
 logger = logging.getLogger(__name__)
 
-# Default retry attempt limits (configurable via system/conversation settings).
-DEFAULT_REVIEW_MAX_ATTEMPTS = 3
-DEFAULT_EVALUATION_MAX_ATTEMPTS = 2
-
 
 def make_review_router():
     """Return a routing function that checks research_review outcome against
-    budget and retry limits."""
+    budget and retry limits.
+
+    Reads ``retry_limits`` from ``execution_state`` (populated from system
+    settings at run start). Falls back to 3 if absent.
+    """
 
     def route_after_review(state: ResearchState) -> str:
         es = state.get("execution_state", {})
@@ -65,24 +65,22 @@ def make_review_router():
             review_count = es.get("review_count", 0)
             budget_remaining = es.get("budget_remaining", 0.0)
             rr_cost = review_retry_cost(step_costs)
+            max_review = es.get("retry_limits", {}).get("max_review", 3)
 
-            # Default limit: 3 attempts (initial + 2 retries within an
-            # evaluation cycle). review_count is reset to 0 by the
-            # evaluation node when it triggers a retry.
-            if review_count < DEFAULT_REVIEW_MAX_ATTEMPTS and budget_remaining >= rr_cost:
+            if review_count < max_review and budget_remaining >= rr_cost:
                 logger.info(
                     "review retry: budget sufficient (%.1f >= %.1f), count=%d/%d",
                     budget_remaining,
                     rr_cost,
                     review_count,
-                    DEFAULT_REVIEW_MAX_ATTEMPTS,
+                    max_review,
                 )
                 return "research"
 
             logger.info(
                 "review retry declined (count=%d/%d, budget=%.1f, cost=%.1f)",
                 review_count,
-                DEFAULT_REVIEW_MAX_ATTEMPTS,
+                max_review,
                 budget_remaining,
                 rr_cost,
             )
@@ -96,7 +94,11 @@ def make_review_router():
 
 def make_evaluation_router():
     """Return a routing function that checks evaluation outcome against
-    budget and retry limits."""
+    budget and retry limits.
+
+    Reads ``retry_limits`` from ``execution_state`` (populated from system
+    settings at run start). Falls back to 2 if absent.
+    """
 
     def route_after_evaluation(state: ResearchState) -> str:
         es = state.get("execution_state", {})
@@ -118,22 +120,22 @@ def make_evaluation_router():
             evaluation_count = es.get("evaluation_count", 0)
             budget_remaining = es.get("budget_remaining", 0.0)
             er_cost = evaluation_retry_cost(step_costs)
+            max_evaluation = es.get("retry_limits", {}).get("max_evaluation", 2)
 
-            # Default limit: 2 attempts (initial + 1 retry).
-            if evaluation_count < DEFAULT_EVALUATION_MAX_ATTEMPTS and budget_remaining >= er_cost:
+            if evaluation_count < max_evaluation and budget_remaining >= er_cost:
                 logger.info(
                     "evaluation retry: budget sufficient (%.1f >= %.1f), count=%d/%d",
                     budget_remaining,
                     er_cost,
                     evaluation_count,
-                    DEFAULT_EVALUATION_MAX_ATTEMPTS,
+                    max_evaluation,
                 )
                 return "tool_identification"
 
             logger.info(
                 "evaluation retry declined (count=%d/%d, budget=%.1f, cost=%.1f)",
                 evaluation_count,
-                DEFAULT_EVALUATION_MAX_ATTEMPTS,
+                max_evaluation,
                 budget_remaining,
                 er_cost,
             )

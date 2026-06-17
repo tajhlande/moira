@@ -57,6 +57,7 @@ def _truncate_for_display(text: str | None, limit: int = _DISPLAY_OUTPUT_LIMIT) 
 
 def _format_tool_descriptions(tools: list[ToolDefinition]) -> str:
     """Format tool definitions with argument schemas for LLM consumption."""
+
     def _render(tool) -> str:
         if not isinstance(tool, ToolDefinition):
             return f"- {tool.name}: {getattr(tool, 'description', '')}"
@@ -255,9 +256,7 @@ def _try_merge_snippets(a: str, b: str, min_words: int = 3) -> str | None:
     for first, second in [(t1, t2), (t2, t1)]:
         max_k = min(len(first), len(second))
         for k in range(max_k, min_words - 1, -1):
-            if [w.lower() for w in first[-k:]] == [
-                w.lower() for w in second[:k]
-            ]:
+            if [w.lower() for w in first[-k:]] == [w.lower() for w in second[:k]]:
                 return " ".join(first + second[k:])
     return None
 
@@ -433,13 +432,15 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     es = state["execution_state"]
     knowledge = state["knowledge"]
     if not can_execute(es["step_costs"], NODE_NAME, es["budget_remaining"]):
-        writer({
-            "event": "node_end",
-            "payload": {
-                "node": NODE_NAME,
-                "budget_remaining": es["budget_remaining"],
-            },
-        })
+        writer(
+            {
+                "event": "node_end",
+                "payload": {
+                    "node": NODE_NAME,
+                    "budget_remaining": es["budget_remaining"],
+                },
+            }
+        )
         return {
             "execution_state": {
                 **es,
@@ -458,9 +459,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     # Build URL → citation_id index for deduplication.  When multiple
     # searches return the same URL, the snippet is merged into the
     # existing citation rather than creating a duplicate.
-    _seen_urls: dict[str, str] = {
-        c["url"]: c["id"] for c in citations if c.get("url")
-    }
+    _seen_urls: dict[str, str] = {c["url"]: c["id"] for c in citations if c.get("url")}
 
     candidate_tools = es.get("candidate_tools", [])
     tool_plan = es.get("tool_call_plan", [])
@@ -487,18 +486,20 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             "executor_available": executor is not None,
             "rounds": 0,
         }
-        writer({
-            "event": "node_end",
-            "payload": {
-                "node": NODE_NAME,
-                "budget_remaining": new_budget,
-                "detail": detail,
-                "purpose": NODE_NAME,
-                "model": "",
-                "call_count": 0,
-                "tool_call_count": 0,
-            },
-        })
+        writer(
+            {
+                "event": "node_end",
+                "payload": {
+                    "node": NODE_NAME,
+                    "budget_remaining": new_budget,
+                    "detail": detail,
+                    "purpose": NODE_NAME,
+                    "model": "",
+                    "call_count": 0,
+                    "tool_call_count": 0,
+                },
+            }
+        )
         return {
             "knowledge": {
                 "facts": facts,
@@ -522,17 +523,11 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     # When re-entered from research_review retry, add feedback about gaps
     review_count = es.get("review_count", 0)
     review_history = knowledge.get("review_history", [])
-    if (
-        review_count > 0
-        and bool(review_history)
-        and review_history[-1].get("route") == "retry"
-    ):
+    if review_count > 0 and bool(review_history) and review_history[-1].get("route") == "retry":
         last_review = review_history[-1]
         system_prompt += "\n\n" + get_prompt("research.system_retry_review").format(
             coverage_assessment=last_review.get("coverage_assessment", ""),
-            missing_areas="\n".join(
-                f"- {area}" for area in last_review.get("missing_areas", [])
-            ),
+            missing_areas="\n".join(f"- {area}" for area in last_review.get("missing_areas", [])),
         )
 
     user_prompt = get_prompt("research.user").format(
@@ -584,24 +579,26 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
                 round_num + 1,
                 len(last_thinking),
             )
-            writer({
-                "event": "run_error",
-                "payload": {
-                    "error": f"Model returned empty content for {NODE_NAME}",
-                    "budget_remaining": new_budget,
-                    "detail": {
-                        "tool_results": tool_results_log,
-                        "prompt": messages[-1]["content"] if messages else "",
-                        "response": raw,
+            writer(
+                {
+                    "event": "run_error",
+                    "payload": {
+                        "error": f"Model returned empty content for {NODE_NAME}",
+                        "budget_remaining": new_budget,
+                        "detail": {
+                            "tool_results": tool_results_log,
+                            "prompt": messages[-1]["content"] if messages else "",
+                            "response": raw,
+                            "model": resolved.model_id,
+                            "thinking": last_thinking,
+                            "round": round_num + 1,
+                        },
+                        "purpose": NODE_NAME,
                         "model": resolved.model_id,
-                        "thinking": last_thinking,
-                        "round": round_num + 1,
+                        "call_count": total_call_count,
                     },
-                    "purpose": NODE_NAME,
-                    "model": resolved.model_id,
-                    "call_count": total_call_count,
-                },
-            })
+                }
+            )
             raise RuntimeError(
                 f"Model returned empty content for {NODE_NAME} "
                 f"(thinking={len(last_thinking)} chars)"
@@ -637,10 +634,12 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
                     DEFAULT_MAX_PARSE_RETRIES,
                 )
                 messages.append({"role": "assistant", "content": raw})
-                messages.append({
-                    "role": "user",
-                    "content": get_prompt("research.parse_correction"),
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": get_prompt("research.parse_correction"),
+                    }
+                )
 
                 response = await resolved.client.chat_completion(
                     messages=messages,
@@ -677,20 +676,22 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             if limit > 0 and used >= limit:
                 logger.warning(
                     "Tool %s hit call limit (%d/%d), skipping",
-                    n, used, limit,
+                    n,
+                    used,
+                    limit,
                 )
                 continue
             required = _required_params.get(n)
             if required:
                 args_dict = a if isinstance(a, dict) else {}
                 missing = [
-                    p for p in required
-                    if p not in args_dict or not str(args_dict[p]).strip()
+                    p for p in required if p not in args_dict or not str(args_dict[p]).strip()
                 ]
                 if missing:
                     logger.warning(
                         "Tool %s missing required params: %s, skipping",
-                        n, missing,
+                        n,
+                        missing,
                     )
                     continue
             valid_calls.append((n, a))
@@ -718,18 +719,20 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
         # Process results and build summary for next round
         tool_summary_parts = []
         for result, (name, args) in zip(results, valid_calls):
-            writer({
-                "event": "tool_result",
-                "payload": {
-                    "tool": result.tool_name,
-                    "args": args,
-                    "output": _truncate_for_display(result.output),
-                    "duration_ms": result.duration_ms,
-                    "success": result.success,
-                    "node": NODE_NAME,
-                    "metadata": result.metadata,
-                },
-            })
+            writer(
+                {
+                    "event": "tool_result",
+                    "payload": {
+                        "tool": result.tool_name,
+                        "args": args,
+                        "output": _truncate_for_display(result.output),
+                        "duration_ms": result.duration_ms,
+                        "success": result.success,
+                        "node": NODE_NAME,
+                        "metadata": result.metadata,
+                    },
+                }
+            )
 
             structured = result.metadata.get("results")
             if structured:
@@ -767,18 +770,19 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
                 )
                 status = "SUCCESS" if result.success else "FAILED"
                 tool_summary_parts.append(
-                    f"[{cit_id}] Tool: {name}\nStatus: {status}\n"
-                    f"Result:\n{result.output}"
+                    f"[{cit_id}] Tool: {name}\nStatus: {status}\nResult:\n{result.output}"
                 )
 
-            tool_results_log.append({
-                "tool": result.tool_name,
-                "args": args,
-                "output": result.output[:500] if result.output else "",
-                "duration_ms": result.duration_ms,
-                "success": result.success,
-                "metadata": result.metadata,
-            })
+            tool_results_log.append(
+                {
+                    "tool": result.tool_name,
+                    "args": args,
+                    "output": result.output[:500] if result.output else "",
+                    "duration_ms": result.duration_ms,
+                    "success": result.success,
+                    "metadata": result.metadata,
+                }
+            )
 
             # Mark target facts as having evidence if the tool succeeded.
             # Citation linking is handled by the model's discovered_facts
@@ -788,10 +792,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
                     if planned["tool"] == name:
                         target_ids = planned.get("target_fact_ids", [])
                         for fact in facts:
-                            if (
-                                fact["id"] in target_ids
-                                and fact["status"] == "unknown"
-                            ):
+                            if fact["id"] in target_ids and fact["status"] == "unknown":
                                 fact["status"] = "unverified"
 
             # Track call counts and per-call tool cost
@@ -803,12 +804,14 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
         # Feed results back to model for next round
         tool_summary = "\n\n---\n\n".join(tool_summary_parts)
         messages.append({"role": "assistant", "content": raw})
-        messages.append({
-            "role": "user",
-            "content": get_prompt("research.tool_feedback").format(
-                tool_results=tool_summary,
-            ),
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": get_prompt("research.tool_feedback").format(
+                    tool_results=tool_summary,
+                ),
+            }
+        )
 
         logger.info(
             "RESEARCH round %d: %d tool calls executed",
@@ -852,8 +855,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     resolved_facts = [f for f in facts if f["status"] == "unverified"]
     if tool_results_log and not resolved_facts:
         logger.info(
-            "RESEARCH: no discovered_facts produced during loop, "
-            "running post-loop extraction",
+            "RESEARCH: no discovered_facts produced during loop, running post-loop extraction",
         )
         resolved_facts = await _extract_facts_from_results(
             facts=facts,
@@ -864,12 +866,8 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
         total_call_count += 1
 
         if resolved_facts:
-            fact_text = "\n".join(
-                f"- {f['id']}: {f.get('claim', '')}" for f in resolved_facts
-            )
-            last_response = type(
-                "ChatResponse", (), {"content": fact_text, "thinking": ""}
-            )()
+            fact_text = "\n".join(f"- {f['id']}: {f.get('claim', '')}" for f in resolved_facts)
+            last_response = type("ChatResponse", (), {"content": fact_text, "thinking": ""})()
             last_thinking = ""
 
     # --- Build detail and emit ---
@@ -890,19 +888,21 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     if last_thinking:
         detail["thinking"] = last_thinking
 
-    writer({
-        "event": "node_end",
-        "payload": {
-            "node": NODE_NAME,
-            "budget_remaining": new_budget,
-            "detail": detail,
-            "purpose": NODE_NAME,
-            "model": last_model_id,
-            "call_count": total_call_count,
-            "tool_call_count": len(tool_results_log),
-            **(_response_meta(last_response) if last_response is not None else {}),
-        },
-    })
+    writer(
+        {
+            "event": "node_end",
+            "payload": {
+                "node": NODE_NAME,
+                "budget_remaining": new_budget,
+                "detail": detail,
+                "purpose": NODE_NAME,
+                "model": last_model_id,
+                "call_count": total_call_count,
+                "tool_call_count": len(tool_results_log),
+                **(_response_meta(last_response) if last_response is not None else {}),
+            },
+        }
+    )
     logger.info(
         "RESEARCH Complete (%d tool calls across %d rounds, budget=%.1f)",
         len(tool_results_log),

@@ -63,8 +63,8 @@ const queries = computed<{ fact_id: string; query: string }[]>(() => {
   return Array.isArray(v) ? v : [];
 });
 
-const generationPath = computed<string | null>(() => {
-  const v = props.detail.generation_path;
+const generationReason = computed<string | null>(() => {
+  const v = props.detail.generation_reason;
   return typeof v === "string" ? v : null;
 });
 
@@ -185,11 +185,11 @@ function kvPairs(obj: Record<string, unknown>): [string, string][] {
       </div>
     </div>
 
-    <!-- Report generation path -->
-    <div v-if="generationPath" class="detail-section">
+    <!-- Report generation reason -->
+    <div v-if="generationReason" class="detail-section">
       <div class="structured-section">
-        <div class="detail-label">Generation Path</div>
-        <span :class="['generation-path-badge', generationPath]">{{ generationPath }}</span>
+        <div class="detail-label">Generation Reason</div>
+        <span :class="['generation-reason-badge', generationReason]">{{ generationReason }}</span>
       </div>
     </div>
 

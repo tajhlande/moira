@@ -5,8 +5,8 @@ where critical values (especially fact/conclusion statuses) are set and changed,
 and where budget is consumed.
 
 This document covers the **overhauled** research loop (decomposition →
-tool_identification → planning → research → synthesis → verification →
-report_generation). For the high-level architecture, see
+tool_identification → planning → research → synthesis → research_review →
+evaluation → report_generation). For the high-level architecture, see
 [core/architecture.md](core/architecture.md). For the implementation plan,
 see [research-loop-overhaul-plan.md](research-loop-overhaul-plan.md).
 
@@ -26,12 +26,13 @@ with two sub-objects:
 | `topic` | `str` | decomposition | Topic classification |
 | `entities` | `list[str]` | decomposition | Named entities |
 | `concepts` | `list[str]` | decomposition | Key concepts |
-| `facts` | `list[Fact]` | decomposition, research, verification | **Replaced** by each node (local copy → mutate → return full list) |
-| `conclusions` | `list[Conclusion]` | synthesis, verification | **Replaced** entirely on each synthesis run |
+| `facts` | `list[Fact]` | decomposition, research, research_review | **Replaced** by each node (local copy → mutate → return full list) |
+| `conclusions` | `list[Conclusion]` | synthesis, evaluation | **Replaced** entirely on each synthesis run; mutated by evaluation |
 | `citations` | `list[Citation]` | research | **Replaced** (local copy → append → return) |
-| `verification_history` | `list[VerificationOutcome]`` | verification | Appended each verification pass |
+| `review_history` | `list[ReviewOutcome]` | research_review | Appended each review pass |
+| `evaluation_history` | `list[EvaluationOutcome]` | evaluation | Appended each evaluation pass |
 | `report` | `ResearchReport` | report_generation | Final report dict |
-| `generation_path` | `str` | report_generation | `"verified"` / `"retry_overruled"` / `"budget_exhausted"` / `"error"` |
+| `generation_reason` | `str` | report_generation | `"verified"` / `"retries_exhausted"` / `"budget_exhausted"` / `"incomplete"` / `"error"` |
 
 ### `execution_state` — orchestration mechanics
 
@@ -40,15 +41,16 @@ with two sub-objects:
 | `budget_remaining` | `float` | every node | Decremented by step costs and tool costs |
 | `budget_limit` | `float` | streaming.py (init) | Never changes after init |
 | `step_costs` | `dict[str, int]` | streaming.py (init) | Per-node cost weights |
-| `candidate_tools` | `list[ToolDefinition]` | tool_identification | Tools available for research/verification |
+| `retry_limits` | `dict[str, int]` | streaming.py (init) | `max_review` (default 3) and `max_evaluation` (default 2), from settings |
+| `candidate_tools` | `list[ToolDefinition]` | tool_identification | Tools available for research |
 | `tool_call_plan` | `list[ToolCallPlan]` | planning | The model's planned tool calls |
 | `tool_costs` | `dict[str, float]` | tool_identification | Per-call invocation cost per tool |
 | `tool_call_limits` | `dict[str, int]` | tool_identification | Max calls per tool per run |
-| `tool_call_counts` | `dict[str, int]` | research, verification | Running call counts |
-| `total_tool_cost_consumed` | `float` | research, verification | Cumulative tool spending |
-| `verification_attempts` | `int` | verification | Incremented each verification pass |
-| `synthesis_retry_count` | `int` | streaming.py (init 0), incremented by synthesis node | Entry-count: 0 on init, +1 each synthesis entry |
+| `tool_call_counts` | `dict[str, int]` | research | Running call counts |
+| `total_tool_cost_consumed` | `float` | research | Cumulative tool spending |
+| `review_count` | `int` | research_review | Incremented each review pass; reset to 0 by evaluation on retry |
 | `research_retry_count` | `int` | streaming.py (init 0), incremented by planning node | Entry-count: 0 on init, +1 each planning entry |
+| `evaluation_count` | `int` | evaluation | Incremented each evaluation pass |
 | `error` | `str` | any node on failure | Error message for budget exhaustion |
 
 ### Reducer behavior
@@ -89,14 +91,14 @@ def _shallow_merge(old: dict, new: dict) -> dict:
             │          claim, relation, value set       │
             └──────────────────────────────────────────┘
                          │
-            ┌─── verification (fact_results) ───┐
-            │          status: unverified        │
-            │               │                   │
-            │     ┌─────────┼─────────┐         │
-            │     ▼         ▼         ▼         │
-            │ "verified" "contradicted" (stays) │
-            │ verification_note set              │
-            └───────────────────────────────────┘
+            ┌─── research_review (fact_results) ───┐
+            │          status: unverified            │
+            │               │                       │
+            │     ┌─────────┼─────────┐             │
+            │     ▼         ▼         ▼             │
+            │ "verified" "contradicted" (stays)     │
+            │ verification_note set                  │
+            └───────────────────────────────────────┘
                          │
                     report_generation
                     (reads statuses, does not change)
@@ -114,14 +116,14 @@ def _shallow_merge(old: dict, new: dict) -> dict:
                     creates Conclusion(status="unverified")
                          │
                          ▼
-            ┌─── verification (conclusion_results) ───┐
-            │          status: unverified              │
-            │               │                         │
-            │     ┌─────────┼─────────┐               │
-            │     ▼         ▼         ▼               │
-            │ "verified" "contradicted" (stays)       │
-            │ verification_note set                    │
-            └─────────────────────────────────────────┘
+            ┌─── evaluation (conclusion_results) ───┐
+            │          status: unverified            │
+            │               │                       │
+            │     ┌─────────┼─────────┐             │
+            │     ▼         ▼         ▼             │
+            │ "verified" "contradicted" (stays)     │
+            │ verification_note set                  │
+            └───────────────────────────────────────┘
                          │
                     report_generation
                     (reads statuses, does not change)
@@ -179,12 +181,17 @@ def _shallow_merge(old: dict, new: dict) -> dict:
 
 | Direction | Fields |
 |-----------|--------|
-| **Reads** (`knowledge`) | `question`, `user_goal`, `topic`, `entities`, `concepts`, `facts`, `verification_history` (on retry) |
+| **Reads** (`knowledge`) | `question`, `user_goal`, `topic`, `entities`, `concepts`, `facts`, `evaluation_history` (on retry) |
 | **Reads** (`execution_state`) | `step_costs`, `budget_remaining`, `candidate_tools`, `tool_costs`, `tool_call_counts`, `tool_call_limits`, `research_retry_count` |
 | **Writes** (`knowledge`) | *(none)* |
 | **Writes** (`execution_state`) | `tool_call_plan`, `budget_remaining` (deducted) |
 
 **Budget:** deducts `step_costs["planning"]` (default: 2). Also computes an advisory `available_for_tools` budget for the prompt (not deducted).
+
+**Retry feedback:** When `research_retry_count > 0` (re-entered from evaluation
+retry), the system prompt appends `planning.system_retry_evaluation` with the
+evaluation's `goal_assessment` and failed conclusion results. This helps the
+model replan with awareness of what went wrong.
 
 **Detail keys:** `prompt`, `response`, `model`, `thinking?`, `structured_output?`
 
@@ -198,7 +205,7 @@ def _shallow_merge(old: dict, new: dict) -> dict:
 
 | Direction | Fields |
 |-----------|--------|
-| **Reads** (`knowledge`) | `question`, `user_goal`, `facts`, `citations` |
+| **Reads** (`knowledge`) | `question`, `user_goal`, `facts`, `citations`, `review_history` (on review retry) |
 | **Reads** (`execution_state`) | `step_costs`, `budget_remaining`, `candidate_tools`, `tool_call_plan`, `tool_call_counts`, `total_tool_cost_consumed`, `tool_costs`, `tool_call_limits` |
 | **Writes** (`knowledge`) | `facts` (full list, mutated), `citations` (full list, appended) |
 | **Writes** (`execution_state`) | `budget_remaining`, `tool_call_counts`, `total_tool_cost_consumed` |
@@ -215,6 +222,14 @@ Two mechanisms update facts during the tool loop:
 
 If the model never produces `discovered_facts` but tool results exist, a post-loop extraction prompt asks the model to interpret the results. If the loop exhausts `DEFAULT_MAX_ROUNDS` (3), a final summary round asks the model to extract facts without requesting more tools.
 
+#### Retry feedback from research_review
+
+When re-entered from a research_review retry (`review_count > 0` and last
+review route is `"retry"`), the system prompt appends
+`research.system_retry_review` with the review's `coverage_assessment` and
+`missing_areas`. This guides the model to focus additional queries on the
+identified gaps.
+
 **Detail keys:** `facts_resolved`, `facts_newly_unknown`, `tool_plan_size`, `executor_available`, `rounds`, `prompt`, `model`, `response?`, `thinking?`
 
 **No `tool_results` in detail** — the run_manager accumulates these from `tool_result` events with full output (2000 chars). The research node's internal log truncates to 500 chars; including it in `node_end` would overwrite with truncated copies.
@@ -227,12 +242,18 @@ If the model never produces `discovered_facts` but tool results exist, a post-lo
 
 | Direction | Fields |
 |-----------|--------|
-| **Reads** (`knowledge`) | `question`, `user_goal`, `topic`, `entities`, `concepts`, `facts` (status in verified/unverified with claim), `verification_history` (on retry) |
-| **Reads** (`execution_state`) | `step_costs`, `budget_remaining`, `synthesis_retry_count` |
+| **Reads** (`knowledge`) | `question`, `user_goal`, `topic`, `entities`, `concepts`, `facts` (status in verified/unverified with claim), `evaluation_history` (on retry) |
+| **Reads** (`execution_state`) | `step_costs`, `budget_remaining` |
 | **Writes** (`knowledge`) | `conclusions` (full replacement — old conclusions discarded) |
 | **Writes** (`execution_state`) | `budget_remaining` (deducted) |
 
 **Budget:** deducts `step_costs["synthesis"]` (default: 5).
+
+**Retry feedback:** On evaluation retry cycles (when
+`evaluation_history[-1].route == "retry"`), the system prompt appends
+`synthesis.system_retry` with the evaluation's `goal_assessment` and failed
+conclusion results. This helps the model avoid repeating the same reasoning
+errors.
 
 **Detail keys:** `prompt`, `response`, `model`, `thinking?`, `structured_output`
 
@@ -240,28 +261,20 @@ If the model never produces `discovered_facts` but tool results exist, a post-lo
 
 ---
 
-### 6. Verification
+### 6. Research Review
 
-**Purpose:** Evaluate facts, conclusions, and goal attainment. May call tools for independent fact-checking.
+**Purpose:** Evaluate evidence coverage and fact quality. Marks facts as
+verified/contradicted/unverified and identifies gaps. This node is **tool-free**
+— it evaluates existing evidence only.
 
 | Direction | Fields |
 |-----------|--------|
-| **Reads** (`knowledge`) | `question`, `user_goal`, `facts` (all with a claim), `conclusions`, `verification_history` |
-| **Reads** (`execution_state`) | `step_costs`, `budget_remaining`, `candidate_tools`, `tool_call_counts`, `tool_costs`, `tool_call_limits`, `total_tool_cost_consumed`, `verification_attempts` |
-| **Writes** (`knowledge`) | `facts` (mutated statuses + new unknown facts appended), `conclusions` (mutated statuses), `verification_history` (appended) |
-| **Writes** (`execution_state`) | `budget_remaining`, `verification_attempts` (incremented), `tool_call_counts`, `total_tool_cost_consumed` |
+| **Reads** (`knowledge`) | `question`, `user_goal`, `facts` (all with a claim), `conclusions` (for context), `review_history` |
+| **Reads** (`execution_state`) | `step_costs`, `budget_remaining`, `review_count` |
+| **Writes** (`knowledge`) | `facts` (mutated statuses), `review_history` (appended) |
+| **Writes** (`execution_state`) | `budget_remaining` (deducted), `review_count` (incremented) |
 
-**Budget:** deducts `step_costs["verification"]` (default: 8) per model call (initial + fact-check re-prompts). Plus per-tool-call cost for any fact-checking tool calls.
-
-#### Fact-checking loop
-
-When the model returns `tool_calls` instead of a verification result (requesting independent evidence), the node:
-
-1. Extracts tool calls from the parsed response
-2. Executes them (with call-limit enforcement)
-3. Feeds results back via the `verification.evidence` prompt
-4. Makes a second model call to get the actual verification result
-5. Repeats up to `MAX_FACT_CHECK_ROUNDS = 2` times
+**Budget:** deducts `step_costs["research_review"]` (default: 3).
 
 #### Fact status transitions
 
@@ -270,6 +283,49 @@ fact["status"] = fr.get("result")  # "verified" | "contradicted" | "unverified"
 fact["verification_note"] = fr.get("evidence")
 ```
 
+The model returns `fact_results` with per-fact verdicts. The node also accepts
+`"status"` as a fallback key for `"result"` since models sometimes use the wrong
+key — the verdict is critical for routing. Only `"evidence"` is used for the
+note field (not model-invented keys like `"evaluation"`, which are assessments,
+not evidence).
+
+#### Routing decision
+
+The model returns a `route` field: `"continue"` or `"retry"`.
+
+- `"continue"` → evaluation
+- `"retry"` → research (light retry: research → synthesis → research_review again),
+  if `review_count < max_review` (default 3) and budget is sufficient
+- `"retry"` declined (out of retries or budget) → evaluation (fall through)
+
+#### Parse failure handling
+
+If `_parse_json_object` returns an empty dict or the result is missing `route`,
+the node emits a `run_error` event with the raw response and raises
+`RuntimeError`. This makes model output problems (malformed JSON, missing
+required fields) visible instead of silently proceeding with defaults.
+
+**Detail keys:** `prompt`, `response`, `model`, `thinking?`, `structured_output`
+
+**Structured output:** always `{fact_results, coverage_assessment, missing_areas, route}`.
+
+---
+
+### 7. Evaluation
+
+**Purpose:** Evaluate conclusion logic and goal attainment. Examines conclusions
+against fact statuses (set by research_review). This node is **tool-free** —
+pure reasoning over already-verified facts.
+
+| Direction | Fields |
+|-----------|--------|
+| **Reads** (`knowledge`) | `question`, `user_goal`, `facts` (reads statuses), `conclusions`, `evaluation_history` |
+| **Reads** (`execution_state`) | `step_costs`, `budget_remaining`, `evaluation_count` |
+| **Writes** (`knowledge`) | `conclusions` (mutated statuses), `evaluation_history` (appended) |
+| **Writes** (`execution_state`) | `budget_remaining` (deducted), `evaluation_count` (incremented), `review_count` (reset to 0 on retry) |
+
+**Budget:** deducts `step_costs["evaluation"]` (default: 5).
+
 #### Conclusion status transitions
 
 ```python
@@ -277,42 +333,61 @@ conclusion["status"] = cr.get("result")  # "verified" | "contradicted" | "unveri
 conclusion["verification_note"] = cr.get("reason")
 ```
 
+The model returns `conclusion_results` with per-conclusion verdicts. Same
+`"status"` fallback and `"reason"`-only note policy as research_review.
+
 #### Routing decision
 
-The model returns a `route` field: `"accept"`, `"retry_research"`, or `"retry_synthesis"`. This drives the graph's conditional edge.
+The model returns a `route` field: `"accept"` or `"retry"`.
+
+- `"accept"` → report_generation
+- `"retry"` → tool_identification (heavy retry: full pipeline reset through
+  evaluation), if `evaluation_count < max_evaluation` (default 2) and budget
+  is sufficient
+- `"retry"` declined (out of retries or budget) → report_generation
+  (reason: `retries_exhausted` or `budget_exhausted`)
+
+When evaluation routes to `"retry"`, `review_count` is reset to 0 so the new
+evaluation cycle gets a fresh set of research retries.
 
 #### Parse failure handling
 
-If `_parse_json_object` returns an empty dict or the result is missing `route`, the node emits a `run_error` event with the raw response and raises `RuntimeError`. This makes model output problems (malformed JSON, missing required fields) visible instead of silently proceeding with defaults.
+Same as research_review: missing `route` raises `RuntimeError` with error event.
 
-**Detail keys:** `prompt`, `response`, `model`, `tool_results`, `thinking?`, `structured_output`
+**Detail keys:** `prompt`, `response`, `model`, `thinking?`, `structured_output`
 
-**Structured output:** always `{fact_results, conclusion_results, new_unknown_facts, goal_met, goal_assessment, route}` — never raw `tool_calls`.
+**Structured output:** always `{conclusion_results, goal_met, goal_assessment, route}`.
 
 ---
 
-### 7. Report Generation
+### 8. Report Generation
 
 **Purpose:** Write the final research report from the knowledge model.
 
 | Direction | Fields |
 |-----------|--------|
-| **Reads** (`knowledge`) | `question`, `user_goal`, `facts`, `conclusions`, `citations`, `verification_history` |
-| **Reads** (`execution_state`) | `step_costs`, `budget_remaining`, `budget_limit`, `error`, `total_tool_cost_consumed` |
-| **Writes** (`knowledge`) | `report`, `generation_path` |
+| **Reads** (`knowledge`) | `question`, `user_goal`, `facts`, `conclusions`, `citations`, `evaluation_history` |
+| **Reads** (`execution_state`) | `step_costs`, `budget_remaining`, `budget_limit`, `error`, `total_tool_cost_consumed`, `retry_limits`, `evaluation_count` |
+| **Writes** (`knowledge`) | `report`, `generation_reason` |
 | **Writes** (`execution_state`) | `budget_remaining` (deducted) |
 
 **Budget:** deducts `step_costs["report_generation"]` (default: 3). This node is **budget-exempt** — always runs regardless of remaining budget (no `can_execute` gate).
 
-**Generation path logic:**
+**Generation reason logic:**
 - `error` in state → `"error"`
-- `verification_history[-1].goal_met` AND no contradicted conclusions → `"verified"`
-- `verification_history[-1].route in ("retry_research", "retry_synthesis")` → `"retry_overruled"` (verification requested retry but budget/retry limits prevented it)
-- Otherwise → `"budget_exhausted"`
+- `evaluation_history[-1].goal_met` AND no contradicted conclusions → `"verified"`
+- `evaluation_history[-1].route == "retry"` AND `evaluation_count >= max_evaluation` → `"retries_exhausted"`
+- `evaluation_history[-1].route == "retry"` AND budget insufficient → `"budget_exhausted"`
+- `evaluation_history[-1].route == "accept"` but goal not met or contradictions present → `"incomplete"`
+- No evaluation history → `"budget_exhausted"`
 
-**Events:** emits `run_complete` (with report + knowledge summary + generation path), then `node_end`.
+**Events:** emits `run_complete` (with report + knowledge summary + generation reason), then `node_end`.
 
-**Detail keys:** `generation_path` only.
+**Detail keys:** `generation_reason` only.
+
+**Error handling:** If the model returns empty content or unparseable JSON,
+the node emits a `run_error` event and raises `RuntimeError`. No silent
+fallback report is generated.
 
 ---
 
@@ -325,25 +400,25 @@ START
 decomposition
   │
   ▼
-tool_identification
+tool_identification ◄─────────────┐
+  │                               │ evaluation retry
+  ▼                               │ (max 2, full pipeline reset)
+planning                           │
+  │                               │
+  ▼                               │
+research ◄──────────┐             │
+  │                 │ review retry│
+  ▼                 │ (max 3,    │
+synthesis ◄─────────┤ research   │
+  │                 │ through    │
+  ▼                 │ review)    │
+research_review ────┘             │
+  │                               │
+  │ continue / retry declined     │
+  ▼                               │
+evaluation ───────────────────────┘
   │
-  ▼
-planning
-  │
-  ▼
-research
-  │
-  ▼
-synthesis ◄───────────┐
-  │                   │ retry_synthesis (max 1 retry)
-  ▼                   │
-verification ─────────┤
-  │                   │
-  │ retry_research    │
-  ▼                   │ (max 1 retry)
-tool_identification ──┘
-  │
-  │ accept / declined retry / out of budget
+  │ accept / retry declined
   ▼
 report_generation
   │
@@ -351,20 +426,27 @@ report_generation
 END
 ```
 
-### Routing conditions (after verification)
+### Routing conditions (after research_review)
 
-| `route` value       | Condition                                                            | Target                |
-|---------------------|----------------------------------------------------------------------|-----------------------|
-| `"accept"`          | —                                                                    | `report_generation`   |
-| `"retry_synthesis"` | `synthesis_retry_count < 2` AND budget ≥ synthesis+verification cost | `synthesis`           |
-| `"retry_synthesis"` | Out of retries or budget                                             | `report_generation` (path: `retry_overruled`) |
-| `"retry_research"`  | `research_retry_count < 2` AND budget ≥ full research cycle cost     | `tool_identification` |
-| `"retry_research"`  | Out of retries or budget                                             | `report_generation` (path: `retry_overruled`) |
-| (missing/unknown)   | —                                                                    | `report_generation`   |
+| `route` value | Condition | Target |
+|---------------|-----------|--------|
+| `"continue"` | — | `evaluation` |
+| `"retry"` | `review_count < max_review` (default 3) AND budget ≥ review retry cost | `research` |
+| `"retry"` | Out of retries or budget | `evaluation` (fall through) |
+| (missing/unknown) | — | `evaluation` |
 
-**Retry costs:**
-- Synthesis retry: synthesis(5) + verification(8) = **13**
-- Research retry: tool_identification(1) + planning(2) + research(10) + synthesis(5) + verification(8) = **26**
+### Routing conditions (after evaluation)
+
+| `route` value | Condition | Target |
+|---------------|-----------|--------|
+| `"accept"` | — | `report_generation` |
+| `"retry"` | `evaluation_count < max_evaluation` (default 2) AND budget ≥ evaluation retry cost | `tool_identification` |
+| `"retry"` | Out of retries or budget | `report_generation` (reason: `retries_exhausted` or `budget_exhausted`) |
+| (missing/unknown) | — | `report_generation` |
+
+**Retry costs (default weights):**
+- Review retry (research → synthesis → research_review): 10 + 5 + 3 = **18**
+- Evaluation retry (tool_identification → planning → research → synthesis → research_review → evaluation): 1 + 2 + 10 + 5 + 3 + 5 = **26**
 
 ---
 
@@ -377,9 +459,25 @@ END
 | planning | 2 | — | |
 | research | 10 | Yes | One step cost + per-call costs for each executed tool |
 | synthesis | 5 | — | |
-| verification | 8 | Yes | Step cost per model call (initial + fact-check rounds) + per-call tool costs |
+| research_review | 3 | — | Tool-free |
+| evaluation | 5 | — | Tool-free |
 | report_generation | 3 | — | Budget-exempt (always runs) |
 | **Full cycle** | **31** | | Without retries |
+
+### Configurable retry limits
+
+Retry limits are resolved at run start from system settings (`retry.max_review`,
+`retry.max_evaluation`) and injected into `execution_state.retry_limits`. If
+absent, the routers fall back to hardcoded defaults (3 and 2 respectively).
+
+Per-request overrides can be sent from the conversation settings tray
+(`max_review`, `max_evaluation` in the request body's `settings` dict). These
+override the system defaults for that run only and are clamped to 1–10.
+
+| Setting key | Default | Controls |
+|-------------|---------|----------|
+| `retry.max_review` | 3 | Max research_review → research retries per evaluation cycle |
+| `retry.max_evaluation` | 2 | Max evaluation → tool_identification retries per run |
 
 ---
 
@@ -391,8 +489,9 @@ END
 |-------|----------|---------|
 | `facts` | **Replaced** | Node copies via `list(knowledge["facts"])`, mutates locally, returns full list |
 | `citations` | **Replaced** | Same pattern |
-| `conclusions` | **Replaced** | Synthesis creates fresh list; verification mutates local copy and returns |
-| `verification_history` | **Replaced** | Local copy + append pattern |
+| `conclusions` | **Replaced** | Synthesis creates fresh list; evaluation mutates local copy and returns |
+| `review_history` | **Replaced** | Local copy + append pattern |
+| `evaluation_history` | **Replaced** | Local copy + append pattern |
 | Scalar fields (`user_goal`, etc.) | **Replaced** | Simple overwrite |
 
 ### Within `execution_state`
@@ -406,6 +505,34 @@ END
 ---
 
 ## Design Notes
+
+### Why verification was split into research_review + evaluation
+
+The original single `verification` node combined two logically distinct
+responsibilities:
+
+1. **Fact-level evidence review** — Are individual facts backed by citations
+   and sufficient evidence?
+2. **Conclusion-level goal evaluation** — Do the verified conclusions actually
+   answer the user's question?
+
+Combining these created problems:
+- A single retry decision couldn't distinguish between "need more research"
+  (light retry: just redo research) and "need a fundamentally different
+  approach" (heavy retry: full pipeline reset).
+- The model had to reason about both fact evidence and conclusion logic in one
+  prompt, producing lower-quality verdicts on both.
+- Retry budgets were all-or-nothing — one counter covered both retry types.
+
+The split gives:
+- **research_review** → light retry (research → synthesis → research_review),
+  max 3 per evaluation cycle. Focuses on evidence coverage.
+- **evaluation** → heavy retry (tool_identification → ... → evaluation), max 2
+  per run. Focuses on goal attainment. Resets `review_count` on retry so each
+  evaluation cycle gets a fresh set of research retries.
+
+Both nodes are **tool-free** — they reason over evidence already gathered,
+eliminating the complex fact-check tool-call loop of the old verification node.
 
 ### Why research doesn't set fact claims from raw tool output
 
@@ -425,13 +552,12 @@ carry full 2000-char output). The research node's internal log truncates to
 500 chars. Including the log in `node_end` would overwrite the run_manager's
 accumulated entries with truncated copies.
 
-### Why `structured_output` is always set in verification
+### Why `structured_output` is always set in research_review and evaluation
 
-The verification model sometimes returns `tool_calls` instead of a
-verification result. The node extracts these, executes them, and re-prompts
-with evidence. The `structured_output` is always built from the verification
-schema (`fact_results`, `conclusion_results`, etc.) — never from raw
-`tool_calls` — so the frontend renderer shows the right fields.
+Both nodes build `structured_output` from the parsed model response schema
+(`fact_results`, `coverage_assessment`, etc. for review; `conclusion_results`,
+`goal_met`, etc. for evaluation). This ensures the frontend renderer always
+shows the right fields regardless of routing outcome.
 
 ---
 
@@ -439,23 +565,13 @@ schema (`fact_results`, `conclusion_results`, etc.) — never from raw
 
 These were tracked gaps that have been fixed:
 
-1. **`synthesis_retry_count` was never incremented.** Now incremented by
-   the synthesis node on every entry (entry-count semantics). The router
-   guard is `synthesis_retry_count < 2` (allow initial run + 1 retry).
-
-2. **`research_retry_count` was never initialized.** Now declared on
+1. **`research_retry_count` was never initialized.** Now declared on
    `ExecutionState`, initialized to 0 in both `streaming.py` entry points,
-   and incremented by the planning node on every entry. The router guard
-   is `research_retry_count < 2` (allow initial run + 1 retry). Planning
+   and incremented by the planning node on every entry. The router
+   guard is `research_retry_count < 2` (allow initial run + 1 retry). Planning
    shows retry prompts when the count read at entry is `> 0`.
 
-3. **Verification step cost was charged per fact-check round.** The
-   `deduct_cost` call has been removed from inside the fact-check
-   `while` loop. The verification step cost (default 8) is now deducted
-   exactly once at the top of the node. Only per-tool-call costs are
-   deducted inside the loop.
-
-4. **LanceDB-discovered tools had empty `argument_schema`.** LanceDB
+2. **LanceDB-discovered tools had empty `argument_schema`.** LanceDB
    stores only `{name, vector, description, enabled}` — not parameter
    schemas. The `tool_identification` node now re-hydrates each
    candidate tool from the in-memory `ToolCatalog` (loaded from SQLite)
@@ -465,20 +581,39 @@ These were tracked gaps that have been fixed:
    directly. No LanceDB rebuild or tool reingestion required — the fix
    is purely a runtime catalog lookup.
 
-5. **Verification JSON parse failures were silently masked.** When
+3. **JSON parse failures were silently masked.** When
    `_parse_json_object` returned `{}` (e.g., model omitted commas
-   between array items), every field defaulted — `route` became
-   `"accept"`, `goal_met` became `False`, `fact_results` became empty.
-   The verification node now checks for missing `route` after the
-   tool-call loop and raises a `RuntimeError` with the raw response in
-   the error detail, making model output problems visible instead of
-   silently proceeding with defaults.
+   between array items or emitted literal control characters inside JSON
+   string values), every field defaulted — `route` became `"accept"`,
+   `goal_met` became `False`, `fact_results` became empty. Both
+   research_review and evaluation now check for missing `route` after
+   parsing and raise a `RuntimeError` with the raw response in the error
+   detail, making model output problems visible instead of silently
+   proceeding with defaults. The `_parse_json_object` helper now applies
+   `_fix_json_control_chars` as preprocessing to escape literal control
+   characters (common with quantized models) before attempting to parse.
 
-6. **`retry_overruled` generation path.** When verification returns
-   `route: retry_research` or `route: retry_synthesis` but the router
-   sends to report_generation due to insufficient budget or exhausted
-   retries, the report generation node now sets
-   `generation_path = "retry_overruled"` instead of the generic
-   `"budget_exhausted"`. A dedicated prompt
-   (`report_generation.path_retry_overruled`) instructs the model to
-   acknowledge the gaps and identify what further research is needed.
+4. **Empty report generation silently produced fallback.** When the
+   model returned empty content or unparseable JSON, the old report
+   generation node caught the exception and produced a generic fallback
+   report. This masked model failures. The node now emits `run_error`
+   and raises `RuntimeError` — no silent fallback.
+
+5. **Accurate generation reasons.** The report generation node now
+   distinguishes *why* the research loop ended using a `generation_reason`
+   field (renamed from the misleading `generation_path`). When evaluation
+   requests retry but the router can't honor it, the node checks
+   `evaluation_count` vs `retry_limits.max_evaluation` to determine whether
+   the reason is `"retries_exhausted"` or `"budget_exhausted"` — rather than
+   lumping both into a single `"retry_overruled"` value. An `"incomplete"`
+   reason covers the case where evaluation accepted but the goal wasn't
+   fully met. Each reason has a dedicated prompt
+   (`report_generation.reason_*`) with appropriate instructions for the
+   model.
+
+6. **Configurable retry limits.** Retry limits (`max_review`,
+   `max_evaluation`) are now configurable via system settings
+   (`retry.max_review`, `retry.max_evaluation`) and config file
+   (`budget.retry_limits`), following the same resolution pattern as
+   `cost_weights`. Settings take precedence over file config; routers
+   fall back to hardcoded defaults (3/2) if absent from state.

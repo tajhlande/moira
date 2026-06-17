@@ -37,15 +37,17 @@ def mock_writer():
     def write(event):
         events.append(event)
 
-    with patch("moira.workflow.nodes.research_review.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes.evaluation.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes.synthesis.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes.decomposition.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes.planning.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes.research.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes.report_generation.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes.tool_identification.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes._helpers.get_stream_writer", return_value=write):
+    with (
+        patch("moira.workflow.nodes.research_review.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes.evaluation.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes.synthesis.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes.decomposition.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes.planning.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes.research.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes.report_generation.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes.tool_identification.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes._helpers.get_stream_writer", return_value=write),
+    ):
         yield events
 
 
@@ -153,24 +155,41 @@ class TestReviewStressFixture:
     @pytest.fixture
     def stress_state(self, config) -> ResearchState:
         facts = [
-            Fact(id="f001", subject="Tyranitar",
-                 fact_needed="Tyranitar typing",
-                 claim="Rock/Dark type", status="unverified"),
-            Fact(id="f002", subject="Tyranitar",
-                 fact_needed="Tyranitar abilities",
-                 claim="Sand Stream, sets sandstorm for 8 turns",
-                 status="unverified"),
-            Fact(id="f003", subject="Tyranitar",
-                 fact_needed="Tyranitar weaknesses",
-                 claim="Fighting x4, Ground x4, Water, Grass, Bug, Steel, Fairy",
-                 status="unverified"),
-            Fact(id="f004", subject="Tyranitar",
-                 fact_needed="Tyranitar typical moves",
-                 claim="Fire Blast, Draco Meteor, Stone Edge, Tera Blast",
-                 status="unverified"),
-            Fact(id="f005", subject="Corviknight",
-                 fact_needed="Corviknight abilities",
-                 claim="Immune to Ground", status="unverified"),
+            Fact(
+                id="f001",
+                subject="Tyranitar",
+                fact_needed="Tyranitar typing",
+                claim="Rock/Dark type",
+                status="unverified",
+            ),
+            Fact(
+                id="f002",
+                subject="Tyranitar",
+                fact_needed="Tyranitar abilities",
+                claim="Sand Stream, sets sandstorm for 8 turns",
+                status="unverified",
+            ),
+            Fact(
+                id="f003",
+                subject="Tyranitar",
+                fact_needed="Tyranitar weaknesses",
+                claim="Fighting x4, Ground x4, Water, Grass, Bug, Steel, Fairy",
+                status="unverified",
+            ),
+            Fact(
+                id="f004",
+                subject="Tyranitar",
+                fact_needed="Tyranitar typical moves",
+                claim="Fire Blast, Draco Meteor, Stone Edge, Tera Blast",
+                status="unverified",
+            ),
+            Fact(
+                id="f005",
+                subject="Corviknight",
+                fact_needed="Corviknight abilities",
+                claim="Immune to Ground",
+                status="unverified",
+            ),
         ]
         question = "What Pokemon synergize well with Tyranitar in Gen9 OU?"
         state = _build_state(config, question, facts)
@@ -191,8 +210,11 @@ class TestReviewStressFixture:
             content=json.dumps(
                 {
                     "fact_results": [
-                        {"fact_id": "f003", "result": "contradicted",
-                         "evidence": "Ground is x2, not x4"},
+                        {
+                            "fact_id": "f003",
+                            "result": "contradicted",
+                            "evidence": "Ground is x2, not x4",
+                        },
                     ],
                     "coverage_assessment": "Ground weakness claim is wrong",
                     "missing_areas": [],
@@ -207,8 +229,7 @@ class TestReviewStressFixture:
 
         all_text = json.dumps(result["knowledge"]["review_history"]).lower()
         assert "ground" in all_text, (
-            "Research review should flag the Ground x4 error. "
-            f"Got: {all_text[:300]}"
+            f"Research review should flag the Ground x4 error. Got: {all_text[:300]}"
         )
 
     async def test_review_flags_sand_stream_duration_error(
@@ -218,17 +239,22 @@ class TestReviewStressFixture:
         _inject_services(config, mock_model)
 
         mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(content=json.dumps(
-                {
-                    "fact_results": [
-                        {"fact_id": "f002", "result": "contradicted",
-                         "evidence": "Sand Stream lasts 5 turns, not 8"},
-                    ],
-                    "coverage_assessment": "Sand Stream duration wrong",
-                    "missing_areas": [],
-                    "route": "retry",
-                }
-            )),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "fact_results": [
+                            {
+                                "fact_id": "f002",
+                                "result": "contradicted",
+                                "evidence": "Sand Stream lasts 5 turns, not 8",
+                            },
+                        ],
+                        "coverage_assessment": "Sand Stream duration wrong",
+                        "missing_areas": [],
+                        "route": "retry",
+                    }
+                )
+            ),
         ]
 
         from moira.workflow.nodes.research_review import research_review
@@ -237,8 +263,7 @@ class TestReviewStressFixture:
 
         all_text = json.dumps(result["knowledge"]["review_history"]).lower()
         assert "sand" in all_text or "5 turn" in all_text, (
-            "Research review should flag the Sand Stream duration error. "
-            f"Got: {all_text[:300]}"
+            f"Research review should flag the Sand Stream duration error. Got: {all_text[:300]}"
         )
 
     async def test_review_flags_draco_meteor_impossibility(
@@ -248,17 +273,22 @@ class TestReviewStressFixture:
         _inject_services(config, mock_model)
 
         mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(content=json.dumps(
-                {
-                    "fact_results": [
-                        {"fact_id": "f004", "result": "contradicted",
-                         "evidence": "Draco Meteor not in learnset"},
-                    ],
-                    "coverage_assessment": "Draco Meteor is impossible",
-                    "missing_areas": [],
-                    "route": "retry",
-                }
-            )),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "fact_results": [
+                            {
+                                "fact_id": "f004",
+                                "result": "contradicted",
+                                "evidence": "Draco Meteor not in learnset",
+                            },
+                        ],
+                        "coverage_assessment": "Draco Meteor is impossible",
+                        "missing_areas": [],
+                        "route": "retry",
+                    }
+                )
+            ),
         ]
 
         from moira.workflow.nodes.research_review import research_review
@@ -267,8 +297,7 @@ class TestReviewStressFixture:
 
         all_text = json.dumps(result["knowledge"]["review_history"]).lower()
         assert "draco" in all_text or "learnset" in all_text, (
-            "Research review should flag Draco Meteor as impossible. "
-            f"Got: {all_text[:300]}"
+            f"Research review should flag Draco Meteor as impossible. Got: {all_text[:300]}"
         )
 
     async def test_review_flags_corviknight_ground_immunity_error(
@@ -278,17 +307,22 @@ class TestReviewStressFixture:
         _inject_services(config, mock_model)
 
         mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(content=json.dumps(
-                {
-                    "fact_results": [
-                        {"fact_id": "f005", "result": "contradicted",
-                         "evidence": "Corviknight has no Levitate"},
-                    ],
-                    "coverage_assessment": "Corviknight Ground immunity wrong",
-                    "missing_areas": [],
-                    "route": "retry",
-                }
-            )),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "fact_results": [
+                            {
+                                "fact_id": "f005",
+                                "result": "contradicted",
+                                "evidence": "Corviknight has no Levitate",
+                            },
+                        ],
+                        "coverage_assessment": "Corviknight Ground immunity wrong",
+                        "missing_areas": [],
+                        "route": "retry",
+                    }
+                )
+            ),
         ]
 
         from moira.workflow.nodes.research_review import research_review
@@ -308,25 +342,32 @@ class TestReviewStressFixture:
         _inject_services(config, mock_model)
 
         stress_state["knowledge"]["conclusions"] = [
-            {"id": "c001",
-             "conclusion": "Corviknight is the best partner",
-             "supporting_fact_ids": ["f005"],
-             "reasoning": "Ground immunity covers Tyranitar",
-             "status": "unverified"},
+            {
+                "id": "c001",
+                "conclusion": "Corviknight is the best partner",
+                "supporting_fact_ids": ["f005"],
+                "reasoning": "Ground immunity covers Tyranitar",
+                "status": "unverified",
+            },
         ]
 
         mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(content=json.dumps(
-                {
-                    "conclusion_results": [
-                        {"conclusion_id": "c001", "result": "contradicted",
-                         "reason": "Corviknight is not immune to Ground"},
-                    ],
-                    "goal_met": False,
-                    "goal_assessment": "Central synergy claim is based on error",
-                    "route": "retry",
-                }
-            )),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "conclusion_results": [
+                            {
+                                "conclusion_id": "c001",
+                                "result": "contradicted",
+                                "reason": "Corviknight is not immune to Ground",
+                            },
+                        ],
+                        "goal_met": False,
+                        "goal_assessment": "Central synergy claim is based on error",
+                        "route": "retry",
+                    }
+                )
+            ),
         ]
 
         from moira.workflow.nodes.evaluation import evaluation
@@ -462,9 +503,7 @@ class TestToolRoutingFixture:
         assert any("move" in f for f in fact_texts)
         assert any("legal" in f for f in fact_texts)
 
-    async def test_tool_discovery_ranks_specialized_first(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_tool_discovery_ranks_specialized_first(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
 
         from moira.workflow.nodes.tool_identification import tool_identification
@@ -520,29 +559,70 @@ class TestSynthesisTrapFixture:
     @pytest.fixture
     def trap_state(self, config) -> ResearchState:
         facts = [
-            Fact(id="f001", subject="Tyranitar", fact_needed="Tyranitar typing",
-                 claim="Tyranitar is Rock/Dark type", status="unverified"),
-            Fact(id="f002", subject="Tyranitar", fact_needed="Tyranitar weaknesses",
-                 claim="Weak to Fighting (x4), Water, Grass, Bug, "
-                       "Steel, Fairy, Ground (x2)",
-                 status="unverified"),
-            Fact(id="f003", subject="Tyranitar", fact_needed="Tyranitar ability",
-                 claim="Sand Stream sets sandstorm for 5 turns", status="unverified"),
-            Fact(id="f004", subject="Corviknight", fact_needed="Corviknight typing",
-                 claim="Corviknight is Steel/Flying type", status="unverified"),
-            Fact(id="f005", subject="Corviknight",
-                 fact_needed="Corviknight matchups",
-                 claim="Resists Fairy (x0.5), takes neutral from Fighting, "
-                       "immune to Ground (Flying type)",
-                 status="unverified"),
-            Fact(id="f006", subject="Corviknight", fact_needed="Corviknight abilities",
-                 claim="Pressure or Defiant (hidden)", status="unverified"),
-            Fact(id="f007", subject="Corviknight", fact_needed="Corviknight moves",
-                 claim="Roost, Brave Bird, U-turn, Iron Head, Body Press", status="unverified"),
-            Fact(id="f008", subject="Tinkaton", fact_needed="Tinkaton typing",
-                 claim="Tinkaton is Fairy/Steel type", status="unverified"),
-            Fact(id="f009", subject="Tinkaton", fact_needed="Tinkaton resistances",
-                 claim="Resists Dark (x0.5), Rock (x0.5), immune to Dragon", status="unverified"),
+            Fact(
+                id="f001",
+                subject="Tyranitar",
+                fact_needed="Tyranitar typing",
+                claim="Tyranitar is Rock/Dark type",
+                status="unverified",
+            ),
+            Fact(
+                id="f002",
+                subject="Tyranitar",
+                fact_needed="Tyranitar weaknesses",
+                claim="Weak to Fighting (x4), Water, Grass, Bug, Steel, Fairy, Ground (x2)",
+                status="unverified",
+            ),
+            Fact(
+                id="f003",
+                subject="Tyranitar",
+                fact_needed="Tyranitar ability",
+                claim="Sand Stream sets sandstorm for 5 turns",
+                status="unverified",
+            ),
+            Fact(
+                id="f004",
+                subject="Corviknight",
+                fact_needed="Corviknight typing",
+                claim="Corviknight is Steel/Flying type",
+                status="unverified",
+            ),
+            Fact(
+                id="f005",
+                subject="Corviknight",
+                fact_needed="Corviknight matchups",
+                claim="Resists Fairy (x0.5), takes neutral from Fighting, "
+                "immune to Ground (Flying type)",
+                status="unverified",
+            ),
+            Fact(
+                id="f006",
+                subject="Corviknight",
+                fact_needed="Corviknight abilities",
+                claim="Pressure or Defiant (hidden)",
+                status="unverified",
+            ),
+            Fact(
+                id="f007",
+                subject="Corviknight",
+                fact_needed="Corviknight moves",
+                claim="Roost, Brave Bird, U-turn, Iron Head, Body Press",
+                status="unverified",
+            ),
+            Fact(
+                id="f008",
+                subject="Tinkaton",
+                fact_needed="Tinkaton typing",
+                claim="Tinkaton is Fairy/Steel type",
+                status="unverified",
+            ),
+            Fact(
+                id="f009",
+                subject="Tinkaton",
+                fact_needed="Tinkaton resistances",
+                claim="Resists Dark (x0.5), Rock (x0.5), immune to Dragon",
+                status="unverified",
+            ),
         ]
         question = "What Pokemon synergize well with Tyranitar in Gen9 OU?"
         state = _build_state(config, question, facts)
@@ -564,13 +644,19 @@ class TestSynthesisTrapFixture:
         _inject_services(config, mock_model)
 
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps({
-                "conclusions": [{
-                    "conclusion": "Corviknight is the best partner for Tyranitar in Gen9 OU",
-                    "supporting_fact_ids": ["f004", "f005"],
-                    "reasoning": "Covers all weaknesses",
-                }]
-            })
+            content=json.dumps(
+                {
+                    "conclusions": [
+                        {
+                            "conclusion": (
+                                "Corviknight is the best partner for Tyranitar in Gen9 OU"
+                            ),
+                            "supporting_fact_ids": ["f004", "f005"],
+                            "reasoning": "Covers all weaknesses",
+                        }
+                    ]
+                }
+            )
         )
 
         from moira.workflow.nodes.synthesis import synthesis
@@ -595,14 +681,18 @@ class TestSynthesisTrapFixture:
         _inject_services(config, mock_model)
 
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps({
-                "conclusions": [{
-                    "conclusion": "Corviknight resists all of "
-                                  "Tyranitar's weaknesses including Fighting",
-                    "supporting_fact_ids": ["f004", "f005"],
-                    "reasoning": "Steel resists Fairy and Fighting",
-                }]
-            })
+            content=json.dumps(
+                {
+                    "conclusions": [
+                        {
+                            "conclusion": "Corviknight resists all of "
+                            "Tyranitar's weaknesses including Fighting",
+                            "supporting_fact_ids": ["f004", "f005"],
+                            "reasoning": "Steel resists Fairy and Fighting",
+                        }
+                    ]
+                }
+            )
         )
 
         from moira.workflow.nodes.synthesis import synthesis
@@ -624,18 +714,22 @@ class TestSynthesisTrapFixture:
         _inject_services(config, mock_model)
 
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps({
-                "conclusions": [{
-                    "conclusion": (
-                        "Corviknight provides good defensive synergy "
-                        "based on type matchups. However, without usage "
-                        "statistics, a definitive ranking cannot be "
-                        "established."
-                    ),
-                    "supporting_fact_ids": ["f004", "f005"],
-                    "reasoning": "Type coverage analysis with hedging for missing data",
-                }]
-            })
+            content=json.dumps(
+                {
+                    "conclusions": [
+                        {
+                            "conclusion": (
+                                "Corviknight provides good defensive synergy "
+                                "based on type matchups. However, without usage "
+                                "statistics, a definitive ranking cannot be "
+                                "established."
+                            ),
+                            "supporting_fact_ids": ["f004", "f005"],
+                            "reasoning": "Type coverage analysis with hedging for missing data",
+                        }
+                    ]
+                }
+            )
         )
 
         from moira.workflow.nodes.synthesis import synthesis

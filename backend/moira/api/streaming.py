@@ -46,6 +46,32 @@ async def _build_tool_cost_and_limits() -> tuple[dict[str, float], dict[str, int
     return tool_costs, tool_call_limits
 
 
+def _apply_run_setting_overrides(
+    settings: dict[str, Any],
+    budget_limit: float,
+    retry_limits: dict[str, int],
+) -> tuple[float, dict[str, int]]:
+    """Apply per-request overrides from the conversation settings tray.
+
+    The tray sends ``budget``, ``max_review``, and ``max_evaluation`` in the
+    request body's ``settings`` dict. These override the resolved system
+    settings for this run only (not persisted).
+    """
+    raw_budget = settings.get("budget")
+    if isinstance(raw_budget, (int, float)):
+        budget_limit = float(max(35, min(150, int(raw_budget))))
+
+    rl = dict(retry_limits)
+    raw_max_review = settings.get("max_review")
+    if isinstance(raw_max_review, (int, float)):
+        rl["max_review"] = max(1, min(10, int(raw_max_review)))
+    raw_max_evaluation = settings.get("max_evaluation")
+    if isinstance(raw_max_evaluation, (int, float)):
+        rl["max_evaluation"] = max(1, min(10, int(raw_max_evaluation)))
+
+    return budget_limit, rl
+
+
 @streaming_router.post("/conversations/{conversation_id}/messages")
 async def send_message(
     conversation_id: str,
@@ -98,19 +124,20 @@ async def send_message(
         )
 
     settings = body.get("settings") or {}
-    raw_budget = settings.get("budget")
-    if isinstance(raw_budget, (int, float)):
-        budget_limit = max(35, min(150, int(raw_budget)))
 
     # Resolve cost weights from settings service (async boundary).
     # Falls back to config file values if the service is unavailable.
     cost_weights: dict[str, int] = {}
+    retry_limits: dict[str, int] = {}
     try:
         from moira.services.settings.settings_service import SettingsService
 
         settings_svc = cast(SettingsService, service_provider("settings_service"))
         cost_weights = await settings_svc.get_typed_prefix(
             "budget.cost.", scope=SCOPE_SYSTEM, scope_id=SYSTEM_SCOPE_ID
+        )  # pyright: ignore[reportAssignmentType]
+        retry_limits = await settings_svc.get_typed_prefix(
+            "retry.", scope=SCOPE_SYSTEM, scope_id=SYSTEM_SCOPE_ID
         )  # pyright: ignore[reportAssignmentType]
     except Exception:
         logger.warning(
@@ -128,6 +155,14 @@ async def send_message(
             "evaluation": cw.evaluation,
             "report_generation": cw.report_generation,
         }
+        rl = config.budget.retry_limits
+        retry_limits = {
+            "max_review": rl.max_review,
+            "max_evaluation": rl.max_evaluation,
+        }
+
+    # Apply per-request overrides from the conversation settings tray.
+    budget_limit, retry_limits = _apply_run_setting_overrides(settings, budget_limit, retry_limits)
 
     # Collect all prior Q&A turns for context carry-forward.
     # Each turn is a (question, answer) pair from a completed run.
@@ -174,6 +209,7 @@ async def send_message(
             "budget_remaining": float(budget_limit),
             "budget_limit": float(budget_limit),
             "step_costs": cost_weights,
+            "retry_limits": retry_limits,
             "tool_costs": tool_costs,
             "tool_call_limits": tool_call_limits,
             "tool_call_counts": {},
@@ -265,17 +301,18 @@ async def rerun_message(
         )
 
     settings = (body or {}).get("settings") or {}
-    raw_budget = settings.get("budget")
-    if isinstance(raw_budget, (int, float)):
-        budget_limit = max(35, min(150, int(raw_budget)))
 
     cost_weights: dict[str, int] = {}
+    retry_limits: dict[str, int] = {}
     try:
         from moira.services.settings.settings_service import SettingsService
 
         settings_svc = cast(SettingsService, service_provider("settings_service"))
         cost_weights = await settings_svc.get_typed_prefix(
             "budget.cost.", scope=SCOPE_SYSTEM, scope_id=SYSTEM_SCOPE_ID
+        )  # pyright: ignore[reportAssignmentType]
+        retry_limits = await settings_svc.get_typed_prefix(
+            "retry.", scope=SCOPE_SYSTEM, scope_id=SYSTEM_SCOPE_ID
         )  # pyright: ignore[reportAssignmentType]
     except Exception:
         logger.warning(
@@ -293,6 +330,14 @@ async def rerun_message(
             "evaluation": cw.evaluation,
             "report_generation": cw.report_generation,
         }
+        rl = config.budget.retry_limits
+        retry_limits = {
+            "max_review": rl.max_review,
+            "max_evaluation": rl.max_evaluation,
+        }
+
+    # Apply per-request overrides from the conversation settings tray.
+    budget_limit, retry_limits = _apply_run_setting_overrides(settings, budget_limit, retry_limits)
 
     # Re-read messages after truncation to get prior Q&A turns
     remaining_messages = await conversations.get_messages(conversation_id)
@@ -338,6 +383,7 @@ async def rerun_message(
             "budget_remaining": float(budget_limit),
             "budget_limit": float(budget_limit),
             "step_costs": cost_weights,
+            "retry_limits": retry_limits,
             "tool_costs": tool_costs,
             "tool_call_limits": tool_call_limits,
             "tool_call_counts": {},

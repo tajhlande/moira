@@ -33,15 +33,17 @@ def mock_writer():
     def write(event):
         events.append(event)
 
-    with patch("moira.workflow.nodes.decomposition.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes.synthesis.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes.research_review.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes.evaluation.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes.planning.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes.research.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes.report_generation.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes.tool_identification.get_stream_writer", return_value=write), \
-         patch("moira.workflow.nodes._helpers.get_stream_writer", return_value=write):
+    with (
+        patch("moira.workflow.nodes.decomposition.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes.synthesis.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes.research_review.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes.evaluation.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes.planning.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes.research.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes.report_generation.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes.tool_identification.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes._helpers.get_stream_writer", return_value=write),
+    ):
         yield events
 
 
@@ -104,96 +106,113 @@ def _build_state(config, question="Test question", facts=None, conclusions=None)
             "research_retry_count": 0,
             "review_count": 0,
             "evaluation_count": 0,
+            "retry_limits": {"max_review": 3, "max_evaluation": 2},
         },
     }
 
 
-DECOMPOSITION_RESPONSE = json.dumps({
-    "user_goal": "Find information about test topic",
-    "topic": "testing",
-    "entities": ["entity1", "entity2"],
-    "concepts": ["concept1"],
-    "unknown_facts": [
-        {"subject": "entity1", "fact_needed": "fact about entity1"},
-        {"subject": "entity2", "fact_needed": "fact about entity2"},
-    ],
-})
+DECOMPOSITION_RESPONSE = json.dumps(
+    {
+        "user_goal": "Find information about test topic",
+        "topic": "testing",
+        "entities": ["entity1", "entity2"],
+        "concepts": ["concept1"],
+        "unknown_facts": [
+            {"subject": "entity1", "fact_needed": "fact about entity1"},
+            {"subject": "entity2", "fact_needed": "fact about entity2"},
+        ],
+    }
+)
 
-PLANNING_RESPONSE = json.dumps({
-    "calls": [
-        {
-            "tool": "web_search",
-            "args": {"query": "entity1 fact"},
-            "target_fact_ids": ["f001"],
-            "rationale": "Search for entity1 information",
-        },
-        {
-            "tool": "web_search",
-            "args": {"query": "entity2 fact"},
-            "target_fact_ids": ["f002"],
-            "rationale": "Search for entity2 information",
-        },
-    ],
-})
+PLANNING_RESPONSE = json.dumps(
+    {
+        "calls": [
+            {
+                "tool": "web_search",
+                "args": {"query": "entity1 fact"},
+                "target_fact_ids": ["f001"],
+                "rationale": "Search for entity1 information",
+            },
+            {
+                "tool": "web_search",
+                "args": {"query": "entity2 fact"},
+                "target_fact_ids": ["f002"],
+                "rationale": "Search for entity2 information",
+            },
+        ],
+    }
+)
 
-SYNTHESIS_RESPONSE = json.dumps({
-    "conclusions": [
-        {
-            "conclusion": "Entity1 has been confirmed",
-            "supporting_fact_ids": ["f001"],
-            "reasoning": "Based on verified data",
-        },
-    ],
-})
+SYNTHESIS_RESPONSE = json.dumps(
+    {
+        "conclusions": [
+            {
+                "conclusion": "Entity1 has been confirmed",
+                "supporting_fact_ids": ["f001"],
+                "reasoning": "Based on verified data",
+            },
+        ],
+    }
+)
 
-REVIEW_RESPONSE = json.dumps({
-    "fact_results": [
-        {"fact_id": "f001", "result": "verified", "evidence": "Confirmed by source"},
-    ],
-    "coverage_assessment": "Research sufficiently covered the question",
-    "missing_areas": [],
-    "route": "continue",
-})
+REVIEW_RESPONSE = json.dumps(
+    {
+        "fact_results": [
+            {"fact_id": "f001", "result": "verified", "evidence": "Confirmed by source"},
+        ],
+        "coverage_assessment": "Research sufficiently covered the question",
+        "missing_areas": [],
+        "route": "continue",
+    }
+)
 
-REVIEW_RETRY_RESPONSE = json.dumps({
-    "fact_results": [
-        {"fact_id": "f001", "result": "contradicted", "evidence": "Wrong"},
-    ],
-    "coverage_assessment": "Missing critical info",
-    "missing_areas": ["Need more data on X"],
-    "route": "retry",
-})
+REVIEW_RETRY_RESPONSE = json.dumps(
+    {
+        "fact_results": [
+            {"fact_id": "f001", "result": "contradicted", "evidence": "Wrong"},
+        ],
+        "coverage_assessment": "Missing critical info",
+        "missing_areas": ["Need more data on X"],
+        "route": "retry",
+    }
+)
 
-EVALUATION_RESPONSE = json.dumps({
-    "conclusion_results": [
-        {"conclusion_id": "c001", "result": "verified", "reason": "Supported by facts"},
-    ],
-    "goal_met": True,
-    "goal_assessment": "Goal fully met",
-    "route": "accept",
-})
+EVALUATION_RESPONSE = json.dumps(
+    {
+        "conclusion_results": [
+            {"conclusion_id": "c001", "result": "verified", "reason": "Supported by facts"},
+        ],
+        "goal_met": True,
+        "goal_assessment": "Goal fully met",
+        "route": "accept",
+    }
+)
 
-EVALUATION_RETRY_RESPONSE = json.dumps({
-    "conclusion_results": [
-        {"conclusion_id": "c001", "result": "contradicted", "reason": "Based on wrong fact"},
-    ],
-    "goal_met": False,
-    "goal_assessment": "Conclusions flawed",
-    "route": "retry",
-})
+EVALUATION_RETRY_RESPONSE = json.dumps(
+    {
+        "conclusion_results": [
+            {"conclusion_id": "c001", "result": "contradicted", "reason": "Based on wrong fact"},
+        ],
+        "goal_met": False,
+        "goal_assessment": "Conclusions flawed",
+        "route": "retry",
+    }
+)
 
-REPORT_RESPONSE = json.dumps({
-    "answer": "Entity1 is confirmed based on research. [1]",
-    "citations": [],
-    "verified_facts": [],
-    "verified_conclusions": [],
-    "contradicted": [],
-    "unknown_facts": [],
-    "critiques": [],
-    "total_cost": 0,
-    "tool_call_total_cost": 0,
-    "generation_path": "verified",
-})
+REPORT_RESPONSE = json.dumps(
+    {
+        "answer": "Entity1 is confirmed based on research. [1]",
+        "citations": [],
+        "verified_facts": [],
+        "verified_conclusions": [],
+        "contradicted": [],
+        "unknown_facts": [],
+        "critiques": [],
+        "total_cost": 0,
+        "tool_call_total_cost": 0,
+        "generation_reason": "verified",
+    }
+)
 
 
 # ===========================================================================
@@ -202,7 +221,6 @@ REPORT_RESPONSE = json.dumps({
 
 
 class TestDecomposition:
-
     @pytest.mark.asyncio
     async def test_happy_path(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
@@ -275,13 +293,15 @@ class TestDecomposition:
     async def test_empty_unknown_facts(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps({
-                "user_goal": "Vague question",
-                "topic": "general",
-                "entities": [],
-                "concepts": [],
-                "unknown_facts": [],
-            })
+            content=json.dumps(
+                {
+                    "user_goal": "Vague question",
+                    "topic": "general",
+                    "entities": [],
+                    "concepts": [],
+                    "unknown_facts": [],
+                }
+            )
         )
 
         from moira.workflow.nodes.decomposition import decomposition
@@ -295,17 +315,19 @@ class TestDecomposition:
     async def test_facts_get_sequential_ids(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps({
-                "user_goal": "g",
-                "topic": "t",
-                "entities": [],
-                "concepts": [],
-                "unknown_facts": [
-                    {"subject": "a", "fact_needed": "x"},
-                    {"subject": "b", "fact_needed": "y"},
-                    {"subject": "c", "fact_needed": "z"},
-                ],
-            })
+            content=json.dumps(
+                {
+                    "user_goal": "g",
+                    "topic": "t",
+                    "entities": [],
+                    "concepts": [],
+                    "unknown_facts": [
+                        {"subject": "a", "fact_needed": "x"},
+                        {"subject": "b", "fact_needed": "y"},
+                        {"subject": "c", "fact_needed": "z"},
+                    ],
+                }
+            )
         )
 
         from moira.workflow.nodes.decomposition import decomposition
@@ -323,16 +345,17 @@ class TestDecomposition:
 
 
 class TestToolIdentification:
-
     @pytest.mark.asyncio
     async def test_happy_path(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
 
         mock_discovery = AsyncMock()
-        mock_discovery.discover = AsyncMock(return_value=[
-            ToolDefinition(name="web_search", description="Search the web"),
-            ToolDefinition(name="api_tool", description="API tool"),
-        ])
+        mock_discovery.discover = AsyncMock(
+            return_value=[
+                ToolDefinition(name="web_search", description="Search the web"),
+                ToolDefinition(name="api_tool", description="API tool"),
+            ]
+        )
         _services["tool_discovery"] = mock_discovery
 
         mock_catalog = MagicMock()
@@ -417,10 +440,12 @@ class TestToolIdentification:
         _inject_services(config, mock_model)
 
         mock_discovery = AsyncMock()
-        mock_discovery.discover = AsyncMock(return_value=[
-            ToolDefinition(name="web_search", description="Search"),
-            ToolDefinition(name="web_search", description="Search again"),
-        ])
+        mock_discovery.discover = AsyncMock(
+            return_value=[
+                ToolDefinition(name="web_search", description="Search"),
+                ToolDefinition(name="web_search", description="Search again"),
+            ]
+        )
         _services["tool_discovery"] = mock_discovery
 
         mock_catalog = MagicMock()
@@ -468,13 +493,10 @@ class TestToolIdentification:
 
 
 class TestPlanning:
-
     @pytest.mark.asyncio
     async def test_happy_path(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=PLANNING_RESPONSE
-        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=PLANNING_RESPONSE)
 
         from moira.workflow.nodes.planning import planning
 
@@ -550,9 +572,7 @@ class TestPlanning:
     @pytest.mark.asyncio
     async def test_malformed_response_gives_empty_plan(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content="no json here"
-        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content="no json here")
 
         from moira.workflow.nodes.planning import planning
 
@@ -571,38 +591,55 @@ class TestPlanning:
 
 
 class TestResearch:
-
     @pytest.mark.asyncio
     async def test_happy_path(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
 
         mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(
-                tool_name="web_search",
-                output="Entity1 is confirmed",
-                success=True,
-                duration_ms=100,
-                metadata={"results": [
-                    {"title": "Entity1 Page", "url": "https://example.com/entity1",
-                     "snippet": "Entity1 is confirmed"},
-                ]},
-            ),
-        ])
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search",
+                    output="Entity1 is confirmed",
+                    success=True,
+                    duration_ms=100,
+                    metadata={
+                        "results": [
+                            {
+                                "title": "Entity1 Page",
+                                "url": "https://example.com/entity1",
+                                "snippet": "Entity1 is confirmed",
+                            },
+                        ]
+                    },
+                ),
+            ]
+        )
         _services["tool_executor"] = mock_executor
 
         model_responses = [
-            ChatResponse(content=json.dumps([
-                {"tool": "web_search", "args": {"query": "entity1"}},
-            ])),
-            ChatResponse(content=json.dumps({
-                "tool_calls": [],
-                "discovered_facts": [
-                    {"fact_id": "f001", "claim": "Entity1 confirmed",
-                     "citation_ids": ["cit001"]},
-                ],
-                "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    [
+                        {"tool": "web_search", "args": {"query": "entity1"}},
+                    ]
+                )
+            ),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [
+                            {
+                                "fact_id": "f001",
+                                "claim": "Entity1 confirmed",
+                                "citation_ids": ["cit001"],
+                            },
+                        ],
+                        "sources": [],
+                    }
+                )
+            ),
         ]
         mock_model["client"].chat_completion.side_effect = model_responses
 
@@ -614,8 +651,9 @@ class TestResearch:
             Fact(id="f001", subject="entity1", fact_needed="some fact", status="unknown"),
         ]
         state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(tool="web_search", args={"query": "entity1"},
-                         target_fact_ids=["f001"], cost=1.0),
+            ToolCallPlan(
+                tool="web_search", args={"query": "entity1"}, target_fact_ids=["f001"], cost=1.0
+            ),
         ]
         state["execution_state"]["candidate_tools"] = [
             ToolDefinition(name="web_search", description="Search the web"),
@@ -660,9 +698,13 @@ class TestResearch:
         _inject_services(config, mock_model)
 
         mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(tool_name="web_search", output="Some result", success=True, duration_ms=50),
-        ])
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search", output="Some result", success=True, duration_ms=50
+                ),
+            ]
+        )
         _services["tool_executor"] = mock_executor
 
         mock_model["client"].chat_completion.side_effect = [
@@ -677,8 +719,9 @@ class TestResearch:
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
         state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(tool="web_search", args={"query": "x"},
-                         target_fact_ids=["f001"], cost=1.0),
+            ToolCallPlan(
+                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+            ),
         ]
         state["execution_state"]["candidate_tools"] = [
             ToolDefinition(name="web_search", description="Search"),
@@ -703,8 +746,9 @@ class TestResearch:
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
         state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(tool="web_search", args={"query": "x"},
-                         target_fact_ids=["f001"], cost=1.0),
+            ToolCallPlan(
+                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+            ),
         ]
 
         result = await research(state, _make_run_config(config))
@@ -731,8 +775,9 @@ class TestResearch:
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
         state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(tool="web_search", args={"query": "x"},
-                         target_fact_ids=["f001"], cost=1.0),
+            ToolCallPlan(
+                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+            ),
         ]
         state["execution_state"]["candidate_tools"] = [
             ToolDefinition(name="web_search", description="Search"),
@@ -756,28 +801,42 @@ class TestResearch:
         _inject_services(config, mock_model)
 
         mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(tool_name="web_search", output="Result data",
-                       success=True, duration_ms=100),
-        ])
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search", output="Result data", success=True, duration_ms=100
+                ),
+            ]
+        )
         _services["tool_executor"] = mock_executor
 
         # Round 1: model returns tool_calls. Round 2: model sees [cit001]
         # labeled result and returns discovered_facts with citation_ids.
         mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(content=json.dumps({
-                "tool_calls": [{"tool": "web_search", "args": {"query": "test"}}],
-                "discovered_facts": [],
-                "sources": [],
-            })),
-            ChatResponse(content=json.dumps({
-                "tool_calls": [],
-                "discovered_facts": [
-                    {"fact_id": "f001", "claim": "Entity1 confirmed",
-                     "citation_ids": ["cit001"]},
-                ],
-                "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [{"tool": "web_search", "args": {"query": "test"}}],
+                        "discovered_facts": [],
+                        "sources": [],
+                    }
+                )
+            ),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [
+                            {
+                                "fact_id": "f001",
+                                "claim": "Entity1 confirmed",
+                                "citation_ids": ["cit001"],
+                            },
+                        ],
+                        "sources": [],
+                    }
+                )
+            ),
         ]
 
         from moira.workflow.nodes.research import research
@@ -785,12 +844,12 @@ class TestResearch:
         state = _build_state(config, "Test question")
         state["knowledge"]["user_goal"] = "Find info"
         state["knowledge"]["facts"] = [
-            Fact(id="f001", subject="entity1", fact_needed="some fact",
-                 status="unknown"),
+            Fact(id="f001", subject="entity1", fact_needed="some fact", status="unknown"),
         ]
         state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(tool="web_search", args={"query": "entity1"},
-                         target_fact_ids=["f001"], cost=1.0),
+            ToolCallPlan(
+                tool="web_search", args={"query": "entity1"}, target_fact_ids=["f001"], cost=1.0
+            ),
         ]
         state["execution_state"]["candidate_tools"] = [
             ToolDefinition(name="web_search", description="Search the web"),
@@ -815,38 +874,46 @@ class TestResearch:
         _inject_services(config, mock_model)
 
         mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(
-                tool_name="web_search",
-                output="formatted text output",
-                success=True,
-                duration_ms=100,
-                metadata={"results": [
-                    {"title": "First", "url": "https://a.com",
-                     "snippet": "snippet A"},
-                    {"title": "Second", "url": "https://b.com",
-                     "snippet": "snippet B"},
-                    {"title": "Third", "url": "https://c.com",
-                     "snippet": "snippet C"},
-                ]},
-            ),
-        ])
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search",
+                    output="formatted text output",
+                    success=True,
+                    duration_ms=100,
+                    metadata={
+                        "results": [
+                            {"title": "First", "url": "https://a.com", "snippet": "snippet A"},
+                            {"title": "Second", "url": "https://b.com", "snippet": "snippet B"},
+                            {"title": "Third", "url": "https://c.com", "snippet": "snippet C"},
+                        ]
+                    },
+                ),
+            ]
+        )
         _services["tool_executor"] = mock_executor
 
         mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(content=json.dumps({
-                "tool_calls": [{"tool": "web_search", "args": {"query": "test"}}],
-                "discovered_facts": [],
-                "sources": [],
-            })),
-            ChatResponse(content=json.dumps({
-                "tool_calls": [],
-                "discovered_facts": [
-                    {"fact_id": "f001", "claim": "found it",
-                     "citation_ids": ["cit002"]},
-                ],
-                "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [{"tool": "web_search", "args": {"query": "test"}}],
+                        "discovered_facts": [],
+                        "sources": [],
+                    }
+                )
+            ),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [
+                            {"fact_id": "f001", "claim": "found it", "citation_ids": ["cit002"]},
+                        ],
+                        "sources": [],
+                    }
+                )
+            ),
         ]
 
         from moira.workflow.nodes.research import research
@@ -857,8 +924,9 @@ class TestResearch:
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
         state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(tool="web_search", args={"query": "x"},
-                         target_fact_ids=["f001"], cost=1.0),
+            ToolCallPlan(
+                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+            ),
         ]
         state["execution_state"]["candidate_tools"] = [
             ToolDefinition(name="web_search", description="Search the web"),
@@ -887,27 +955,39 @@ class TestResearch:
         _inject_services(config, mock_model)
 
         mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(tool_name="url_content",
-                       output="# Some Page\n\nLots of content here.",
-                       success=True, duration_ms=100),
-        ])
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="url_content",
+                    output="# Some Page\n\nLots of content here.",
+                    success=True,
+                    duration_ms=100,
+                ),
+            ]
+        )
         _services["tool_executor"] = mock_executor
 
         mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(content=json.dumps({
-                "tool_calls": [{"tool": "url_content", "args": {"url": "https://x.com"}}],
-                "discovered_facts": [],
-                "sources": [],
-            })),
-            ChatResponse(content=json.dumps({
-                "tool_calls": [],
-                "discovered_facts": [
-                    {"fact_id": "f001", "claim": "found it",
-                     "citation_ids": ["cit001"]},
-                ],
-                "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [{"tool": "url_content", "args": {"url": "https://x.com"}}],
+                        "discovered_facts": [],
+                        "sources": [],
+                    }
+                )
+            ),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [
+                            {"fact_id": "f001", "claim": "found it", "citation_ids": ["cit001"]},
+                        ],
+                        "sources": [],
+                    }
+                )
+            ),
         ]
 
         from moira.workflow.nodes.research import research
@@ -918,8 +998,12 @@ class TestResearch:
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
         state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(tool="url_content", args={"url": "https://x.com"},
-                         target_fact_ids=["f001"], cost=1.0),
+            ToolCallPlan(
+                tool="url_content",
+                args={"url": "https://x.com"},
+                target_fact_ids=["f001"],
+                cost=1.0,
+            ),
         ]
         state["execution_state"]["candidate_tools"] = [
             ToolDefinition(name="url_content", description="Fetch a URL"),
@@ -934,36 +1018,43 @@ class TestResearch:
         assert "Some Page" in citations[0].get("excerpt", "")
 
     @pytest.mark.asyncio
-    async def test_tool_result_display_truncation_note(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_tool_result_display_truncation_note(self, config, mock_writer, mock_model):
         """When tool output exceeds the display limit, the writer event
         should include a truncation note."""
         _inject_services(config, mock_model)
 
         long_output = "x" * 5000
         mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(tool_name="url_content",
-                       output=long_output,
-                       success=True, duration_ms=100),
-        ])
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="url_content", output=long_output, success=True, duration_ms=100
+                ),
+            ]
+        )
         _services["tool_executor"] = mock_executor
 
         mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(content=json.dumps({
-                "tool_calls": [{"tool": "url_content", "args": {"url": "https://x.com"}}],
-                "discovered_facts": [],
-                "sources": [],
-            })),
-            ChatResponse(content=json.dumps({
-                "tool_calls": [],
-                "discovered_facts": [
-                    {"fact_id": "f001", "claim": "found it",
-                     "citation_ids": ["cit001"]},
-                ],
-                "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [{"tool": "url_content", "args": {"url": "https://x.com"}}],
+                        "discovered_facts": [],
+                        "sources": [],
+                    }
+                )
+            ),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [
+                            {"fact_id": "f001", "claim": "found it", "citation_ids": ["cit001"]},
+                        ],
+                        "sources": [],
+                    }
+                )
+            ),
         ]
 
         from moira.workflow.nodes.research import research
@@ -974,8 +1065,12 @@ class TestResearch:
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
         state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(tool="url_content", args={"url": "https://x.com"},
-                         target_fact_ids=["f001"], cost=1.0),
+            ToolCallPlan(
+                tool="url_content",
+                args={"url": "https://x.com"},
+                target_fact_ids=["f001"],
+                cost=1.0,
+            ),
         ]
         state["execution_state"]["candidate_tools"] = [
             ToolDefinition(name="url_content", description="Fetch a URL"),
@@ -985,8 +1080,7 @@ class TestResearch:
 
         # Find the tool_result event in mock_writer
         tool_events = [
-            e for e in mock_writer
-            if isinstance(e, dict) and e.get("event") == "tool_result"
+            e for e in mock_writer if isinstance(e, dict) and e.get("event") == "tool_result"
         ]
         assert len(tool_events) >= 1
         payload = tool_events[0]["payload"]
@@ -994,9 +1088,7 @@ class TestResearch:
         assert len(payload["output"]) < len(long_output)
 
     @pytest.mark.asyncio
-    async def test_citation_dedup_same_url_across_rounds(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_citation_dedup_same_url_across_rounds(self, config, mock_writer, mock_model):
         """When the same URL appears in search results across multiple
         research rounds, snippets are merged into a single citation."""
         _inject_services(config, mock_model)
@@ -1010,10 +1102,15 @@ class TestResearch:
                     output="text",
                     success=True,
                     duration_ms=100,
-                    metadata={"results": [
-                        {"title": "Result", "url": "https://shared.com",
-                         "snippet": f"snippet from query '{calls[i][1]['query']}'"},
-                    ]},
+                    metadata={
+                        "results": [
+                            {
+                                "title": "Result",
+                                "url": "https://shared.com",
+                                "snippet": f"snippet from query '{calls[i][1]['query']}'",
+                            },
+                        ]
+                    },
                 )
                 for i in range(len(calls))
             ]
@@ -1023,26 +1120,37 @@ class TestResearch:
 
         mock_model["client"].chat_completion.side_effect = [
             # Round 1: search
-            ChatResponse(content=json.dumps({
-                "tool_calls": [{"tool": "web_search", "args": {"query": "alpha"}}],
-                "discovered_facts": [],
-                "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [{"tool": "web_search", "args": {"query": "alpha"}}],
+                        "discovered_facts": [],
+                        "sources": [],
+                    }
+                )
+            ),
             # Round 2: search again (different query, same URL in results)
-            ChatResponse(content=json.dumps({
-                "tool_calls": [{"tool": "web_search", "args": {"query": "beta"}}],
-                "discovered_facts": [],
-                "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [{"tool": "web_search", "args": {"query": "beta"}}],
+                        "discovered_facts": [],
+                        "sources": [],
+                    }
+                )
+            ),
             # Round 3: done
-            ChatResponse(content=json.dumps({
-                "tool_calls": [],
-                "discovered_facts": [
-                    {"fact_id": "f001", "claim": "found it",
-                     "citation_ids": ["cit001"]},
-                ],
-                "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [
+                            {"fact_id": "f001", "claim": "found it", "citation_ids": ["cit001"]},
+                        ],
+                        "sources": [],
+                    }
+                )
+            ),
         ]
 
         from moira.workflow.nodes.research import research
@@ -1053,8 +1161,9 @@ class TestResearch:
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
         state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(tool="web_search", args={"query": "x"},
-                         target_fact_ids=["f001"], cost=1.0),
+            ToolCallPlan(
+                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+            ),
         ]
         state["execution_state"]["candidate_tools"] = [
             ToolDefinition(name="web_search", description="Search the web"),
@@ -1071,56 +1180,77 @@ class TestResearch:
         ]
 
     @pytest.mark.asyncio
-    async def test_citation_dedup_same_url_same_batch(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_citation_dedup_same_url_same_batch(self, config, mock_writer, mock_model):
         """Two web_search calls in the same batch returning the same URL
         should merge into one citation with two snippets."""
         _inject_services(config, mock_model)
 
         mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(
-                tool_name="web_search",
-                output="text",
-                success=True,
-                duration_ms=100,
-                metadata={"results": [
-                    {"title": "Shared", "url": "https://dup.com",
-                     "snippet": "snippet from first search"},
-                ]},
-            ),
-            ToolResult(
-                tool_name="web_search",
-                output="text",
-                success=True,
-                duration_ms=100,
-                metadata={"results": [
-                    {"title": "Shared", "url": "https://dup.com",
-                     "snippet": "snippet from second search"},
-                    {"title": "Unique", "url": "https://unique.com",
-                     "snippet": "only here"},
-                ]},
-            ),
-        ])
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search",
+                    output="text",
+                    success=True,
+                    duration_ms=100,
+                    metadata={
+                        "results": [
+                            {
+                                "title": "Shared",
+                                "url": "https://dup.com",
+                                "snippet": "snippet from first search",
+                            },
+                        ]
+                    },
+                ),
+                ToolResult(
+                    tool_name="web_search",
+                    output="text",
+                    success=True,
+                    duration_ms=100,
+                    metadata={
+                        "results": [
+                            {
+                                "title": "Shared",
+                                "url": "https://dup.com",
+                                "snippet": "snippet from second search",
+                            },
+                            {
+                                "title": "Unique",
+                                "url": "https://unique.com",
+                                "snippet": "only here",
+                            },
+                        ]
+                    },
+                ),
+            ]
+        )
         _services["tool_executor"] = mock_executor
 
         mock_model["client"].chat_completion.side_effect = [
             # Round 1: two searches
-            ChatResponse(content=json.dumps({
-                "tool_calls": [
-                    {"tool": "web_search", "args": {"query": "a"}},
-                    {"tool": "web_search", "args": {"query": "b"}},
-                ],
-                "discovered_facts": [],
-                "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [
+                            {"tool": "web_search", "args": {"query": "a"}},
+                            {"tool": "web_search", "args": {"query": "b"}},
+                        ],
+                        "discovered_facts": [],
+                        "sources": [],
+                    }
+                )
+            ),
             # Round 2: done
-            ChatResponse(content=json.dumps({
-                "tool_calls": [],
-                "discovered_facts": [],
-                "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [],
+                        "sources": [],
+                    }
+                )
+            ),
         ]
 
         from moira.workflow.nodes.research import research
@@ -1131,8 +1261,9 @@ class TestResearch:
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
         state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(tool="web_search", args={"query": "x"},
-                         target_fact_ids=["f001"], cost=1.0),
+            ToolCallPlan(
+                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+            ),
         ]
         state["execution_state"]["candidate_tools"] = [
             ToolDefinition(name="web_search", description="Search the web"),
@@ -1150,9 +1281,7 @@ class TestResearch:
         ]
 
     @pytest.mark.asyncio
-    async def test_apply_sources_dedup_by_url(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_apply_sources_dedup_by_url(self, config, mock_writer, mock_model):
         """Model-emitted sources with a URL that already has a citation
         should merge instead of creating a duplicate."""
         from moira.workflow.nodes.research import _find_or_merge_citation
@@ -1162,7 +1291,8 @@ class TestResearch:
 
         # First call: creates a new citation
         cit_id_1, is_new_1 = _find_or_merge_citation(
-            citations, seen_urls,
+            citations,
+            seen_urls,
             source="web_search",
             url="https://example.com",
             title="Example",
@@ -1175,7 +1305,8 @@ class TestResearch:
 
         # Second call: same URL, different snippet → merge
         cit_id_2, is_new_2 = _find_or_merge_citation(
-            citations, seen_urls,
+            citations,
+            seen_urls,
             source="web_search",
             url="https://example.com",
             title="Example",
@@ -1188,7 +1319,8 @@ class TestResearch:
 
         # Third call: new URL → new citation
         cit_id_3, is_new_3 = _find_or_merge_citation(
-            citations, seen_urls,
+            citations,
+            seen_urls,
             source="web_search",
             url="https://other.com",
             title="Other",
@@ -1199,9 +1331,7 @@ class TestResearch:
         assert len(citations) == 2
 
     @pytest.mark.asyncio
-    async def test_find_or_merge_no_url_always_creates_new(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_find_or_merge_no_url_always_creates_new(self, config, mock_writer, mock_model):
         """When url is None (e.g., calculator results), each call creates
         a new citation since there's nothing to dedup on."""
         from moira.workflow.nodes.research import _find_or_merge_citation
@@ -1210,12 +1340,14 @@ class TestResearch:
         seen_urls: dict[str, str] = {}
 
         cit_id_1, is_new_1 = _find_or_merge_citation(
-            citations, seen_urls,
+            citations,
+            seen_urls,
             source="calculator",
             snippet="42",
         )
         cit_id_2, is_new_2 = _find_or_merge_citation(
-            citations, seen_urls,
+            citations,
+            seen_urls,
             source="calculator",
             snippet="99",
         )
@@ -1296,14 +1428,16 @@ class TestResearch:
 
         # First: long snippet
         _find_or_merge_citation(
-            citations, seen_urls,
+            citations,
+            seen_urls,
             source="web_search",
             url="https://x.com",
             snippet="Need cherries sugar brandy cinnamon cloves",
         )
         # Second: shorter version of same content
         cit_id, is_new = _find_or_merge_citation(
-            citations, seen_urls,
+            citations,
+            seen_urls,
             source="web_search",
             url="https://x.com",
             snippet="Need cherries sugar",
@@ -1322,14 +1456,16 @@ class TestResearch:
 
         # First: short snippet
         _find_or_merge_citation(
-            citations, seen_urls,
+            citations,
+            seen_urls,
             source="web_search",
             url="https://x.com",
             snippet="Need cherries sugar",
         )
         # Second: longer version
         _find_or_merge_citation(
-            citations, seen_urls,
+            citations,
+            seen_urls,
             source="web_search",
             url="https://x.com",
             snippet="Need cherries sugar brandy cinnamon cloves",
@@ -1346,13 +1482,15 @@ class TestResearch:
         seen_urls: dict[str, str] = {}
 
         _find_or_merge_citation(
-            citations, seen_urls,
+            citations,
+            seen_urls,
             source="web_search",
             url="https://x.com",
             snippet="The recipe uses cherries and sugar for maceration",
         )
         _find_or_merge_citation(
-            citations, seen_urls,
+            citations,
+            seen_urls,
             source="web_search",
             url="https://x.com",
             snippet="cherries and sugar for maceration over one month",
@@ -1371,13 +1509,15 @@ class TestResearch:
         seen_urls: dict[str, str] = {}
 
         _find_or_merge_citation(
-            citations, seen_urls,
+            citations,
+            seen_urls,
             source="web_search",
             url="https://x.com",
             snippet="Cherries are harvested in June",
         )
         _find_or_merge_citation(
-            citations, seen_urls,
+            citations,
+            seen_urls,
             source="web_search",
             url="https://x.com",
             snippet="Bottling happens in December",
@@ -1409,9 +1549,13 @@ class TestResearch:
         _inject_services(config, mock_model)
 
         mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(tool_name="expensive_tool", output="data", success=True, duration_ms=50),
-        ])
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="expensive_tool", output="data", success=True, duration_ms=50
+                ),
+            ]
+        )
         _services["tool_executor"] = mock_executor
 
         mock_model["client"].chat_completion.return_value = ChatResponse(
@@ -1445,39 +1589,45 @@ class TestResearch:
         _inject_services(config, mock_model)
 
         mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(
-                tool_name="web_search",
-                output="The limit of sqrt(x)/log2(x) as x->infinity is infinity",
-                success=True,
-                duration_ms=50,
-            ),
-        ])
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search",
+                    output="The limit of sqrt(x)/log2(x) as x->infinity is infinity",
+                    success=True,
+                    duration_ms=50,
+                ),
+            ]
+        )
         _services["tool_executor"] = mock_executor
 
         # Round 1: model returns tool_calls but no discovered_facts
         # Post-loop: model extracts facts from tool results
         mock_model["client"].chat_completion.side_effect = [
             ChatResponse(
-                content=json.dumps({
-                    "tool_calls": [
-                        {"tool": "web_search", "args": {"query": "sqrt vs log2 limit"}},
-                    ],
-                }),
+                content=json.dumps(
+                    {
+                        "tool_calls": [
+                            {"tool": "web_search", "args": {"query": "sqrt vs log2 limit"}},
+                        ],
+                    }
+                ),
             ),
             ChatResponse(
-                content=json.dumps({
-                    "discovered_facts": [
-                        {
-                            "fact_id": "f001",
-                            "subject": "limit",
-                            "claim": "lim(x->inf) sqrt(x)/log2(x) = infinity",
-                        },
-                    ],
-                    "sources": [
-                        {"source": "web_search", "excerpt": "sqrt(x)/log2(x) -> infinity"},
-                    ],
-                }),
+                content=json.dumps(
+                    {
+                        "discovered_facts": [
+                            {
+                                "fact_id": "f001",
+                                "subject": "limit",
+                                "claim": "lim(x->inf) sqrt(x)/log2(x) = infinity",
+                            },
+                        ],
+                        "sources": [
+                            {"source": "web_search", "excerpt": "sqrt(x)/log2(x) -> infinity"},
+                        ],
+                    }
+                ),
             ),
         ]
 
@@ -1495,8 +1645,10 @@ class TestResearch:
         ]
         state["execution_state"]["tool_call_plan"] = [
             ToolCallPlan(
-                tool="web_search", args={"query": "sqrt vs log2"},
-                target_fact_ids=["f001"], cost=1.0,
+                tool="web_search",
+                args={"query": "sqrt vs log2"},
+                target_fact_ids=["f001"],
+                cost=1.0,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -1515,7 +1667,6 @@ class TestResearch:
 
 
 class TestSynthesis:
-
     @pytest.mark.asyncio
     async def test_happy_path(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
@@ -1531,8 +1682,11 @@ class TestSynthesis:
         state["knowledge"]["entities"] = ["entity1"]
         state["knowledge"]["facts"] = [
             Fact(
-                id="f001", subject="entity1", fact_needed="some fact",
-                claim="Entity1 confirmed", status="unverified",
+                id="f001",
+                subject="entity1",
+                fact_needed="some fact",
+                claim="Entity1 confirmed",
+                status="unverified",
                 citation_ids=["cit001"],
             ),
         ]
@@ -1599,12 +1753,22 @@ class TestSynthesis:
     async def test_multiple_conclusions_get_sequential_ids(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps({
-                "conclusions": [
-                    {"conclusion": "First", "supporting_fact_ids": ["f001"], "reasoning": "r1"},
-                    {"conclusion": "Second", "supporting_fact_ids": ["f002"], "reasoning": "r2"},
-                ],
-            })
+            content=json.dumps(
+                {
+                    "conclusions": [
+                        {
+                            "conclusion": "First",
+                            "supporting_fact_ids": ["f001"],
+                            "reasoning": "r1",
+                        },
+                        {
+                            "conclusion": "Second",
+                            "supporting_fact_ids": ["f002"],
+                            "reasoning": "r2",
+                        },
+                    ],
+                }
+            )
         )
 
         from moira.workflow.nodes.synthesis import synthesis
@@ -1626,13 +1790,10 @@ class TestSynthesis:
 
 
 class TestResearchReview:
-
     @pytest.mark.asyncio
     async def test_happy_path(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=REVIEW_RESPONSE
-        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=REVIEW_RESPONSE)
 
         from moira.workflow.nodes.research_review import research_review
 
@@ -1640,15 +1801,20 @@ class TestResearchReview:
         state["knowledge"]["user_goal"] = "Find info"
         state["knowledge"]["facts"] = [
             Fact(
-                id="f001", subject="entity1", fact_needed="some fact",
-                claim="Entity1 confirmed", status="unverified",
+                id="f001",
+                subject="entity1",
+                fact_needed="some fact",
+                claim="Entity1 confirmed",
+                status="unverified",
                 citation_ids=["cit001"],
             ),
         ]
         state["knowledge"]["conclusions"] = [
             Conclusion(
-                id="c001", conclusion="Entity1 is confirmed",
-                supporting_fact_ids=["f001"], status="unverified",
+                id="c001",
+                conclusion="Entity1 is confirmed",
+                supporting_fact_ids=["f001"],
+                status="unverified",
             ),
         ]
 
@@ -1719,9 +1885,7 @@ class TestResearchReview:
     @pytest.mark.asyncio
     async def test_increments_review_count(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=REVIEW_RESPONSE
-        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=REVIEW_RESPONSE)
 
         from moira.workflow.nodes.research_review import research_review
 
@@ -1752,13 +1916,9 @@ class TestResearchReview:
             await research_review(state, _make_run_config(config))
 
     @pytest.mark.asyncio
-    async def test_structured_output_has_review_schema(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_structured_output_has_review_schema(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=REVIEW_RESPONSE
-        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=REVIEW_RESPONSE)
 
         from moira.workflow.nodes.research_review import research_review
 
@@ -1770,8 +1930,7 @@ class TestResearchReview:
         await research_review(state, _make_run_config(config))
 
         node_end_events = [
-            e for e in mock_writer
-            if isinstance(e, dict) and e.get("event") == "node_end"
+            e for e in mock_writer if isinstance(e, dict) and e.get("event") == "node_end"
         ]
         assert len(node_end_events) == 1
         so = node_end_events[0]["payload"]["detail"]["structured_output"]
@@ -1781,31 +1940,33 @@ class TestResearchReview:
         assert "route" in so
 
     @pytest.mark.asyncio
-    async def test_model_uses_status_key_instead_of_result(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_model_uses_status_key_instead_of_result(self, config, mock_writer, mock_model):
         """Models sometimes return 'status' instead of the documented 'result'
         field name. The node should handle this gracefully — the verdict is
         critical for routing (regression test for field name mismatch bug)."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps({
-                "fact_results": [
-                    {"fact_id": "f001", "status": "verified",
-                     "evaluation": "Confirmed by source"},
-                ],
-                "coverage_assessment": "All good",
-                "missing_areas": [],
-                "route": "continue",
-            })
+            content=json.dumps(
+                {
+                    "fact_results": [
+                        {
+                            "fact_id": "f001",
+                            "status": "verified",
+                            "evaluation": "Confirmed by source",
+                        },
+                    ],
+                    "coverage_assessment": "All good",
+                    "missing_areas": [],
+                    "route": "continue",
+                }
+            )
         )
 
         from moira.workflow.nodes.research_review import research_review
 
         state = _build_state(config, "Test question")
         state["knowledge"]["facts"] = [
-            Fact(id="f001", subject="x", fact_needed="y",
-                 claim="z", status="unverified"),
+            Fact(id="f001", subject="x", fact_needed="y", claim="z", status="unverified"),
         ]
 
         result = await research_review(state, _make_run_config(config))
@@ -1819,7 +1980,6 @@ class TestResearchReview:
 
 
 class TestEvaluation:
-
     @pytest.mark.asyncio
     async def test_happy_path(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
@@ -1832,13 +1992,14 @@ class TestEvaluation:
         state = _build_state(config, "Test question")
         state["knowledge"]["user_goal"] = "Find info"
         state["knowledge"]["facts"] = [
-            Fact(id="f001", subject="x", fact_needed="y",
-                 claim="z", status="verified"),
+            Fact(id="f001", subject="x", fact_needed="y", claim="z", status="verified"),
         ]
         state["knowledge"]["conclusions"] = [
             Conclusion(
-                id="c001", conclusion="Entity1 is confirmed",
-                supporting_fact_ids=["f001"], status="unverified",
+                id="c001",
+                conclusion="Entity1 is confirmed",
+                supporting_fact_ids=["f001"],
+                status="unverified",
             ),
         ]
 
@@ -1884,9 +2045,7 @@ class TestEvaluation:
             await evaluation(state, _make_run_config(config))
 
     @pytest.mark.asyncio
-    async def test_retry_route_resets_review_count(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_retry_route_resets_review_count(self, config, mock_writer, mock_model):
         """When evaluation route is 'retry', review_count should be reset to 0."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(
@@ -1897,8 +2056,12 @@ class TestEvaluation:
 
         state = _build_state(config, "Test question")
         state["knowledge"]["conclusions"] = [
-            Conclusion(id="c001", conclusion="Something",
-                       supporting_fact_ids=["f001"], status="unverified"),
+            Conclusion(
+                id="c001",
+                conclusion="Something",
+                supporting_fact_ids=["f001"],
+                status="unverified",
+            ),
         ]
         state["execution_state"]["review_count"] = 2
 
@@ -1908,9 +2071,7 @@ class TestEvaluation:
         assert result["execution_state"]["review_count"] == 0
 
     @pytest.mark.asyncio
-    async def test_accept_route_preserves_review_count(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_accept_route_preserves_review_count(self, config, mock_writer, mock_model):
         """When evaluation route is 'accept', review_count should NOT be reset."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(
@@ -1921,8 +2082,12 @@ class TestEvaluation:
 
         state = _build_state(config, "Test question")
         state["knowledge"]["conclusions"] = [
-            Conclusion(id="c001", conclusion="Something",
-                       supporting_fact_ids=["f001"], status="unverified"),
+            Conclusion(
+                id="c001",
+                conclusion="Something",
+                supporting_fact_ids=["f001"],
+                status="unverified",
+            ),
         ]
         state["execution_state"]["review_count"] = 2
 
@@ -1933,16 +2098,15 @@ class TestEvaluation:
     @pytest.mark.asyncio
     async def test_parse_failure_raises(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content="not json"
-        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content="not json")
 
         from moira.workflow.nodes.evaluation import evaluation
 
         state = _build_state(config, "Test question")
         state["knowledge"]["conclusions"] = [
-            Conclusion(id="c001", conclusion="X",
-                       supporting_fact_ids=["f001"], status="unverified"),
+            Conclusion(
+                id="c001", conclusion="X", supporting_fact_ids=["f001"], status="unverified"
+            ),
         ]
 
         with pytest.raises(RuntimeError, match="unparseable JSON"):
@@ -1955,13 +2119,10 @@ class TestEvaluation:
 
 
 class TestReportGeneration:
-
     @pytest.mark.asyncio
     async def test_happy_path_verified(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=REPORT_RESPONSE
-        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=REPORT_RESPONSE)
 
         from moira.workflow.nodes.report_generation import report_generation
 
@@ -1971,25 +2132,34 @@ class TestReportGeneration:
             Fact(id="f001", subject="x", fact_needed="y", claim="z", status="verified"),
         ]
         state["knowledge"]["conclusions"] = [
-            Conclusion(id="c001", conclusion="Confirmed",
-                       supporting_fact_ids=["f001"], status="verified"),
+            Conclusion(
+                id="c001", conclusion="Confirmed", supporting_fact_ids=["f001"], status="verified"
+            ),
         ]
         state["knowledge"]["citations"] = [
-            {"id": "cit001", "source": "web_search",
-             "url": "https://example.com/result1",
-             "title": "First Result", "excerpt": "snippet A"},
+            {
+                "id": "cit001",
+                "source": "web_search",
+                "url": "https://example.com/result1",
+                "title": "First Result",
+                "excerpt": "snippet A",
+            },
         ]
         state["knowledge"]["evaluation_history"] = [
-            {"conclusion_results": [], "goal_met": True,
-             "goal_assessment": "Done", "route": "accept"},
+            {
+                "conclusion_results": [],
+                "goal_met": True,
+                "goal_assessment": "Done",
+                "route": "accept",
+            },
         ]
 
         result = await report_generation(state, _make_run_config(config))
 
         assert result["knowledge"]["report"] is not None
         assert "[1]" in result["knowledge"]["report"]["answer"]
-        assert result["knowledge"]["report"]["generation_path"] == "verified"
-        assert result["knowledge"]["generation_path"] == "verified"
+        assert result["knowledge"]["report"]["generation_reason"] == "verified"
+        assert result["knowledge"]["generation_reason"] == "verified"
 
         # Report citations come from the knowledge model, not model JSON output.
         # [1] in the answer references the first citation, so it's "cited".
@@ -2007,9 +2177,7 @@ class TestReportGeneration:
     @pytest.mark.asyncio
     async def test_always_runs_even_with_zero_budget(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=REPORT_RESPONSE
-        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=REPORT_RESPONSE)
 
         from moira.workflow.nodes.report_generation import report_generation
 
@@ -2019,8 +2187,10 @@ class TestReportGeneration:
         result = await report_generation(state, _make_run_config(config))
 
         assert result["knowledge"]["report"] is not None
-        assert ("error" not in result["execution_state"]
-                or result["execution_state"].get("error") == "")
+        assert (
+            "error" not in result["execution_state"]
+            or result["execution_state"].get("error") == ""
+        )
 
     @pytest.mark.asyncio
     async def test_model_call_failure_raises_error(self, config, mock_writer, mock_model):
@@ -2039,11 +2209,9 @@ class TestReportGeneration:
             await report_generation(state, _make_run_config(config))
 
     @pytest.mark.asyncio
-    async def test_error_generation_path(self, config, mock_writer, mock_model):
+    async def test_error_generation_reason(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=REPORT_RESPONSE
-        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=REPORT_RESPONSE)
 
         from moira.workflow.nodes.report_generation import report_generation
 
@@ -2052,50 +2220,82 @@ class TestReportGeneration:
 
         result = await report_generation(state, _make_run_config(config))
 
-        assert result["knowledge"]["generation_path"] == "error"
+        assert result["knowledge"]["generation_reason"] == "error"
 
     @pytest.mark.asyncio
-    async def test_retry_overruled_path_when_goal_not_met(self, config, mock_writer, mock_model):
+    async def test_retries_exhausted_when_evaluation_retry_limit_hit(
+        self, config, mock_writer, mock_model
+    ):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=REPORT_RESPONSE
-        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=REPORT_RESPONSE)
 
         from moira.workflow.nodes.report_generation import report_generation
 
         state = _build_state(config, "Test question")
         state["knowledge"]["evaluation_history"] = [
-            {"conclusion_results": [], "goal_met": False,
-             "goal_assessment": "Incomplete", "route": "retry"},
+            {
+                "conclusion_results": [],
+                "goal_met": False,
+                "goal_assessment": "Incomplete",
+                "route": "retry",
+            },
         ]
+        # evaluation_count has hit the limit
+        state["execution_state"]["evaluation_count"] = 2
 
         result = await report_generation(state, _make_run_config(config))
-        assert result["knowledge"]["generation_path"] == "retry_overruled"
+        assert result["knowledge"]["generation_reason"] == "retries_exhausted"
+
+    @pytest.mark.asyncio
+    async def test_budget_exhausted_when_evaluation_retry_but_budget_low(
+        self, config, mock_writer, mock_model
+    ):
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=REPORT_RESPONSE)
+
+        from moira.workflow.nodes.report_generation import report_generation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["evaluation_history"] = [
+            {
+                "conclusion_results": [],
+                "goal_met": False,
+                "goal_assessment": "Incomplete",
+                "route": "retry",
+            },
+        ]
+        # evaluation_count below limit — reason should be budget, not retries
+        state["execution_state"]["evaluation_count"] = 0
+
+        result = await report_generation(state, _make_run_config(config))
+        assert result["knowledge"]["generation_reason"] == "budget_exhausted"
 
     @pytest.mark.asyncio
     async def test_no_evaluation_history_is_budget_exhausted(
-        self, config, mock_writer, mock_model,
+        self,
+        config,
+        mock_writer,
+        mock_model,
     ):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=REPORT_RESPONSE
-        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=REPORT_RESPONSE)
 
         from moira.workflow.nodes.report_generation import report_generation
 
         state = _build_state(config, "Test question")
 
         result = await report_generation(state, _make_run_config(config))
-        assert result["knowledge"]["generation_path"] == "budget_exhausted"
+        assert result["knowledge"]["generation_reason"] == "budget_exhausted"
 
     @pytest.mark.asyncio
-    async def test_verified_path_with_contradicted_conclusion(
-        self, config, mock_writer, mock_model,
+    async def test_incomplete_reason_with_contradicted_conclusion(
+        self,
+        config,
+        mock_writer,
+        mock_model,
     ):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=REPORT_RESPONSE
-        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=REPORT_RESPONSE)
 
         from moira.workflow.nodes.report_generation import report_generation
 
@@ -2104,20 +2304,22 @@ class TestReportGeneration:
             Conclusion(id="c001", conclusion="A", supporting_fact_ids=[], status="contradicted"),
         ]
         state["knowledge"]["evaluation_history"] = [
-            {"conclusion_results": [], "goal_met": True,
-             "goal_assessment": "Done", "route": "accept"},
+            {
+                "conclusion_results": [],
+                "goal_met": True,
+                "goal_assessment": "Done",
+                "route": "accept",
+            },
         ]
 
         result = await report_generation(state, _make_run_config(config))
 
-        assert result["knowledge"]["generation_path"] == "budget_exhausted"
+        assert result["knowledge"]["generation_reason"] == "incomplete"
 
     @pytest.mark.asyncio
     async def test_report_includes_tool_cost(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=REPORT_RESPONSE
-        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=REPORT_RESPONSE)
 
         from moira.workflow.nodes.report_generation import report_generation
 
@@ -2130,35 +2332,60 @@ class TestReportGeneration:
 
     @pytest.mark.asyncio
     async def test_citation_pruning_and_renumbering(
-        self, config, mock_writer, mock_model,
+        self,
+        config,
+        mock_writer,
+        mock_model,
     ):
         """Citations not referenced in the answer are moved to
         uncited_sources.  Referenced citations are renumbered sequentially."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps({
-                "answer": "Result from [1] and also [3].",
-                "citations": [],
-                "verified_facts": [],
-                "verified_conclusions": [],
-                "contradicted": [],
-                "unknown_facts": [],
-                "critiques": [],
-            })
+            content=json.dumps(
+                {
+                    "answer": "Result from [1] and also [3].",
+                    "citations": [],
+                    "verified_facts": [],
+                    "verified_conclusions": [],
+                    "contradicted": [],
+                    "unknown_facts": [],
+                    "critiques": [],
+                }
+            )
         )
 
         from moira.workflow.nodes.report_generation import report_generation
 
         state = _build_state(config, "Test question")
         state["knowledge"]["citations"] = [
-            {"id": "cit001", "source": "web_search",
-             "url": "https://a.com", "title": "A", "excerpt": "aa"},
-            {"id": "cit002", "source": "web_search",
-             "url": "https://b.com", "title": "B", "excerpt": "bb"},
-            {"id": "cit003", "source": "web_search",
-             "url": "https://c.com", "title": "C", "excerpt": "cc"},
-            {"id": "cit004", "source": "web_search",
-             "url": "https://d.com", "title": "D", "excerpt": "dd"},
+            {
+                "id": "cit001",
+                "source": "web_search",
+                "url": "https://a.com",
+                "title": "A",
+                "excerpt": "aa",
+            },
+            {
+                "id": "cit002",
+                "source": "web_search",
+                "url": "https://b.com",
+                "title": "B",
+                "excerpt": "bb",
+            },
+            {
+                "id": "cit003",
+                "source": "web_search",
+                "url": "https://c.com",
+                "title": "C",
+                "excerpt": "cc",
+            },
+            {
+                "id": "cit004",
+                "source": "web_search",
+                "url": "https://d.com",
+                "title": "D",
+                "excerpt": "dd",
+            },
         ]
 
         result = await report_generation(state, _make_run_config(config))
@@ -2179,31 +2406,46 @@ class TestReportGeneration:
 
     @pytest.mark.asyncio
     async def test_no_citation_markers_all_uncited(
-        self, config, mock_writer, mock_model,
+        self,
+        config,
+        mock_writer,
+        mock_model,
     ):
         """When the model doesn't use [n] markers, all citations
         go to uncited_sources."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps({
-                "answer": "Just a plain answer with no markers.",
-                "citations": [],
-                "verified_facts": [],
-                "verified_conclusions": [],
-                "contradicted": [],
-                "unknown_facts": [],
-                "critiques": [],
-            })
+            content=json.dumps(
+                {
+                    "answer": "Just a plain answer with no markers.",
+                    "citations": [],
+                    "verified_facts": [],
+                    "verified_conclusions": [],
+                    "contradicted": [],
+                    "unknown_facts": [],
+                    "critiques": [],
+                }
+            )
         )
 
         from moira.workflow.nodes.report_generation import report_generation
 
         state = _build_state(config, "Test question")
         state["knowledge"]["citations"] = [
-            {"id": "cit001", "source": "web_search",
-             "url": "https://a.com", "title": "A", "excerpt": "aa"},
-            {"id": "cit002", "source": "web_search",
-             "url": "https://b.com", "title": "B", "excerpt": "bb"},
+            {
+                "id": "cit001",
+                "source": "web_search",
+                "url": "https://a.com",
+                "title": "A",
+                "excerpt": "aa",
+            },
+            {
+                "id": "cit002",
+                "source": "web_search",
+                "url": "https://b.com",
+                "title": "B",
+                "excerpt": "bb",
+            },
         ]
 
         result = await report_generation(state, _make_run_config(config))
@@ -2226,8 +2468,13 @@ class TestReportGeneration:
 
         state = _build_state(config, "Test question")
         state["knowledge"]["citations"] = [
-            {"id": "cit001", "source": "web_search",
-             "url": "https://a.com", "title": "A", "excerpt": "aa"},
+            {
+                "id": "cit001",
+                "source": "web_search",
+                "url": "https://a.com",
+                "title": "A",
+                "excerpt": "aa",
+            },
         ]
 
         with pytest.raises(RuntimeError, match="unparseable JSON"):
@@ -2251,7 +2498,10 @@ class TestReportGeneration:
 
     @pytest.mark.asyncio
     async def test_literal_newlines_in_json_are_repaired(
-        self, config, mock_writer, mock_model,
+        self,
+        config,
+        mock_writer,
+        mock_model,
     ):
         """When a quantized model emits literal newlines inside JSON string
         values, _fix_json_control_chars should repair them so parsing
@@ -2268,8 +2518,13 @@ class TestReportGeneration:
 
         state = _build_state(config, "Test question")
         state["knowledge"]["citations"] = [
-            {"id": "cit001", "source": "web_search",
-             "url": "https://a.com", "title": "A", "excerpt": "aa"},
+            {
+                "id": "cit001",
+                "source": "web_search",
+                "url": "https://a.com",
+                "title": "A",
+                "excerpt": "aa",
+            },
         ]
 
         result = await report_generation(state, _make_run_config(config))
@@ -2283,6 +2538,7 @@ class TestReportGeneration:
 # ---------------------------------------------------------------------------
 # _fix_json_control_chars unit tests
 # ---------------------------------------------------------------------------
+
 
 class TestFixJsonControlChars:
     """Unit tests for the literal-control-character repair utility."""
@@ -2359,7 +2615,6 @@ class TestFixJsonControlChars:
 
 
 class TestToolIdentificationPhaseC:
-
     @pytest.mark.asyncio
     async def test_per_fact_discovery_queries(self, config, mock_writer, mock_model):
         """Each unknown fact should trigger its own discover() call."""
@@ -2396,11 +2651,13 @@ class TestToolIdentificationPhaseC:
         _inject_services(config, mock_model)
 
         mock_discovery = AsyncMock()
-        mock_discovery.discover = AsyncMock(side_effect=[
-            [ToolDefinition(name="pokeapi", description="Pokemon API")],
-            [ToolDefinition(name="web_search", description="Search")],
-            [ToolDefinition(name="pokeapi", description="Pokemon API again")],
-        ])
+        mock_discovery.discover = AsyncMock(
+            side_effect=[
+                [ToolDefinition(name="pokeapi", description="Pokemon API")],
+                [ToolDefinition(name="web_search", description="Search")],
+                [ToolDefinition(name="pokeapi", description="Pokemon API again")],
+            ]
+        )
         _services["tool_discovery"] = mock_discovery
 
         mock_catalog = MagicMock()
@@ -2432,17 +2689,21 @@ class TestToolIdentificationPhaseC:
         _inject_services(config, mock_model)
 
         mock_discovery = AsyncMock()
-        mock_discovery.discover = AsyncMock(return_value=[
-            ToolDefinition(name="web_search", description="Search", invocation_cost=5.0),
-            ToolDefinition(name="api_tool", description="API", invocation_cost=2.0),
-        ])
+        mock_discovery.discover = AsyncMock(
+            return_value=[
+                ToolDefinition(name="web_search", description="Search", invocation_cost=5.0),
+                ToolDefinition(name="api_tool", description="API", invocation_cost=2.0),
+            ]
+        )
         _services["tool_discovery"] = mock_discovery
 
         mock_catalog = MagicMock()
         mock_catalog.get_default_tools.return_value = [
             ToolDefinition(
-                name="calculator", description="Math",
-                is_default=True, invocation_cost=0.1,
+                name="calculator",
+                description="Math",
+                is_default=True,
+                invocation_cost=0.1,
             ),
         ]
         _services["tool_catalog"] = mock_catalog
@@ -2467,16 +2728,21 @@ class TestToolIdentificationPhaseC:
         _inject_services(config, mock_model)
 
         mock_discovery = AsyncMock()
-        mock_discovery.discover = AsyncMock(return_value=[
-            ToolDefinition(
-                name="web_search", description="Search",
-                invocation_cost=5.0, call_limit_per_run=10,
-            ),
-            ToolDefinition(
-                name="api_tool", description="API",
-                invocation_cost=2.0,
-            ),
-        ])
+        mock_discovery.discover = AsyncMock(
+            return_value=[
+                ToolDefinition(
+                    name="web_search",
+                    description="Search",
+                    invocation_cost=5.0,
+                    call_limit_per_run=10,
+                ),
+                ToolDefinition(
+                    name="api_tool",
+                    description="API",
+                    invocation_cost=2.0,
+                ),
+            ]
+        )
         _services["tool_discovery"] = mock_discovery
 
         mock_catalog = MagicMock()
@@ -2503,9 +2769,11 @@ class TestToolIdentificationPhaseC:
         _inject_services(config, mock_model)
 
         mock_discovery = AsyncMock()
-        mock_discovery.discover = AsyncMock(return_value=[
-            ToolDefinition(name="web_search", description="Search", invocation_cost=5.0),
-        ])
+        mock_discovery.discover = AsyncMock(
+            return_value=[
+                ToolDefinition(name="web_search", description="Search", invocation_cost=5.0),
+            ]
+        )
         _services["tool_discovery"] = mock_discovery
 
         mock_catalog = MagicMock()
@@ -2542,10 +2810,12 @@ class TestToolIdentificationPhaseC:
         _inject_services(config, mock_model)
 
         mock_discovery = AsyncMock()
-        mock_discovery.discover = AsyncMock(return_value=[
-            ToolDefinition(name="pokeapi", description="API"),
-            ToolDefinition(name="pokemon_db", description="DB"),
-        ])
+        mock_discovery.discover = AsyncMock(
+            return_value=[
+                ToolDefinition(name="pokeapi", description="API"),
+                ToolDefinition(name="pokemon_db", description="DB"),
+            ]
+        )
         _services["tool_discovery"] = mock_discovery
 
         mock_catalog = MagicMock()
@@ -2573,7 +2843,6 @@ class TestToolIdentificationPhaseC:
 
 
 class TestResearchCallLimits:
-
     @pytest.mark.asyncio
     async def test_call_limit_enforced(self, config, mock_writer, mock_model):
         """When a tool has hit its call limit, further calls should be skipped."""
@@ -2612,19 +2881,31 @@ class TestResearchCallLimits:
         _inject_services(config, mock_model)
 
         mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(tool_name="api_tool", output="result", success=True, duration_ms=50),
-        ])
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(tool_name="api_tool", output="result", success=True, duration_ms=50),
+            ]
+        )
         _services["tool_executor"] = mock_executor
 
         model_responses = [
-            ChatResponse(content=json.dumps([
-                {"tool": "web_search", "args": {"query": "x"}},
-                {"tool": "api_tool", "args": {"q": "y"}},
-            ])),
-            ChatResponse(content=json.dumps({
-                "tool_calls": [], "discovered_facts": [], "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    [
+                        {"tool": "web_search", "args": {"query": "x"}},
+                        {"tool": "api_tool", "args": {"q": "y"}},
+                    ]
+                )
+            ),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [],
+                        "sources": [],
+                    }
+                )
+            ),
         ]
         mock_model["client"].chat_completion.side_effect = model_responses
 
@@ -2637,12 +2918,16 @@ class TestResearchCallLimits:
         ]
         state["execution_state"]["tool_call_plan"] = [
             ToolCallPlan(
-                tool="web_search", args={"query": "x"},
-                target_fact_ids=["f001"], cost=5.0,
+                tool="web_search",
+                args={"query": "x"},
+                target_fact_ids=["f001"],
+                cost=5.0,
             ),
             ToolCallPlan(
-                tool="api_tool", args={"q": "y"},
-                target_fact_ids=["f001"], cost=2.0,
+                tool="api_tool",
+                args={"q": "y"},
+                target_fact_ids=["f001"],
+                cost=2.0,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -2666,22 +2951,32 @@ class TestResearchCallLimits:
         _inject_services(config, mock_model)
 
         mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(tool_name="web_search", output="data", success=True, duration_ms=100),
-        ])
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(tool_name="web_search", output="data", success=True, duration_ms=100),
+            ]
+        )
         _services["tool_executor"] = mock_executor
 
         model_responses = [
-            ChatResponse(content=json.dumps([
-                {"tool": "web_search", "args": {"query": "x"}},
-            ])),
-            ChatResponse(content=json.dumps({
-                "tool_calls": [],
-                "discovered_facts": [
-                    {"fact_id": "f001", "claim": "Found it"},
-                ],
-                "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    [
+                        {"tool": "web_search", "args": {"query": "x"}},
+                    ]
+                )
+            ),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [
+                            {"fact_id": "f001", "claim": "Found it"},
+                        ],
+                        "sources": [],
+                    }
+                )
+            ),
         ]
         mock_model["client"].chat_completion.side_effect = model_responses
 
@@ -2694,8 +2989,10 @@ class TestResearchCallLimits:
         ]
         state["execution_state"]["tool_call_plan"] = [
             ToolCallPlan(
-                tool="web_search", args={"query": "x"},
-                target_fact_ids=["f001"], cost=5.0,
+                tool="web_search",
+                args={"query": "x"},
+                target_fact_ids=["f001"],
+                cost=5.0,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -2716,22 +3013,32 @@ class TestResearchCallLimits:
         _inject_services(config, mock_model)
 
         mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(tool_name="web_search", output="data", success=True, duration_ms=100),
-        ])
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(tool_name="web_search", output="data", success=True, duration_ms=100),
+            ]
+        )
         _services["tool_executor"] = mock_executor
 
         model_responses = [
-            ChatResponse(content=json.dumps([
-                {"tool": "web_search", "args": {"query": "x"}},
-            ])),
-            ChatResponse(content=json.dumps({
-                "tool_calls": [],
-                "discovered_facts": [
-                    {"fact_id": "f001", "claim": "Found"},
-                ],
-                "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    [
+                        {"tool": "web_search", "args": {"query": "x"}},
+                    ]
+                )
+            ),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [
+                            {"fact_id": "f001", "claim": "Found"},
+                        ],
+                        "sources": [],
+                    }
+                )
+            ),
         ]
         mock_model["client"].chat_completion.side_effect = model_responses
 
@@ -2744,8 +3051,10 @@ class TestResearchCallLimits:
         ]
         state["execution_state"]["tool_call_plan"] = [
             ToolCallPlan(
-                tool="web_search", args={"query": "x"},
-                target_fact_ids=["f001"], cost=1.0,
+                tool="web_search",
+                args={"query": "x"},
+                target_fact_ids=["f001"],
+                cost=1.0,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -2762,7 +3071,6 @@ class TestResearchCallLimits:
 
 
 class TestPlanningCallLimits:
-
     @pytest.mark.asyncio
     async def test_call_limits_in_formatted_tools(self, config, mock_writer, mock_model):
         """_format_tools_with_costs_and_limits should include call limit info."""
@@ -2804,11 +3112,17 @@ class TestPlanningCallLimits:
         """Planning should produce a tool_call_plan with costs from tool_costs."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps({
-                "calls": [
-                    {"tool": "web_search", "args": {"query": "x"}, "target_fact_ids": ["f001"]},
-                ],
-            })
+            content=json.dumps(
+                {
+                    "calls": [
+                        {
+                            "tool": "web_search",
+                            "args": {"query": "x"},
+                            "target_fact_ids": ["f001"],
+                        },
+                    ],
+                }
+            )
         )
 
         from moira.workflow.nodes.planning import planning
@@ -2831,38 +3145,43 @@ class TestPlanningCallLimits:
 
 
 class TestResearchSummaryRound:
-
     @pytest.mark.asyncio
-    async def test_summary_round_on_max_rounds_exhausted(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_summary_round_on_max_rounds_exhausted(self, config, mock_writer, mock_model):
         """When all rounds are used, a final summary round should happen
         and its response should be the one shown in the step detail."""
         _inject_services(config, mock_model)
 
         mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(
-                tool_name="web_search", output="Result data",
-                success=True, duration_ms=50,
-            ),
-        ])
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search",
+                    output="Result data",
+                    success=True,
+                    duration_ms=50,
+                ),
+            ]
+        )
         _services["tool_executor"] = mock_executor
 
         # Round 1: tool calls, Round 2: tool calls, Round 3: tool calls
         # Then summary round (extra model call)
-        tool_call_response = json.dumps({
-            "tool_calls": [{"tool": "web_search", "args": {"query": "x"}}],
-            "discovered_facts": [],
-            "sources": [],
-        })
-        summary_response = json.dumps({
-            "tool_calls": [],
-            "discovered_facts": [
-                {"fact_id": "f001", "subject": "x", "claim": "Found it"},
-            ],
-            "sources": [{"source": "web_search", "excerpt": "Result data"}],
-        })
+        tool_call_response = json.dumps(
+            {
+                "tool_calls": [{"tool": "web_search", "args": {"query": "x"}}],
+                "discovered_facts": [],
+                "sources": [],
+            }
+        )
+        summary_response = json.dumps(
+            {
+                "tool_calls": [],
+                "discovered_facts": [
+                    {"fact_id": "f001", "subject": "x", "claim": "Found it"},
+                ],
+                "sources": [{"source": "web_search", "excerpt": "Result data"}],
+            }
+        )
 
         # 3 rounds of tool calls + 1 summary round = 4 model calls
         mock_model["client"].chat_completion.side_effect = [
@@ -2881,8 +3200,10 @@ class TestResearchSummaryRound:
         ]
         state["execution_state"]["tool_call_plan"] = [
             ToolCallPlan(
-                tool="web_search", args={"query": "x"},
-                target_fact_ids=["f001"], cost=1.0,
+                tool="web_search",
+                args={"query": "x"},
+                target_fact_ids=["f001"],
+                cost=1.0,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -2893,9 +3214,7 @@ class TestResearchSummaryRound:
         await research(state, _make_run_config(config))
 
         # The response in detail should be the summary, not a tool call list
-        node_end_events = [
-            e for e in mock_writer if e.get("event") == "node_end"
-        ]
+        node_end_events = [e for e in mock_writer if e.get("event") == "node_end"]
         assert len(node_end_events) == 1
         detail = node_end_events[0]["payload"]["detail"]
         assert "Found it" in detail["response"]
@@ -2904,35 +3223,45 @@ class TestResearchSummaryRound:
         assert mock_model["client"].chat_completion.call_count == 4
 
     @pytest.mark.asyncio
-    async def test_no_summary_when_model_signals_done(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_no_summary_when_model_signals_done(self, config, mock_writer, mock_model):
         """When the model signals completion (empty tool_calls), no summary
         round should happen."""
         _inject_services(config, mock_model)
 
         mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(
-                tool_name="web_search", output="Data",
-                success=True, duration_ms=50,
-            ),
-        ])
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search",
+                    output="Data",
+                    success=True,
+                    duration_ms=50,
+                ),
+            ]
+        )
         _services["tool_executor"] = mock_executor
 
         mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(content=json.dumps({
-                "tool_calls": [{"tool": "web_search", "args": {"query": "x"}}],
-                "discovered_facts": [],
-                "sources": [],
-            })),
-            ChatResponse(content=json.dumps({
-                "tool_calls": [],
-                "discovered_facts": [
-                    {"fact_id": "f001", "subject": "x", "claim": "Done"},
-                ],
-                "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [{"tool": "web_search", "args": {"query": "x"}}],
+                        "discovered_facts": [],
+                        "sources": [],
+                    }
+                )
+            ),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [
+                            {"fact_id": "f001", "subject": "x", "claim": "Done"},
+                        ],
+                        "sources": [],
+                    }
+                )
+            ),
         ]
 
         from moira.workflow.nodes.research import research
@@ -2944,8 +3273,10 @@ class TestResearchSummaryRound:
         ]
         state["execution_state"]["tool_call_plan"] = [
             ToolCallPlan(
-                tool="web_search", args={"query": "x"},
-                target_fact_ids=["f001"], cost=1.0,
+                tool="web_search",
+                args={"query": "x"},
+                target_fact_ids=["f001"],
+                cost=1.0,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -2959,35 +3290,45 @@ class TestResearchSummaryRound:
         assert mock_model["client"].chat_completion.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_node_end_detail_has_no_tool_results(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_node_end_detail_has_no_tool_results(self, config, mock_writer, mock_model):
         """The node_end detail should NOT include tool_results (they come from
         tool_result events in the run_manager)."""
         _inject_services(config, mock_model)
 
         mock_executor = AsyncMock()
-        mock_executor.execute_batch = AsyncMock(return_value=[
-            ToolResult(
-                tool_name="web_search", output="Data", success=True,
-                duration_ms=50,
-            ),
-        ])
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search",
+                    output="Data",
+                    success=True,
+                    duration_ms=50,
+                ),
+            ]
+        )
         _services["tool_executor"] = mock_executor
 
         mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(content=json.dumps({
-                "tool_calls": [{"tool": "web_search", "args": {"query": "x"}}],
-                "discovered_facts": [],
-                "sources": [],
-            })),
-            ChatResponse(content=json.dumps({
-                "tool_calls": [],
-                "discovered_facts": [
-                    {"fact_id": "f001", "subject": "x", "claim": "Found"},
-                ],
-                "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [{"tool": "web_search", "args": {"query": "x"}}],
+                        "discovered_facts": [],
+                        "sources": [],
+                    }
+                )
+            ),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [
+                            {"fact_id": "f001", "subject": "x", "claim": "Found"},
+                        ],
+                        "sources": [],
+                    }
+                )
+            ),
         ]
 
         from moira.workflow.nodes.research import research
@@ -2999,8 +3340,10 @@ class TestResearchSummaryRound:
         ]
         state["execution_state"]["tool_call_plan"] = [
             ToolCallPlan(
-                tool="web_search", args={"query": "x"},
-                target_fact_ids=["f001"], cost=1.0,
+                tool="web_search",
+                args={"query": "x"},
+                target_fact_ids=["f001"],
+                cost=1.0,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -3010,16 +3353,12 @@ class TestResearchSummaryRound:
 
         await research(state, _make_run_config(config))
 
-        node_end_events = [
-            e for e in mock_writer if e.get("event") == "node_end"
-        ]
+        node_end_events = [e for e in mock_writer if e.get("event") == "node_end"]
         detail = node_end_events[0]["payload"]["detail"]
         assert "tool_results" not in detail
 
     @pytest.mark.asyncio
-    async def test_skips_calls_missing_required_params(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_skips_calls_missing_required_params(self, config, mock_writer, mock_model):
         """Tool calls missing required parameters should be skipped before
         execution to avoid deterministic failures."""
         _inject_services(config, mock_model)
@@ -3029,11 +3368,13 @@ class TestResearchSummaryRound:
         _services["tool_executor"] = mock_executor
 
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps({
-                "tool_calls": [],
-                "discovered_facts": [],
-                "sources": [],
-            }),
+            content=json.dumps(
+                {
+                    "tool_calls": [],
+                    "discovered_facts": [],
+                    "sources": [],
+                }
+            ),
         )
 
         from moira.workflow.nodes.research import research
@@ -3058,24 +3399,34 @@ class TestResearchSummaryRound:
         ]
         state["execution_state"]["tool_call_plan"] = [
             ToolCallPlan(
-                tool="web_search", args={},
-                target_fact_ids=["f001"], cost=1.0,
+                tool="web_search",
+                args={},
+                target_fact_ids=["f001"],
+                cost=1.0,
             ),
         ]
         state["execution_state"]["tool_costs"] = {"web_search": 1.0}
 
         # Model returns a call with no query param
         mock_model["client"].chat_completion.side_effect = [
-            ChatResponse(content=json.dumps({
-                "tool_calls": [{"tool": "web_search", "args": {}}],
-                "discovered_facts": [],
-                "sources": [],
-            })),
-            ChatResponse(content=json.dumps({
-                "tool_calls": [],
-                "discovered_facts": [],
-                "sources": [],
-            })),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [{"tool": "web_search", "args": {}}],
+                        "discovered_facts": [],
+                        "sources": [],
+                    }
+                )
+            ),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [],
+                        "sources": [],
+                    }
+                )
+            ),
         ]
 
         await research(state, _make_run_config(config))

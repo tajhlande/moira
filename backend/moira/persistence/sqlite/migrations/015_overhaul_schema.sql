@@ -13,7 +13,7 @@ CREATE TABLE workflow_runs (
     status TEXT NOT NULL DEFAULT 'running',
     budget_limit REAL NOT NULL,
     total_cost REAL NOT NULL DEFAULT 0,
-    generation_path TEXT,
+    generation_reason TEXT,
     started_at TEXT NOT NULL DEFAULT (datetime('now')),
     completed_at TEXT,
     total_elapsed_ms INTEGER,

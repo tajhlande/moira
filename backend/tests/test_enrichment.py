@@ -30,9 +30,7 @@ def _make_mock_registry(response_contents):
         response_contents = [response_contents]
 
     mock_client = MagicMock()
-    responses = [
-        MagicMock(content=rc) for rc in response_contents
-    ]
+    responses = [MagicMock(content=rc) for rc in response_contents]
     mock_client.chat_completion = AsyncMock(side_effect=responses)
 
     mock_resolved = MagicMock()
@@ -51,10 +49,7 @@ async def test_enrich_returns_enriched_description():
         description="GET /api/v2/pokemon/{name}",
     )
 
-    enriched_text = (
-        "Answers questions about Pokemon species: typing, "
-        "base stats, and abilities."
-    )
+    enriched_text = "Answers questions about Pokemon species: typing, base stats, and abilities."
     mock_registry = _make_mock_registry(enriched_text)
     with patch("moira.tools.enrichment.service_provider", return_value=mock_registry):
         result = await enrich_tool_descriptions([tool])
@@ -70,10 +65,12 @@ async def test_enrich_multiple_tools_each_get_own_call():
         _make_tool(name="web_search", description="Search the web"),
     ]
 
-    mock_registry = _make_mock_registry([
-        "Answers Pokemon species questions.",
-        "Finds web pages matching a search query.",
-    ])
+    mock_registry = _make_mock_registry(
+        [
+            "Answers Pokemon species questions.",
+            "Finds web pages matching a search query.",
+        ]
+    )
     with patch("moira.tools.enrichment.service_provider", return_value=mock_registry):
         result = await enrich_tool_descriptions(tools)
 
@@ -134,11 +131,13 @@ async def test_enrich_continues_on_individual_tool_failure():
     ]
 
     mock_client = MagicMock()
-    mock_client.chat_completion = AsyncMock(side_effect=[
-        MagicMock(content="Enriched good_tool."),
-        RuntimeError("transient error"),
-        MagicMock(content="Enriched another_good."),
-    ])
+    mock_client.chat_completion = AsyncMock(
+        side_effect=[
+            MagicMock(content="Enriched good_tool."),
+            RuntimeError("transient error"),
+            MagicMock(content="Enriched another_good."),
+        ]
+    )
     mock_resolved = MagicMock()
     mock_resolved.client = mock_client
     mock_resolved.model_id = "test-model"

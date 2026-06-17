@@ -47,13 +47,15 @@ async def synthesis(state: ResearchState, config: RunnableConfig) -> dict:
     es = state["execution_state"]
     knowledge = state["knowledge"]
     if not can_execute(es["step_costs"], NODE_NAME, es["budget_remaining"]):
-        writer({
-            "event": "node_end",
-            "payload": {
-                "node": NODE_NAME,
-                "budget_remaining": es["budget_remaining"],
-            },
-        })
+        writer(
+            {
+                "event": "node_end",
+                "payload": {
+                    "node": NODE_NAME,
+                    "budget_remaining": es["budget_remaining"],
+                },
+            }
+        )
         return {
             "execution_state": {
                 **es,
@@ -117,20 +119,21 @@ async def synthesis(state: ResearchState, config: RunnableConfig) -> dict:
             "SYNTHESIS: model returned empty content (thinking=%d chars)",
             len(thinking),
         )
-        writer({
-            "event": "run_error",
-            "payload": {
-                "error": f"Model returned empty content for {NODE_NAME}",
-                "budget_remaining": new_budget,
-                "detail": detail,
-                "purpose": NODE_NAME,
-                "model": resolved.model_id,
-                "call_count": 1,
-            },
-        })
+        writer(
+            {
+                "event": "run_error",
+                "payload": {
+                    "error": f"Model returned empty content for {NODE_NAME}",
+                    "budget_remaining": new_budget,
+                    "detail": detail,
+                    "purpose": NODE_NAME,
+                    "model": resolved.model_id,
+                    "call_count": 1,
+                },
+            }
+        )
         raise RuntimeError(
-            f"Model returned empty content for {NODE_NAME} "
-            f"(thinking={len(thinking)} chars)"
+            f"Model returned empty content for {NODE_NAME} (thinking={len(thinking)} chars)"
         )
 
     parsed = _parse_json_object(raw)
@@ -151,18 +154,20 @@ async def synthesis(state: ResearchState, config: RunnableConfig) -> dict:
 
     detail["structured_output"] = {"conclusions": [dict(c) for c in conclusions]}
 
-    writer({
-        "event": "node_end",
-        "payload": {
-            "node": NODE_NAME,
-            "budget_remaining": new_budget,
-            "detail": detail,
-            "purpose": NODE_NAME,
-            "model": resolved.model_id,
-            "call_count": 1,
-            **_response_meta(response),
-        },
-    })
+    writer(
+        {
+            "event": "node_end",
+            "payload": {
+                "node": NODE_NAME,
+                "budget_remaining": new_budget,
+                "detail": detail,
+                "purpose": NODE_NAME,
+                "model": resolved.model_id,
+                "call_count": 1,
+                **_response_meta(response),
+            },
+        }
+    )
     logger.info("SYNTHESIS Complete (%d conclusions)", len(conclusions))
 
     return {

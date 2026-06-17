@@ -19,9 +19,7 @@ def db_path(tmp_path):
 def tool_repo(db_path):
     run_migrations(db_path)
     conn = sqlite3.connect(db_path)
-    conn.execute(
-        "INSERT OR IGNORE INTO tool_groups (name, display_name) VALUES ('', 'Default')"
-    )
+    conn.execute("INSERT OR IGNORE INTO tool_groups (name, display_name) VALUES ('', 'Default')")
     conn.commit()
     conn.close()
     return SqliteToolRepository(db_path)

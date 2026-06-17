@@ -36,7 +36,9 @@ def _format_unknown_facts(facts: list) -> str:
 
 
 def _format_tools_with_costs_and_limits(
-    tools: list, tool_costs: dict[str, float], call_counts: dict[str, int],
+    tools: list,
+    tool_costs: dict[str, float],
+    call_counts: dict[str, int],
     tool_call_limits: dict[str, int],
 ) -> str:
     lines = []
@@ -76,13 +78,15 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
     es = state["execution_state"]
     knowledge = state["knowledge"]
     if not can_execute(es["step_costs"], NODE_NAME, es["budget_remaining"]):
-        writer({
-            "event": "node_end",
-            "payload": {
-                "node": NODE_NAME,
-                "budget_remaining": es["budget_remaining"],
-            },
-        })
+        writer(
+            {
+                "event": "node_end",
+                "payload": {
+                    "node": NODE_NAME,
+                    "budget_remaining": es["budget_remaining"],
+                },
+            }
+        )
         return {
             "execution_state": {
                 **es,
@@ -180,20 +184,21 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
             "PLANNING: model returned empty content (thinking=%d chars)",
             len(thinking),
         )
-        writer({
-            "event": "run_error",
-            "payload": {
-                "error": f"Model returned empty content for {NODE_NAME}",
-                "budget_remaining": new_budget,
-                "detail": detail,
-                "purpose": NODE_NAME,
-                "model": resolved.model_id,
-                "call_count": 1,
-            },
-        })
+        writer(
+            {
+                "event": "run_error",
+                "payload": {
+                    "error": f"Model returned empty content for {NODE_NAME}",
+                    "budget_remaining": new_budget,
+                    "detail": detail,
+                    "purpose": NODE_NAME,
+                    "model": resolved.model_id,
+                    "call_count": 1,
+                },
+            }
+        )
         raise RuntimeError(
-            f"Model returned empty content for {NODE_NAME} "
-            f"(thinking={len(thinking)} chars)"
+            f"Model returned empty content for {NODE_NAME} (thinking={len(thinking)} chars)"
         )
 
     parsed = _parse_json_object(raw)
@@ -213,18 +218,20 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
 
     detail["structured_output"] = parsed
 
-    writer({
-        "event": "node_end",
-        "payload": {
-            "node": NODE_NAME,
-            "budget_remaining": new_budget,
-            "detail": detail,
-            "purpose": NODE_NAME,
-            "model": resolved.model_id,
-            "call_count": 1,
-            **_response_meta(response),
-        },
-    })
+    writer(
+        {
+            "event": "node_end",
+            "payload": {
+                "node": NODE_NAME,
+                "budget_remaining": new_budget,
+                "detail": detail,
+                "purpose": NODE_NAME,
+                "model": resolved.model_id,
+                "call_count": 1,
+                **_response_meta(response),
+            },
+        }
+    )
     logger.info("PLANNING Complete (%d planned calls)", len(tool_call_plan))
 
     return {

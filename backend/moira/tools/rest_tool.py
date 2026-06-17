@@ -32,9 +32,7 @@ def _truncate_json_value(
     """
     if isinstance(obj, str):
         if len(obj) > max_string_len:
-            return obj[:max_string_len] + (
-                f"... ({len(obj) - max_string_len} more chars)"
-            )
+            return obj[:max_string_len] + (f"... ({len(obj) - max_string_len} more chars)")
         return obj
     elif isinstance(obj, list):
         items = [
@@ -46,8 +44,7 @@ def _truncate_json_value(
         return items
     elif isinstance(obj, dict):
         return {
-            k: _truncate_json_value(v, max_array_items, max_string_len)
-            for k, v in obj.items()
+            k: _truncate_json_value(v, max_array_items, max_string_len) for k, v in obj.items()
         }
     else:
         return obj

@@ -27,6 +27,11 @@ budget:
     research_review: 3
     evaluation: 5
     report_generation: 3  # budget-exempt: tracked for accounting, never gates execution
+  # Retry limits are also configurable via system settings (retry.max_review,
+  # retry.max_evaluation). Settings take precedence over these file values.
+  retry_limits:
+    max_review: 3       # max research_review cycles per evaluation cycle
+    max_evaluation: 2   # max evaluation cycles per research run
 
 # --- Inference ---
 

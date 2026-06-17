@@ -48,7 +48,7 @@ describe("StructuredOutputRenderer", () => {
   });
 
   it("renders warning badge for retry routes", () => {
-    const wrapper = render({ route: "retry_research" });
+    const wrapper = render({ route: "retry" });
     const badge = wrapper.find(".so-badge");
     expect(badge.classes()).toContain("warning");
   });

@@ -26,9 +26,7 @@ def _get_connection(db_path: str) -> sqlite3.Connection:
 def _get_run(conn: sqlite3.Connection, run_id: str | None) -> dict | None:
     """Fetch a workflow run by ID, or the latest completed run."""
     if run_id:
-        row = conn.execute(
-            "SELECT * FROM workflow_runs WHERE id = ?", (run_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM workflow_runs WHERE id = ?", (run_id,)).fetchone()
     else:
         row = conn.execute(
             "SELECT * FROM workflow_runs WHERE status = 'completed' "
@@ -79,9 +77,7 @@ def _extract_tool_trace(steps: list[dict]) -> list[dict]:
                     "step_label": step.get("label", ""),
                     "tool": tr.get("tool", ""),
                     "args": tr.get("args"),
-                    "output_preview": (
-                        tr.get("result", "")[:500] if tr.get("result") else ""
-                    ),
+                    "output_preview": (tr.get("result", "")[:500] if tr.get("result") else ""),
                     "duration_ms": tr.get("duration_ms", 0),
                     "success": tr.get("success", False),
                 }
@@ -147,7 +143,7 @@ def capture_artifacts(db_path: str, run_id: str | None = None) -> dict:
             "total_elapsed_ms": run.get("total_elapsed_ms", 0),
             "budget_limit": run.get("budget_limit", 0),
             "budget_consumed": run.get("budget_consumed", 0),
-            "generation_path": (report or {}).get("generation_path", ""),
+            "generation_reason": (report or {}).get("generation_reason", ""),
             "total_tool_calls": total_tool_calls,
             "web_search_calls": web_search_calls,
             "url_content_calls": url_content_calls,
@@ -219,7 +215,7 @@ def main():
     print(f"  web_search calls: {artifacts['web_search_calls']}")
     print(f"  Tools used: {', '.join(artifacts['tools_used'])}")
     print(f"  Budget consumed: {artifacts['budget_consumed']:.1f}/{artifacts['budget_limit']:.1f}")
-    print(f"  Generation path: {artifacts['generation_path']}")
+    print(f"  Generation path: {artifacts['generation_reason']}")
     print(f"  Saved to: {output_file}")
 
 

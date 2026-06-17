@@ -100,7 +100,7 @@ export interface ResearchReport {
   critiques: string[];
   total_cost: number;
   tool_call_total_cost: number;
-  generation_path?: "verified" | "budget_exhausted" | "error";
+  generation_reason?: "verified" | "retries_exhausted" | "budget_exhausted" | "incomplete" | "error";
 }
 
 export interface RunAttemptSummary {
@@ -153,6 +153,8 @@ export interface ConversationDetail {
 
 export interface RunSettings {
   budget?: number;
+  max_review?: number;
+  max_evaluation?: number;
 }
 
 export interface ModelSelection {

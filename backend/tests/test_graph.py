@@ -19,6 +19,7 @@ def _make_review_router_state(
     route="continue",
     budget_remaining=60.0,
     review_count=1,
+    max_review=3,
 ):
     cw = CostWeights()
     step_costs = {
@@ -47,6 +48,7 @@ def _make_review_router_state(
             "budget_remaining": budget_remaining,
             "budget_limit": 60.0,
             "step_costs": step_costs,
+            "retry_limits": {"max_review": max_review, "max_evaluation": 2},
             "review_count": review_count,
             "research_retry_count": 0,
             "evaluation_count": 0,
@@ -64,6 +66,7 @@ def _make_evaluation_router_state(
     route="accept",
     budget_remaining=60.0,
     evaluation_count=1,
+    max_evaluation=2,
 ):
     cw = CostWeights()
     step_costs = {
@@ -92,6 +95,7 @@ def _make_evaluation_router_state(
             "budget_remaining": budget_remaining,
             "budget_limit": 60.0,
             "step_costs": step_costs,
+            "retry_limits": {"max_review": 3, "max_evaluation": max_evaluation},
             "evaluation_count": evaluation_count,
             "review_count": 0,
             "research_retry_count": 0,
@@ -178,6 +182,46 @@ def test_evaluation_router_retry_falls_to_report_on_max_attempts():
     router = make_evaluation_router()
     state = _make_evaluation_router_state(route="retry", budget_remaining=60.0, evaluation_count=2)
     assert router(state) == "report_generation"
+
+
+def test_review_router_custom_max_review_allows_more_retries():
+    """When retry_limits.max_review is raised, the router should allow
+    more retries than the default of 3."""
+    router = make_review_router()
+    state = _make_review_router_state(
+        route="retry",
+        budget_remaining=60.0,
+        review_count=4,
+        max_review=5,
+    )
+    assert router(state) == "research"
+
+
+def test_evaluation_router_custom_max_evaluation_allows_more_retries():
+    """When retry_limits.max_evaluation is raised, the router should allow
+    more retries than the default of 2."""
+    router = make_evaluation_router()
+    state = _make_evaluation_router_state(
+        route="retry",
+        budget_remaining=60.0,
+        evaluation_count=2,
+        max_evaluation=4,
+    )
+    assert router(state) == "tool_identification"
+
+
+def test_review_router_falls_back_to_default_without_retry_limits():
+    """When retry_limits is absent from state, the router should fall
+    back to the default limit of 3."""
+    router = make_review_router()
+    state = _make_review_router_state(route="retry", budget_remaining=60.0, review_count=2)
+    # Remove retry_limits to test fallback
+    del state["execution_state"]["retry_limits"]
+    # review_count=2 < default 3 → should route to research
+    assert router(state) == "research"
+    # review_count=3 >= default 3 → should fall to evaluation
+    state["execution_state"]["review_count"] = 3
+    assert router(state) == "evaluation"
 
 
 def test_graph_compiles_successfully(config):

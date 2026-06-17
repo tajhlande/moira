@@ -424,20 +424,26 @@ def test_knowledge_endpoint_with_knowledge(app_client_with_runs):
         "topic": "programming",
         "entities": ["Python"],
         "concepts": ["programming language"],
-        "facts": {"unknown": [
-            {
-                "id": "f1",
-                "subject": "Python",
-                "fact_needed": "What is it?",
-                "status": "unknown"
-            }]},
-        "conclusions": {"verified": [
-            {
-                "id": "c1",
-                "conclusion": "Python is a language",
-                "supporting_fact_ids": ["f1"],
-                "status": "verified"
-            }]},
+        "facts": {
+            "unknown": [
+                {
+                    "id": "f1",
+                    "subject": "Python",
+                    "fact_needed": "What is it?",
+                    "status": "unknown",
+                }
+            ]
+        },
+        "conclusions": {
+            "verified": [
+                {
+                    "id": "c1",
+                    "conclusion": "Python is a language",
+                    "supporting_fact_ids": ["f1"],
+                    "status": "verified",
+                }
+            ]
+        },
         "citations": [],
     }
     run = WorkflowRun(

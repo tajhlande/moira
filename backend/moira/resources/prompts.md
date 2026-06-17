@@ -477,25 +477,31 @@ Respond with a JSON object with these keys:
 - "critiques": list of strings describing limitations, caveats, or weaknesses of
   the report
 
-## report_generation.path_verified
+## report_generation.reason_verified
 
 The answer has been verified. Present it with confidence.
 
-## report_generation.path_budget_exhausted
+## report_generation.reason_budget_exhausted
 
 Verification could not be completed for all claims. Some facts and conclusions remain
 unverified. Present the answer with explicit caveats about unverified material.
 Clearly distinguish what is verified from what is uncertain.
 
-## report_generation.path_retry_overruled
+## report_generation.reason_retries_exhausted
 
 Evaluation determined that the research goal was not fully met and recommended
-another research cycle, but insufficient budget remained to retry. Present the
+another research cycle, but the configured retry limit was reached. Present the
 answer with explicit caveats: state that evaluation found gaps or contradictions,
 note which facts remain unverified or contradicted, and identify what further
 research would be needed to reach a confident answer.
 
-## report_generation.path_error
+## report_generation.reason_incomplete
+
+Evaluation accepted the research but the goal was not fully met. Some conclusions
+may lack sufficient verification. Present the answer with appropriate caveats
+about any unverified material.
+
+## report_generation.reason_error
 
 The workflow was interrupted by an error: {error}. Present whatever findings are
 available and clearly note the interruption.

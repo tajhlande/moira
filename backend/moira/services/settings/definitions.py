@@ -22,6 +22,7 @@ class SettingDefinition:
 
 
 BUDGET_STEP_CONSTRAINTS = {"type": "integer", "minimum": 0, "maximum": 25}
+RETRY_LIMIT_CONSTRAINTS = {"type": "integer", "minimum": 1, "maximum": 10}
 
 SETTING_DEFINITIONS: dict[str, SettingDefinition] = {
     "budget.default_limit": SettingDefinition(
@@ -116,5 +117,29 @@ SETTING_DEFINITIONS: dict[str, SettingDefinition] = {
             "semantic matching against tool descriptions."
         ),
         group="tool_discovery",
+    ),
+    "retry.max_review": SettingDefinition(
+        key="retry.max_review",
+        type="integer",
+        default="3",
+        label="Max Research Review Attempts",
+        description=(
+            "Maximum number of research review cycles per evaluation "
+            "cycle. Each cycle goes research → synthesis → research_review."
+        ),
+        group="retry",
+        constraints=RETRY_LIMIT_CONSTRAINTS,
+    ),
+    "retry.max_evaluation": SettingDefinition(
+        key="retry.max_evaluation",
+        type="integer",
+        default="2",
+        label="Max Evaluation Attempts",
+        description=(
+            "Maximum number of evaluation cycles per research run. "
+            "Each retry resets the full pipeline from tool identification."
+        ),
+        group="retry",
+        constraints=RETRY_LIMIT_CONSTRAINTS,
     ),
 }

@@ -52,6 +52,14 @@ class TestConfigTemplate:
         for key in expected:
             assert getattr(cw, key) > 0, f"Cost weight '{key}' must be > 0"
 
+    def test_template_has_retry_limits(self):
+        with open(CONFIG_TEMPLATE) as f:
+            raw = yaml.safe_load(f)
+        config = MoiraConfig.model_validate(raw)
+        rl = config.budget.retry_limits
+        assert rl.max_review >= 1
+        assert rl.max_evaluation >= 1
+
     def test_template_has_inference_structure(self):
         with open(CONFIG_TEMPLATE) as f:
             raw = yaml.safe_load(f)
@@ -84,40 +92,61 @@ class TestPromptsFile:
         template_vars = {
             "decomposition.user": {"question"},
             "planning.user": {
-                "user_goal", "topic", "entities", "concepts",
-                "unknown_facts", "tool_descriptions_with_costs_and_limits",
-                "budget_remaining", "reserved_budget", "available_for_tools",
+                "user_goal",
+                "topic",
+                "entities",
+                "concepts",
+                "unknown_facts",
+                "tool_descriptions_with_costs_and_limits",
+                "budget_remaining",
+                "reserved_budget",
+                "available_for_tools",
             },
             "planning.system_retry_evaluation": {
-                "evaluation_feedback", "failed_conclusions",
+                "evaluation_feedback",
+                "failed_conclusions",
             },
             "planning.system_earlier_turns": {"earlier_turns"},
             "planning.system_prior_report": {"prior_question", "prior_report_answer"},
             "research.system": {"max_extra_rounds"},
             "research.user": {
-                "user_goal", "unknown_facts", "tool_call_plan",
+                "user_goal",
+                "unknown_facts",
+                "tool_call_plan",
                 "tool_descriptions",
             },
             "research.system_retry_review": {"coverage_assessment", "missing_areas"},
             "synthesis.user": {
-                "user_goal", "topic", "entities", "concepts",
-                "facts_with_claims", "prior_conclusions_section",
+                "user_goal",
+                "topic",
+                "entities",
+                "concepts",
+                "facts_with_claims",
+                "prior_conclusions_section",
             },
             "synthesis.system_retry": {"evaluation_feedback"},
             "research_review.user": {
-                "user_goal", "question", "facts_with_claims_and_sources",
+                "user_goal",
+                "question",
+                "facts_with_claims_and_sources",
                 "conclusions_context",
             },
             "evaluation.user": {
-                "user_goal", "question", "facts_with_statuses",
+                "user_goal",
+                "question",
+                "facts_with_statuses",
                 "conclusions_with_supporting_facts",
             },
             "report_generation.system": {"path_instruction"},
-            "report_generation.path_error": {"error"},
+            "report_generation.reason_error": {"error"},
             "report_generation.user": {
-                "question", "user_goal", "verified_facts",
-                "verified_conclusions", "contradicted_items",
-                "unknown_facts", "citations",
+                "question",
+                "user_goal",
+                "verified_facts",
+                "verified_conclusions",
+                "contradicted_items",
+                "unknown_facts",
+                "citations",
             },
             "tool_enrichment.user": {"tool_name", "tool_description", "tool_parameters"},
         }

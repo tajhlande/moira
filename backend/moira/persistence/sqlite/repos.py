@@ -148,7 +148,7 @@ class SqliteConversationRepository(ConversationRepository):
             conn.execute(
                 "INSERT INTO workflow_runs "
                 "(id, conversation_id, user_message_id, status, "
-                "budget_limit, total_cost, generation_path, started_at, "
+                "budget_limit, total_cost, generation_reason, started_at, "
                 "completed_at, total_elapsed_ms, updated_at, "
                 "knowledge_snapshot, state_version, report, thread_id) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
@@ -156,7 +156,7 @@ class SqliteConversationRepository(ConversationRepository):
                 "status = excluded.status, "
                 "budget_limit = excluded.budget_limit, "
                 "total_cost = excluded.total_cost, "
-                "generation_path = excluded.generation_path, "
+                "generation_reason = excluded.generation_reason, "
                 "completed_at = excluded.completed_at, "
                 "total_elapsed_ms = excluded.total_elapsed_ms, "
                 "updated_at = excluded.updated_at, "
@@ -171,7 +171,7 @@ class SqliteConversationRepository(ConversationRepository):
                     run.status,
                     run.budget_limit,
                     run.total_cost,
-                    run.generation_path,
+                    run.generation_reason,
                     run.started_at,
                     run.completed_at or None,
                     run.total_elapsed_ms or None,
@@ -191,7 +191,7 @@ class SqliteConversationRepository(ConversationRepository):
         try:
             rows = conn.execute(
                 "SELECT id, conversation_id, user_message_id, status, "
-                "budget_limit, total_cost, generation_path, started_at, "
+                "budget_limit, total_cost, generation_reason, started_at, "
                 "completed_at, total_elapsed_ms, updated_at, "
                 "knowledge_snapshot, state_version, report, thread_id "
                 "FROM workflow_runs WHERE conversation_id = ? ORDER BY started_at ASC",
@@ -215,7 +215,7 @@ class SqliteConversationRepository(ConversationRepository):
         try:
             row = conn.execute(
                 "SELECT id, conversation_id, user_message_id, status, "
-                "budget_limit, total_cost, generation_path, started_at, "
+                "budget_limit, total_cost, generation_reason, started_at, "
                 "completed_at, total_elapsed_ms, updated_at, "
                 "knowledge_snapshot, state_version, report, thread_id "
                 "FROM workflow_runs WHERE id = ?",

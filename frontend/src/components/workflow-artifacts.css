@@ -277,6 +277,39 @@
   color: var(--n-text-color-2, #666);
 }
 
+/* Generation reason badge (report_generation step detail) */
+.generation-reason-badge {
+  font-weight: 600;
+  font-size: 0.85em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: capitalize;
+  display: inline-block;
+  background-color: var(--moira-sidebar-bg, #f0f0f0);
+  color: var(--n-text-color-2, #666);
+}
+
+.generation-reason-badge.verified {
+  background-color: var(--n-success-color-suppl, #e8f5e9);
+  color: var(--n-success-color, #18a058);
+}
+
+.generation-reason-badge.retries_exhausted,
+.generation-reason-badge.budget_exhausted {
+  background-color: var(--n-warning-color-suppl, #fff3e0);
+  color: var(--n-warning-color, #e6a23c);
+}
+
+.generation-reason-badge.incomplete {
+  background-color: var(--n-warning-color-suppl, #fff3e0);
+  color: var(--n-warning-color, #e6a23c);
+}
+
+.generation-reason-badge.error {
+  background-color: var(--n-error-color-suppl, #fbe9e7);
+  color: var(--n-error-color, #d03050);
+}
+
 .so-card-list {
   display: flex;
   flex-direction: column;

@@ -131,9 +131,7 @@ def _parse_json_object(text: str) -> dict:
     # embed small JSON fragments (e.g. {"query": "..."}) before or after
     # the real response object; trying the longest match first avoids
     # extracting the wrong fragment.
-    matches = list(
-        re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.DOTALL)
-    )
+    matches = list(re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.DOTALL))
     matches.sort(key=lambda m: len(m.group(0)), reverse=True)
     for match in matches:
         try:
@@ -143,8 +141,7 @@ def _parse_json_object(text: str) -> dict:
         except json.JSONDecodeError:
             continue
     logger.warning(
-        "Failed to extract JSON object from model output "
-        "(len=%d, first 200 chars: %s)",
+        "Failed to extract JSON object from model output (len=%d, first 200 chars: %s)",
         len(text),
         text[:200],
     )

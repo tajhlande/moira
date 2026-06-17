@@ -11,87 +11,105 @@ from moira.service_setup import _services
 from moira.tools.base import ToolDefinition, ToolResult
 from moira.workflow.graph import compile_graph
 
-DECOMPOSITION_JSON = json.dumps({
-    "user_goal": "Find the capital of France",
-    "topic": "Geography",
-    "entities": ["France"],
-    "concepts": ["capital cities"],
-    "unknown_facts": [{"subject": "France", "fact_needed": "Current capital city of France"}],
-})
+DECOMPOSITION_JSON = json.dumps(
+    {
+        "user_goal": "Find the capital of France",
+        "topic": "Geography",
+        "entities": ["France"],
+        "concepts": ["capital cities"],
+        "unknown_facts": [{"subject": "France", "fact_needed": "Current capital city of France"}],
+    }
+)
 
-PLANNING_JSON = json.dumps({
-    "calls": [
-        {
-            "tool": "web_search",
-            "args": {"query": "capital of France"},
-            "target_fact_ids": ["f001"],
-            "rationale": "Search for the capital of France",
-        }
-    ],
-})
+PLANNING_JSON = json.dumps(
+    {
+        "calls": [
+            {
+                "tool": "web_search",
+                "args": {"query": "capital of France"},
+                "target_fact_ids": ["f001"],
+                "rationale": "Search for the capital of France",
+            }
+        ],
+    }
+)
 
-RESEARCH_JSON = json.dumps({
-    "tool_calls": [],
-    "discovered_facts": [{"fact_id": "f001", "claim": "Paris is the capital of France"}],
-    "sources": [],
-})
+RESEARCH_JSON = json.dumps(
+    {
+        "tool_calls": [],
+        "discovered_facts": [{"fact_id": "f001", "claim": "Paris is the capital of France"}],
+        "sources": [],
+    }
+)
 
-SYNTHESIS_JSON = json.dumps({
-    "conclusions": [
-        {
-            "conclusion": "Paris is the capital of France",
-            "supporting_fact_ids": ["f001"],
-            "reasoning": "Research confirms Paris is the capital",
-        }
-    ],
-})
+SYNTHESIS_JSON = json.dumps(
+    {
+        "conclusions": [
+            {
+                "conclusion": "Paris is the capital of France",
+                "supporting_fact_ids": ["f001"],
+                "reasoning": "Research confirms Paris is the capital",
+            }
+        ],
+    }
+)
 
-REVIEW_CONTINUE_JSON = json.dumps({
-    "fact_results": [{"fact_id": "f001", "result": "verified", "evidence": "Confirmed"}],
-    "coverage_assessment": "All facts have sufficient evidence",
-    "missing_areas": [],
-    "route": "continue",
-})
+REVIEW_CONTINUE_JSON = json.dumps(
+    {
+        "fact_results": [{"fact_id": "f001", "result": "verified", "evidence": "Confirmed"}],
+        "coverage_assessment": "All facts have sufficient evidence",
+        "missing_areas": [],
+        "route": "continue",
+    }
+)
 
-REVIEW_RETRY_JSON = json.dumps({
-    "fact_results": [
-        {"fact_id": "f001", "result": "unverified", "evidence": "Needs more research"}
-    ],
-    "coverage_assessment": "Insufficient evidence",
-    "missing_areas": ["Capital city confirmation"],
-    "route": "retry",
-})
+REVIEW_RETRY_JSON = json.dumps(
+    {
+        "fact_results": [
+            {"fact_id": "f001", "result": "unverified", "evidence": "Needs more research"}
+        ],
+        "coverage_assessment": "Insufficient evidence",
+        "missing_areas": ["Capital city confirmation"],
+        "route": "retry",
+    }
+)
 
-EVALUATION_ACCEPT_JSON = json.dumps({
-    "conclusion_results": [
-        {"conclusion_id": "c001", "result": "verified", "reason": "Well supported"}
-    ],
-    "goal_met": True,
-    "goal_assessment": "Goal met",
-    "route": "accept",
-})
+EVALUATION_ACCEPT_JSON = json.dumps(
+    {
+        "conclusion_results": [
+            {"conclusion_id": "c001", "result": "verified", "reason": "Well supported"}
+        ],
+        "goal_met": True,
+        "goal_assessment": "Goal met",
+        "route": "accept",
+    }
+)
 
-EVALUATION_RETRY_JSON = json.dumps({
-    "conclusion_results": [
-        {"conclusion_id": "c001", "result": "unverified", "reason": "Needs more evidence"}
-    ],
-    "goal_met": False,
-    "goal_assessment": "Conclusions need stronger support",
-    "route": "retry",
-})
+EVALUATION_RETRY_JSON = json.dumps(
+    {
+        "conclusion_results": [
+            {"conclusion_id": "c001", "result": "unverified", "reason": "Needs more evidence"}
+        ],
+        "goal_met": False,
+        "goal_assessment": "Conclusions need stronger support",
+        "route": "retry",
+    }
+)
 
-REPORT_JSON = json.dumps({
-    "answer": "Paris is the capital of France.",
-    "citations": [],
-    "verified_facts": [],
-    "verified_conclusions": [],
-    "contradicted": [],
-    "unknown_facts": [],
-    "critiques": [],
-    "total_cost": 0,
-    "tool_call_total_cost": 0,
-    "generation_path": "verified",
-})
+REPORT_JSON = json.dumps(
+    {
+        "answer": "Paris is the capital of France.",
+        "citations": [],
+        "verified_facts": [],
+        "verified_conclusions": [],
+        "contradicted": [],
+        "unknown_facts": [],
+        "critiques": [],
+        "total_cost": 0,
+        "tool_call_total_cost": 0,
+        "generation_reason": "verified",
+    }
+)
 
 
 def _cr(content):
@@ -170,10 +188,15 @@ def _inject_services(config, mock_model):
                 output="Paris is the capital of France",
                 success=True,
                 duration_ms=100,
-                metadata={"results": [
-                    {"title": "France Wiki", "url": "https://en.wikipedia.org/wiki/France",
-                     "snippet": "Paris is the capital of France"},
-                ]},
+                metadata={
+                    "results": [
+                        {
+                            "title": "France Wiki",
+                            "url": "https://en.wikipedia.org/wiki/France",
+                            "snippet": "Paris is the capital of France",
+                        },
+                    ]
+                },
             )
         ]
     )
@@ -226,13 +249,13 @@ class TestIntegration:
         """Happy path: all nodes succeed, evaluation accepts on first try."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
-            _cr(DECOMPOSITION_JSON),      # decomposition
-            _cr(PLANNING_JSON),            # planning
-            _cr(RESEARCH_JSON),            # research
-            _cr(SYNTHESIS_JSON),           # synthesis
-            _cr(REVIEW_CONTINUE_JSON),     # research_review → continue
-            _cr(EVALUATION_ACCEPT_JSON),   # evaluation → accept
-            _cr(REPORT_JSON),              # report_generation
+            _cr(DECOMPOSITION_JSON),  # decomposition
+            _cr(PLANNING_JSON),  # planning
+            _cr(RESEARCH_JSON),  # research
+            _cr(SYNTHESIS_JSON),  # synthesis
+            _cr(REVIEW_CONTINUE_JSON),  # research_review → continue
+            _cr(EVALUATION_ACCEPT_JSON),  # evaluation → accept
+            _cr(REPORT_JSON),  # report_generation
         ]
 
         state = _build_state(config)
@@ -241,7 +264,7 @@ class TestIntegration:
 
         report = result["knowledge"]["report"]
         assert report is not None
-        assert report["generation_path"] == "verified"
+        assert report["generation_reason"] == "verified"
         assert report["answer"] != ""
         initial = state["execution_state"]["budget_remaining"]
         assert result["execution_state"]["budget_remaining"] < initial
@@ -251,13 +274,13 @@ class TestIntegration:
         """With low budget, both review retry and evaluation retry are overruled."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
-            _cr(DECOMPOSITION_JSON),      # decomposition
-            _cr(PLANNING_JSON),            # planning
-            _cr(RESEARCH_JSON),            # research
-            _cr(SYNTHESIS_JSON),           # synthesis
-            _cr(REVIEW_RETRY_JSON),        # research_review → retry (budget insufficient)
-            _cr(EVALUATION_RETRY_JSON),    # evaluation → retry (budget insufficient)
-            _cr(REPORT_JSON),              # report_generation
+            _cr(DECOMPOSITION_JSON),  # decomposition
+            _cr(PLANNING_JSON),  # planning
+            _cr(RESEARCH_JSON),  # research
+            _cr(SYNTHESIS_JSON),  # synthesis
+            _cr(REVIEW_RETRY_JSON),  # research_review → retry (budget insufficient)
+            _cr(EVALUATION_RETRY_JSON),  # evaluation → retry (budget insufficient)
+            _cr(REPORT_JSON),  # report_generation
         ]
 
         # Budget 35: enough for one pass but not for any retry
@@ -267,7 +290,7 @@ class TestIntegration:
 
         report = result["knowledge"]["report"]
         assert report is not None
-        assert report["generation_path"] == "retry_overruled"
+        assert report["generation_reason"] == "budget_exhausted"
 
     @pytest.mark.asyncio
     async def test_full_cycle_error_path(self, config, mock_writer, mock_model):
@@ -283,23 +306,23 @@ class TestIntegration:
 
         report = result["knowledge"]["report"]
         assert report is not None
-        assert report["generation_path"] == "error"
+        assert report["generation_reason"] == "error"
 
     @pytest.mark.asyncio
     async def test_review_retry_path(self, config, mock_writer, mock_model):
         """Research review retries once, then continues to evaluation."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
-            _cr(DECOMPOSITION_JSON),       # decomposition
-            _cr(PLANNING_JSON),             # planning
-            _cr(RESEARCH_JSON),             # research
-            _cr(SYNTHESIS_JSON),            # synthesis
-            _cr(REVIEW_RETRY_JSON),         # research_review → retry (budget sufficient)
-            _cr(RESEARCH_JSON),             # research (retry)
-            _cr(SYNTHESIS_JSON),            # synthesis (after research retry)
-            _cr(REVIEW_CONTINUE_JSON),      # research_review → continue
-            _cr(EVALUATION_ACCEPT_JSON),    # evaluation → accept
-            _cr(REPORT_JSON),               # report_generation
+            _cr(DECOMPOSITION_JSON),  # decomposition
+            _cr(PLANNING_JSON),  # planning
+            _cr(RESEARCH_JSON),  # research
+            _cr(SYNTHESIS_JSON),  # synthesis
+            _cr(REVIEW_RETRY_JSON),  # research_review → retry (budget sufficient)
+            _cr(RESEARCH_JSON),  # research (retry)
+            _cr(SYNTHESIS_JSON),  # synthesis (after research retry)
+            _cr(REVIEW_CONTINUE_JSON),  # research_review → continue
+            _cr(EVALUATION_ACCEPT_JSON),  # evaluation → accept
+            _cr(REPORT_JSON),  # report_generation
         ]
 
         state = _build_state(config, budget=100)
@@ -308,7 +331,7 @@ class TestIntegration:
 
         report = result["knowledge"]["report"]
         assert report is not None
-        assert report["generation_path"] == "verified"
+        assert report["generation_reason"] == "verified"
         assert result["execution_state"]["review_count"] >= 2
         assert len(result["knowledge"]["review_history"]) >= 2
 
@@ -317,19 +340,19 @@ class TestIntegration:
         """Evaluation retries once (full pipeline reset), then accepts."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
-            _cr(DECOMPOSITION_JSON),       # decomposition
-            _cr(PLANNING_JSON),             # planning
-            _cr(RESEARCH_JSON),             # research
-            _cr(SYNTHESIS_JSON),            # synthesis
-            _cr(REVIEW_CONTINUE_JSON),      # research_review → continue
-            _cr(EVALUATION_RETRY_JSON),     # evaluation → retry (budget sufficient)
+            _cr(DECOMPOSITION_JSON),  # decomposition
+            _cr(PLANNING_JSON),  # planning
+            _cr(RESEARCH_JSON),  # research
+            _cr(SYNTHESIS_JSON),  # synthesis
+            _cr(REVIEW_CONTINUE_JSON),  # research_review → continue
+            _cr(EVALUATION_RETRY_JSON),  # evaluation → retry (budget sufficient)
             # After evaluation retry → tool_identification (no chat call)
-            _cr(PLANNING_JSON),             # planning (retry)
-            _cr(RESEARCH_JSON),             # research (retry)
-            _cr(SYNTHESIS_JSON),            # synthesis (retry)
-            _cr(REVIEW_CONTINUE_JSON),      # research_review → continue
-            _cr(EVALUATION_ACCEPT_JSON),    # evaluation → accept
-            _cr(REPORT_JSON),               # report_generation
+            _cr(PLANNING_JSON),  # planning (retry)
+            _cr(RESEARCH_JSON),  # research (retry)
+            _cr(SYNTHESIS_JSON),  # synthesis (retry)
+            _cr(REVIEW_CONTINUE_JSON),  # research_review → continue
+            _cr(EVALUATION_ACCEPT_JSON),  # evaluation → accept
+            _cr(REPORT_JSON),  # report_generation
         ]
 
         state = _build_state(config, budget=200)
@@ -338,6 +361,6 @@ class TestIntegration:
 
         report = result["knowledge"]["report"]
         assert report is not None
-        assert report["generation_path"] == "verified"
+        assert report["generation_reason"] == "verified"
         assert result["execution_state"]["evaluation_count"] >= 2
         assert len(result["knowledge"]["evaluation_history"]) >= 2

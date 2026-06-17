@@ -678,7 +678,7 @@ class ActiveRun:
                 status=self.status,
                 budget_limit=float(self.budget_limit),
                 total_cost=self.budget_consumed,
-                generation_path="",
+                generation_reason="",
                 started_at=self.started_at,
                 completed_at=self.completed_at or None,
                 total_elapsed_ms=self.total_elapsed_ms or None,
@@ -904,7 +904,7 @@ class RunManager:
         return run_id
 
     async def _resolve_cost_weights(
-            self, config: MoiraConfig
+        self, config: MoiraConfig
     ) -> dict[str, int | float | bool | str]:
         """Resolve cost weights from the settings service with config fallback.
 
@@ -979,13 +979,15 @@ class RunManager:
         self._active_runs[run_id] = active_run
         self._conversation_runs[conversation_id] = run_id
 
-        graph_config = RunnableConfig({
-            "configurable": {
-                "thread_id": resumable_run.thread_id,
-                "run_id": run_id,
-                "moira_config": config,
-            },
-        })
+        graph_config = RunnableConfig(
+            {
+                "configurable": {
+                    "thread_id": resumable_run.thread_id,
+                    "run_id": run_id,
+                    "moira_config": config,
+                },
+            }
+        )
 
         await active_run._persist()
 
@@ -993,9 +995,12 @@ class RunManager:
         # always has them, regardless of when the original run was created.
         active_run.start_graph_resume(
             graph,
-            Command(resume=True, update={
-                "execution_state": {"step_costs": cost_weights},
-            }),
+            Command(
+                resume=True,
+                update={
+                    "execution_state": {"step_costs": cost_weights},
+                },
+            ),
             graph_config,
         )
         logger.info(

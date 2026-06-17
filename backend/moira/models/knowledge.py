@@ -32,8 +32,8 @@ class Citation(TypedDict):
     source: str
     url: NotRequired[str]
     title: NotRequired[str]
-    excerpt: NotRequired[str]        # primary snippet (first search result)
-    snippets: NotRequired[list[str]] # all snippets from different searches
+    excerpt: NotRequired[str]  # primary snippet (first search result)
+    snippets: NotRequired[list[str]]  # all snippets from different searches
 
 
 class Fact(TypedDict):
@@ -67,18 +67,20 @@ class ToolCallPlan(TypedDict):
 
 class ReviewOutcome(TypedDict):
     """Outcome of the research_review node — evaluates evidence coverage."""
-    fact_results: list[dict]       # [{fact_id, result, evidence}]
+
+    fact_results: list[dict]  # [{fact_id, result, evidence}]
     coverage_assessment: str
     missing_areas: list[str]
-    route: str                     # "continue" | "retry"
+    route: str  # "continue" | "retry"
 
 
 class EvaluationOutcome(TypedDict):
     """Outcome of the evaluation node — evaluates conclusion logic and goal."""
-    conclusion_results: list[dict] # [{conclusion_id, result, reason}]
+
+    conclusion_results: list[dict]  # [{conclusion_id, result, reason}]
     goal_met: bool
     goal_assessment: str
-    route: str                     # "accept" | "retry"
+    route: str  # "accept" | "retry"
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +100,7 @@ class Knowledge(TypedDict):
     review_history: list[ReviewOutcome]
     evaluation_history: list[EvaluationOutcome]
     report: NotRequired["ResearchReport"]
-    generation_path: NotRequired[str]
+    generation_reason: NotRequired[str]
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +123,7 @@ class ExecutionState(TypedDict):
     research_retry_count: int
     review_count: int
     evaluation_count: int
+    retry_limits: dict[str, int]
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +152,7 @@ class ResearchReport(TypedDict):
     critiques: list[str]
     total_cost: float
     tool_call_total_cost: float
-    generation_path: str
+    generation_reason: str
 
 
 # ---------------------------------------------------------------------------
@@ -177,27 +180,31 @@ def knowledge_summary(knowledge: Knowledge) -> dict:
     facts_by_status: dict[str, list[dict]] = {}
     for f in knowledge.get("facts", []):
         status = f.get("status", "unknown")
-        facts_by_status.setdefault(status, []).append({
-            "id": f["id"],
-            "subject": f.get("subject", ""),
-            "fact_needed": f.get("fact_needed", ""),
-            "claim": f.get("claim", ""),
-            "relation": f.get("relation"),
-            "value": f.get("value"),
-            "status": status,
-            "verification_note": f.get("verification_note"),
-        })
+        facts_by_status.setdefault(status, []).append(
+            {
+                "id": f["id"],
+                "subject": f.get("subject", ""),
+                "fact_needed": f.get("fact_needed", ""),
+                "claim": f.get("claim", ""),
+                "relation": f.get("relation"),
+                "value": f.get("value"),
+                "status": status,
+                "verification_note": f.get("verification_note"),
+            }
+        )
 
     conclusions_by_status: dict[str, list[dict]] = {}
     for c in knowledge.get("conclusions", []):
         status = c.get("status", "unverified")
-        conclusions_by_status.setdefault(status, []).append({
-            "id": c["id"],
-            "conclusion": c.get("conclusion", ""),
-            "supporting_fact_ids": c.get("supporting_fact_ids", []),
-            "reasoning": c.get("reasoning"),
-            "status": status,
-        })
+        conclusions_by_status.setdefault(status, []).append(
+            {
+                "id": c["id"],
+                "conclusion": c.get("conclusion", ""),
+                "supporting_fact_ids": c.get("supporting_fact_ids", []),
+                "reasoning": c.get("reasoning"),
+                "status": status,
+            }
+        )
 
     return {
         "question": knowledge.get("question", ""),

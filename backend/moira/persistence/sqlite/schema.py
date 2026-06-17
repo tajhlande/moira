@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
-CURRENT_VERSION = 17
+CURRENT_VERSION = 18
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
@@ -175,6 +175,24 @@ def _apply_migration_011(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _apply_migration_018(conn: sqlite3.Connection) -> None:
+    """Rename generation_path → generation_reason in workflow_runs.
+
+    Conditional: fresh databases created by migration 015 already use the
+    new column name. Only databases that ran the original 015 with the old
+    name need this rename.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(workflow_runs)").fetchall()}
+    if "generation_path" in columns and "generation_reason" not in columns:
+        conn.execute(
+            "ALTER TABLE workflow_runs RENAME COLUMN generation_path TO generation_reason"
+        )
+        logger.info("Renamed workflow_runs.generation_path → generation_reason")
+    elif "generation_path" in columns and "generation_reason" in columns:
+        conn.execute("ALTER TABLE workflow_runs DROP COLUMN generation_path")
+        logger.info("Dropped redundant workflow_runs.generation_path")
+
+
 def run_migrations(db_path: str) -> None:
     """Apply all pending schema migrations to the SQLite database at db_path."""
     logger.info("Running migrations for %s", db_path)
@@ -193,6 +211,8 @@ def run_migrations(db_path: str) -> None:
                 _apply_migration_009(conn)
             elif version == 11:
                 _apply_migration_011(conn)
+            elif version == 18:
+                _apply_migration_018(conn)
             else:
                 matches = sorted(Path(MIGRATIONS_DIR).glob(f"{version:03d}_*.sql"))
                 if not matches:

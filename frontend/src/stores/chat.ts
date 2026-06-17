@@ -12,6 +12,8 @@ import {
 } from "../api/client";
 
 export const DEFAULT_BUDGET = 100;
+export const DEFAULT_MAX_REVIEW = 3;
+export const DEFAULT_MAX_EVALUATION = 2;
 
 const STAGE_LABELS: Record<string, string> = {
   decomposition: "Analyzing question",
@@ -87,16 +89,32 @@ export const useChatStore = defineStore("chat", () => {
   const loadingStepDetails = ref<Set<string>>(new Set());
   const stepDetailInflight = new Map<string, Promise<ExecutionStepDetailResponse>>();
 
-  const runSettings = ref<RunSettings>({ budget: DEFAULT_BUDGET });
+  const runSettings = ref<RunSettings>({
+    budget: DEFAULT_BUDGET,
+    max_review: DEFAULT_MAX_REVIEW,
+    max_evaluation: DEFAULT_MAX_EVALUATION,
+  });
 
-  async function loadDefaultBudget() {
+  async function loadDefaultSettings() {
     try {
-      const resp = await api.getSetting("budget.default_limit");
-      if (resp?.value != null) {
-        runSettings.value = { budget: parseInt(resp.value, 10) || DEFAULT_BUDGET };
-      }
+      const [budgetResp, maxReviewResp, maxEvalResp] = await Promise.all([
+        api.getSetting("budget.default_limit"),
+        api.getSetting("retry.max_review"),
+        api.getSetting("retry.max_evaluation"),
+      ]);
+      runSettings.value = {
+        budget: budgetResp?.value != null
+          ? parseInt(budgetResp.value, 10) || DEFAULT_BUDGET
+          : DEFAULT_BUDGET,
+        max_review: maxReviewResp?.value != null
+          ? parseInt(maxReviewResp.value, 10) || DEFAULT_MAX_REVIEW
+          : DEFAULT_MAX_REVIEW,
+        max_evaluation: maxEvalResp?.value != null
+          ? parseInt(maxEvalResp.value, 10) || DEFAULT_MAX_EVALUATION
+          : DEFAULT_MAX_EVALUATION,
+      };
     } catch {
-      // Settings endpoint unavailable; keep the current default.
+      // Settings endpoint unavailable; keep the current defaults.
     }
   }
   const runningConversations = ref<Set<string>>(new Set());
@@ -491,7 +509,7 @@ export const useChatStore = defineStore("chat", () => {
     error.value = null;
     loading.value = false;
     clearRunViewState();
-    await loadDefaultBudget();
+    await loadDefaultSettings();
   }
 
   async function selectConversation(id: string) {
@@ -920,6 +938,6 @@ export const useChatStore = defineStore("chat", () => {
     disconnectGlobalEvents,
     isConversationRunning,
     runningConversations,
-    loadDefaultBudget,
+    loadDefaultSettings,
   };
 });

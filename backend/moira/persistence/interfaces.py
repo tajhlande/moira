@@ -46,7 +46,7 @@ class WorkflowRun:
     status: str = "running"
     budget_limit: float = 0.0
     total_cost: float = 0.0
-    generation_path: str = ""
+    generation_reason: str = ""
     started_at: str = ""
     completed_at: str | None = ""
     total_elapsed_ms: int | None = 0

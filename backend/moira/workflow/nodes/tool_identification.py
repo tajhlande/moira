@@ -33,10 +33,7 @@ async def tool_identification(state: ResearchState, config: RunnableConfig) -> d
     es = state["execution_state"]
     knowledge = state["knowledge"]
 
-    unknown_facts = [
-        f for f in knowledge["facts"]
-        if f["status"] in ("unknown", "contradicted")
-    ]
+    unknown_facts = [f for f in knowledge["facts"] if f["status"] in ("unknown", "contradicted")]
 
     candidate_tools: list[ToolDefinition] = []
     seen_names: set[str] = set()
@@ -58,11 +55,13 @@ async def tool_identification(state: ResearchState, config: RunnableConfig) -> d
                         seen_names.add(tool.name)
                     if tool.name not in top_names:
                         top_names.append(tool.name)
-                queries_detail.append({
-                    "fact_id": fact["id"],
-                    "query": query,
-                    "top_results": top_names[:5],
-                })
+                queries_detail.append(
+                    {
+                        "fact_id": fact["id"],
+                        "query": query,
+                        "top_results": top_names[:5],
+                    }
+                )
     except Exception:
         logger.warning("Tool discovery failed, proceeding with defaults only", exc_info=True)
 
@@ -114,14 +113,16 @@ async def tool_identification(state: ResearchState, config: RunnableConfig) -> d
         "default_tools_included": default_names,
     }
 
-    writer({
-        "event": "node_end",
-        "payload": {
-            "node": NODE_NAME,
-            "budget_remaining": new_budget,
-            "detail": detail,
-        },
-    })
+    writer(
+        {
+            "event": "node_end",
+            "payload": {
+                "node": NODE_NAME,
+                "budget_remaining": new_budget,
+                "detail": detail,
+            },
+        }
+    )
     logger.info(
         "TOOL IDENTIFICATION Complete (%d candidates for %d facts)",
         len(candidate_tools),

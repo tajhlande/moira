@@ -24,9 +24,15 @@ class CostWeights(BaseModel):
     report_generation: int = 3
 
 
+class RetryLimits(BaseModel):
+    max_review: int = 3
+    max_evaluation: int = 2
+
+
 class BudgetConfig(BaseModel):
     default_limit: int = 100
     cost_weights: CostWeights = CostWeights()
+    retry_limits: RetryLimits = RetryLimits()
 
 
 class InferenceEndpointConfig(BaseModel):

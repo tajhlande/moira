@@ -110,11 +110,7 @@ def _prune_and_renumber_citations(
     new_answer = _CITE_PATTERN.sub(_replace, answer)
 
     cited = [dict(all_citations[old - 1]) for old in seen_order]
-    uncited = [
-        dict(c)
-        for i, c in enumerate(all_citations, 1)
-        if i not in seen_set
-    ]
+    uncited = [dict(c) for i, c in enumerate(all_citations, 1) if i not in seen_set]
     return new_answer, cited, uncited
 
 
@@ -130,35 +126,49 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     # Report generation is budget-exempt: always runs
     new_budget = deduct_cost(es["step_costs"], NODE_NAME, es["budget_remaining"])
 
-    # Determine generation path and path_instruction
+    # Determine the generation reason and corresponding prompt instruction.
+    # The reason explains *why* the research loop ended and a report is being
+    # generated now, rather than continuing the loop.
     error = es.get("error", "")
     if error:
-        generation_path = "error"
-        path_instruction = get_prompt("report_generation.path_error").format(
+        generation_reason = "error"
+        path_instruction = get_prompt("report_generation.reason_error").format(
             error=error,
         )
     elif knowledge.get("evaluation_history"):
-        latest = knowledge["evaluation_history"][-1]
-        route = latest.get("route", "accept")
-        if latest.get("goal_met") and not any(
-            c["status"] == "contradicted"
-            for c in knowledge.get("conclusions", [])
+        latest_eval = knowledge["evaluation_history"][-1]
+        eval_route = latest_eval.get("route", "accept")
+        if latest_eval.get("goal_met") and not any(
+            c["status"] == "contradicted" for c in knowledge.get("conclusions", [])
         ):
-            generation_path = "verified"
-            path_instruction = get_prompt("report_generation.path_verified")
-        elif route == "retry":
-            generation_path = "retry_overruled"
-            path_instruction = get_prompt(
-                "report_generation.path_retry_overruled",
-            )
+            generation_reason = "verified"
+            path_instruction = get_prompt("report_generation.reason_verified")
+        elif eval_route == "retry":
+            # Evaluation wanted another cycle but the router sent us here.
+            # Determine whether it was retry limits or budget that prevented it.
+            rl = es.get("retry_limits", {})
+            max_eval = rl.get("max_evaluation", 2)
+            eval_count = es.get("evaluation_count", 0)
+            if eval_count >= max_eval:
+                generation_reason = "retries_exhausted"
+                path_instruction = get_prompt(
+                    "report_generation.reason_retries_exhausted",
+                )
+            else:
+                generation_reason = "budget_exhausted"
+                path_instruction = get_prompt(
+                    "report_generation.reason_budget_exhausted",
+                )
         else:
-            generation_path = "budget_exhausted"
+            # Evaluation accepted but goal not met — research is incomplete.
+            generation_reason = "incomplete"
             path_instruction = get_prompt(
-                "report_generation.path_budget_exhausted",
+                "report_generation.reason_incomplete",
             )
     else:
-        generation_path = "budget_exhausted"
-        path_instruction = get_prompt("report_generation.path_budget_exhausted")
+        # No evaluation history — likely budget ran out before reaching evaluation.
+        generation_reason = "budget_exhausted"
+        path_instruction = get_prompt("report_generation.reason_budget_exhausted")
 
     # Separate verified, contradicted, and unknown items for the prompt
     all_facts = knowledge.get("facts", [])
@@ -166,16 +176,11 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     all_citations = knowledge.get("citations", [])
 
     verified_facts = [f for f in all_facts if f.get("status") == "verified"]
-    verified_conclusions = [
-        c for c in all_conclusions if c.get("status") == "verified"
+    verified_conclusions = [c for c in all_conclusions if c.get("status") == "verified"]
+    contradicted_items = [f for f in all_facts if f.get("status") == "contradicted"] + [
+        c for c in all_conclusions if c.get("status") == "contradicted"
     ]
-    contradicted_items = (
-        [f for f in all_facts if f.get("status") == "contradicted"]
-        + [c for c in all_conclusions if c.get("status") == "contradicted"]
-    )
-    unknown_facts_list = [
-        f for f in all_facts if f.get("status") == "unknown"
-    ]
+    unknown_facts_list = [f for f in all_facts if f.get("status") == "unknown"]
 
     # Build the prompt.
     system_prompt = get_prompt("report_generation.system").format(
@@ -199,7 +204,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
         {"role": "user", "content": user_prompt},
     ]
 
-    logger.info("REPORT GENERATION Start (path=%s)", generation_path)
+    logger.info("REPORT GENERATION Start (reason=%s)", generation_reason)
     response = await resolved.client.chat_completion(
         messages=messages,
         model=resolved.model_id,
@@ -215,24 +220,24 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     # ---- Empty response → error ----
     if not raw.strip():
         logger.error(
-            "REPORT GENERATION: model returned empty content "
-            "(thinking=%d chars)",
+            "REPORT GENERATION: model returned empty content (thinking=%d chars)",
             len(thinking),
         )
-        writer({
-            "event": "run_error",
-            "payload": {
-                "error": "Model returned empty content for report generation",
-                "budget_remaining": new_budget,
-                "detail": detail,
-                "purpose": NODE_NAME,
-                "model": resolved.model_id,
-                "call_count": 1,
-            },
-        })
+        writer(
+            {
+                "event": "run_error",
+                "payload": {
+                    "error": "Model returned empty content for report generation",
+                    "budget_remaining": new_budget,
+                    "detail": detail,
+                    "purpose": NODE_NAME,
+                    "model": resolved.model_id,
+                    "call_count": 1,
+                },
+            }
+        )
         raise RuntimeError(
-            "Model returned empty content for report generation "
-            f"(thinking={len(thinking)} chars)"
+            f"Model returned empty content for report generation (thinking={len(thinking)} chars)"
         )
 
     # ---- Parse response ----
@@ -240,89 +245,88 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
 
     if not parsed or "answer" not in parsed:
         logger.error(
-            "REPORT GENERATION: JSON parse failed "
-            "(parsed=%d keys, response=%d chars)",
+            "REPORT GENERATION: JSON parse failed (parsed=%d keys, response=%d chars)",
             len(parsed),
             len(raw),
         )
-        writer({
-            "event": "run_error",
-            "payload": {
-                "error": (
-                    "Report generation model returned unparseable JSON "
-                    f"(response={len(raw)} chars, parsed={len(parsed)} keys)"
-                ),
-                "budget_remaining": new_budget,
-                "detail": detail,
-                "purpose": NODE_NAME,
-                "model": resolved.model_id,
-                "call_count": 1,
-            },
-        })
+        writer(
+            {
+                "event": "run_error",
+                "payload": {
+                    "error": (
+                        "Report generation model returned unparseable JSON "
+                        f"(response={len(raw)} chars, parsed={len(parsed)} keys)"
+                    ),
+                    "budget_remaining": new_budget,
+                    "detail": detail,
+                    "purpose": NODE_NAME,
+                    "model": resolved.model_id,
+                    "call_count": 1,
+                },
+            }
+        )
         raise RuntimeError(
             "Report generation model returned unparseable JSON "
             f"(response={len(raw)} chars, parsed={len(parsed)} keys)"
         )
 
     raw_answer = parsed.get("answer", "")
-    cited_answer, cited_citations, uncited_citations = (
-        _prune_and_renumber_citations(raw_answer, all_citations)
+    cited_answer, cited_citations, uncited_citations = _prune_and_renumber_citations(
+        raw_answer, all_citations
     )
     report = ResearchReport(
         answer=cited_answer,
         citations=cited_citations,
         uncited_sources=uncited_citations,
         verified_facts=[
-            dict(f) for f in knowledge.get("facts", [])
-            if f.get("status") == "verified"
+            dict(f) for f in knowledge.get("facts", []) if f.get("status") == "verified"
         ],
         verified_conclusions=[
-            dict(c) for c in knowledge.get("conclusions", [])
-            if c.get("status") == "verified"
+            dict(c) for c in knowledge.get("conclusions", []) if c.get("status") == "verified"
         ],
         contradicted=[
-            dict(f) for f in knowledge.get("facts", [])
-            if f.get("status") == "contradicted"
-        ] + [
-            dict(c) for c in knowledge.get("conclusions", [])
-            if c.get("status") == "contradicted"
-        ],
+            dict(f) for f in knowledge.get("facts", []) if f.get("status") == "contradicted"
+        ]
+        + [dict(c) for c in knowledge.get("conclusions", []) if c.get("status") == "contradicted"],
         unknown_facts=[
-            dict(f) for f in knowledge.get("facts", [])
-            if f.get("status") == "unknown"
+            dict(f) for f in knowledge.get("facts", []) if f.get("status") == "unknown"
         ],
         critiques=parsed.get("critiques", []),
         total_cost=es["budget_limit"] - new_budget,
         tool_call_total_cost=es.get("total_tool_cost_consumed", 0.0),
-        generation_path=generation_path,
+        generation_reason=generation_reason,
     )
 
-    writer({
-        "event": "run_complete",
-        "payload": {
-            "report": dict(report) if report else None,
-            "knowledge": knowledge_summary(knowledge),
-            "generation_path": generation_path,
-        },
-    })
-    writer({
-        "event": "node_end",
-        "payload": {
-            "node": NODE_NAME,
-            "budget_remaining": new_budget,
-            "purpose": NODE_NAME,
-            "model": resolved.model_id,
-            "call_count": 1,
-            "detail": {"generation_path": generation_path},
-            **_response_meta(response),
-        },
-    })
-    logger.info("REPORT GENERATION Complete (path=%s)", generation_path)
+    writer(
+        {
+            "event": "run_complete",
+            "payload": {
+                "report": dict(report) if report else None,
+                "knowledge": knowledge_summary(knowledge),
+                "generation_reason": generation_reason,
+            },
+        }
+    )
+    writer(
+        {
+            "event": "node_end",
+            "payload": {
+                "node": NODE_NAME,
+                "budget_remaining": new_budget,
+                "purpose": NODE_NAME,
+                "model": resolved.model_id,
+                "call_count": 1,
+                "detail": {"generation_reason": generation_reason},
+                **_response_meta(response),
+            },
+        }
+    )
+    logger.info("REPORT GENERATION Complete (reason=%s)", generation_reason)
 
     return {
         "knowledge": {
             "report": report,
-            "generation_path": generation_path,
+            "generation_reason": generation_reason,
         },
         "execution_state": {
             **es,

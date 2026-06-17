@@ -16,7 +16,12 @@ import {
   IconRefresh,
 } from "@tabler/icons-vue";
 import { useRoute, useRouter } from "vue-router";
-import { DEFAULT_BUDGET, useChatStore } from "../stores/chat";
+import {
+  DEFAULT_BUDGET,
+  DEFAULT_MAX_REVIEW,
+  DEFAULT_MAX_EVALUATION,
+  useChatStore,
+} from "../stores/chat";
 import { useDialog } from "naive-ui";
 import RunArtifacts from "./RunArtifacts.vue";
 import MarkdownContent from "./MarkdownContent.vue";
@@ -203,6 +208,36 @@ function confirmRerun(msgId: number) {
           />
           <span class="settings-value">{{ store.runSettings.budget ?? DEFAULT_BUDGET }}</span>
         </div>
+        <div class="settings-row">
+          <label class="settings-label">Review Retries</label>
+          <NSlider
+            :value="store.runSettings.max_review ?? DEFAULT_MAX_REVIEW"
+            :min="1"
+            :max="10"
+            :step="1"
+            :tooltip="false"
+            style="flex: 1"
+            @update:value="
+              (v: number) => (store.runSettings.max_review = v)
+            "
+          />
+          <span class="settings-value">{{ store.runSettings.max_review ?? DEFAULT_MAX_REVIEW }}</span>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label">Eval Retries</label>
+          <NSlider
+            :value="store.runSettings.max_evaluation ?? DEFAULT_MAX_EVALUATION"
+            :min="1"
+            :max="10"
+            :step="1"
+            :tooltip="false"
+            style="flex: 1"
+            @update:value="
+              (v: number) => (store.runSettings.max_evaluation = v)
+            "
+          />
+          <span class="settings-value">{{ store.runSettings.max_evaluation ?? DEFAULT_MAX_EVALUATION }}</span>
+        </div>
       </div>
     </div>
     <div class="input-area">
@@ -330,13 +365,14 @@ function confirmRerun(msgId: number) {
   overflow: hidden;
   max-height: 0;
   opacity: 0;
+  flex-shrink: 0;
   transition: max-height 200ms ease, opacity 150ms ease, padding 200ms ease;
   padding: 0 40px;
   border-top: 1px solid transparent;
 }
 
 .settings-tray.open {
-  max-height: 64px;
+  max-height: 300px;
   opacity: 1;
   padding: 12px 40px;
   border-top-color: var(--moira-border, #e0e0e0);

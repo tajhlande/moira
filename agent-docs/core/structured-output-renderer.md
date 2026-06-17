@@ -7,10 +7,8 @@
 2. **Generic fallback**: `JSON.stringify` in a `<pre>` for everything else
 
 The decomposition fields (`entities`, `concepts`, `unknown_facts`), planning `calls`,
-synthesis `conclusions`, and verification `fact_results`/`conclusion_results` all fall
-into the JSON dump. Additionally, the verification branch is dead code — it checks for
-`outcome`/`case`/`assessment` keys that the backend never emits (the real schema uses
-`route`/`goal_met`/`goal_assessment`).
+synthesis `conclusions`, and research_review `fact_results`/evaluation
+`conclusion_results` all fall into the JSON dump.
 
 ## Approach: Field Renderer Registry + Type-Dispatching Fallback
 
@@ -34,6 +32,8 @@ declares a render type, a human-readable label, and optional type-specific confi
 | `calls` | object-list | Planned Calls |
 | `conclusions` | object-list | Conclusions |
 | `fact_results` | object-list | Fact Verification |
+| `coverage_assessment` | text | Coverage Assessment |
+| `missing_areas` | string-list | Missing Areas |
 | `conclusion_results` | object-list | Conclusion Verification |
 | `goal_met` | badge | Goal Met |
 | `route` | badge | Route |
@@ -114,6 +114,12 @@ block, `pill-list` → pills, `badge` → colored span.
 - Dead CSS classes (`.verification-outcome.accept/.retry_plan/.retry_draft/.error`,
   `.verification-case`, `.verification-assessment`, `.retry-declined-note`,
   `.verification-claims`)
+
+Note: The `fact_results` and `conclusion_results` field labels still say
+"Verification" because they describe the concept of verifying facts/conclusions.
+These fields are now produced by `research_review` (fact_results) and
+`evaluation` (conclusion_results) respectively, but the display labels were
+kept as "Fact Verification" / "Conclusion Verification" for user clarity.
 
 ## What Stays
 

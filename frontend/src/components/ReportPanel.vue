@@ -29,11 +29,17 @@ const report = computed(() => ({
 }));
 
 const warningMessage = computed(() => {
-  const path = report.value.generation_path;
-  if (path === "budget_exhausted") {
-    return "Verification recommended to continue researching but the budget was insufficient. The answer below may be incomplete.";
+  const reason = report.value.generation_reason;
+  if (reason === "budget_exhausted") {
+    return "Research was limited by insufficient budget. The answer below may be incomplete.";
   }
-  if (path === "error") {
+  if (reason === "retries_exhausted") {
+    return "Evaluation identified gaps but the configured retry limit was reached. The answer below may be incomplete.";
+  }
+  if (reason === "incomplete") {
+    return "Evaluation accepted the research but some conclusions remain unverified. The answer below may be incomplete.";
+  }
+  if (reason === "error") {
     return "An error occurred during research. The answer below may be incomplete.";
   }
   return null;

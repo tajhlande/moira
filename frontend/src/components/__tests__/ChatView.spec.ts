@@ -750,8 +750,8 @@ describe("ChatView", () => {
             {
               id: "102",
               detail_run_id: "run-old",
-              node: "verification",
-              label: "Verifying",
+              node: "evaluation",
+              label: "Evaluating",
               status: "stopped",
               cost: 0,
               budget_remaining: 36,
@@ -781,8 +781,8 @@ describe("ChatView", () => {
             {
               id: "run-new:1",
               detail_run_id: "run-new",
-              node: "verification",
-              label: "Verifying",
+              node: "evaluation",
+              label: "Evaluating",
               status: "running",
               cost: 0,
               budget_remaining: 36,
@@ -949,8 +949,8 @@ describe("ChatView", () => {
           execution_steps: [
             {
               id: "run-resume:1",
-              node: "verification",
-              label: "Verifying",
+              node: "evaluation",
+              label: "Evaluating",
               status: "running",
               cost: 0,
               budget_remaining: 40,
@@ -1045,8 +1045,8 @@ describe("ChatView", () => {
             {
               id: "102",
               detail_run_id: "run-old",
-              node: "verification",
-              label: "Verifying",
+              node: "evaluation",
+              label: "Evaluating",
               status: "stopped",
               cost: 0,
               budget_remaining: 40,
@@ -1058,8 +1058,8 @@ describe("ChatView", () => {
             {
               id: "run-new:1",
               detail_run_id: "run-new",
-              node: "verification",
-              label: "Verifying",
+              node: "evaluation",
+              label: "Evaluating",
               status: "running",
               cost: 0,
               budget_remaining: 40,

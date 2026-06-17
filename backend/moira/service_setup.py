@@ -194,13 +194,9 @@ async def init_services(
     from moira.tools.enrichment import enrich_tool_descriptions
 
     all_tools = catalog.get_all()
-    tools_to_enrich = [
-        t for t in all_tools if not t.original_description and t.enabled
-    ]
+    tools_to_enrich = [t for t in all_tools if not t.original_description and t.enabled]
     if tools_to_enrich:
-        logger.info(
-            "Enriching descriptions for %d tools", len(tools_to_enrich)
-        )
+        logger.info("Enriching descriptions for %d tools", len(tools_to_enrich))
         enriched = await enrich_tool_descriptions(tools_to_enrich)
         for tool in tools_to_enrich:
             enriched_desc = enriched.get(tool.name, "")
