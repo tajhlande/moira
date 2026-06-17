@@ -45,11 +45,61 @@ def _get_model(config: RunnableConfig):
     return registry
 
 
+def _fix_json_control_chars(text: str) -> str:
+    """Escape literal control characters inside JSON string values.
+
+    Quantized local models sometimes emit raw newline, carriage return, or
+    tab bytes *inside* JSON string values instead of the proper ``\\n`` /
+    ``\\r`` / ``\\t`` escape sequences.  Python's ``json.loads`` rejects
+    these as "Invalid control character".
+
+    This function performs a single-pass scan that tracks whether the cursor
+    is inside a JSON string (between unescaped double quotes) and replaces
+    any literal control characters found there with their escape-sequence
+    equivalents.
+
+    Characters outside strings (structural whitespace between JSON tokens)
+    are left untouched — they are valid JSON whitespace.
+
+    On already-valid JSON this is a no-op: properly escaped ``\\n`` sequences
+    are seen as ``\\`` + ``n`` (escape mode), not as a literal control char.
+    """
+    result: list[str] = []
+    in_string = False
+    escaped = False
+    for ch in text:
+        if escaped:
+            result.append(ch)
+            escaped = False
+            continue
+        if ch == "\\":
+            result.append(ch)
+            escaped = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            result.append(ch)
+            continue
+        if in_string:
+            if ch == "\n":
+                result.append("\\n")
+            elif ch == "\r":
+                result.append("\\r")
+            elif ch == "\t":
+                result.append("\\t")
+            else:
+                result.append(ch)
+        else:
+            result.append(ch)
+    return "".join(result)
+
+
 def _parse_json_object(text: str) -> dict:
     """Extract the first JSON object from text, handling markdown fences.
 
     Also strips <think>...</think> blocks and standalone </think> tags that
-    some models leak into the response content.
+    some models leak into the response content, and repairs literal control
+    characters inside JSON strings (common with quantized models).
     """
     import json
     import re
@@ -58,6 +108,9 @@ def _parse_json_object(text: str) -> dict:
     # Strip <think>...</think> blocks and standalone closing tags
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
     text = re.sub(r"</think>", "", text).strip()
+    # Repair literal control characters inside JSON string values.
+    # No-op on valid JSON; fixes broken JSON from quantized models.
+    text = _fix_json_control_chars(text)
     # Try direct parse
     try:
         result = json.loads(text)
@@ -89,6 +142,12 @@ def _parse_json_object(text: str) -> dict:
                 return result
         except json.JSONDecodeError:
             continue
+    logger.warning(
+        "Failed to extract JSON object from model output "
+        "(len=%d, first 200 chars: %s)",
+        len(text),
+        text[:200],
+    )
     return {}
 
 

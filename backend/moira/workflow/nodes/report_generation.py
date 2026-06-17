@@ -177,9 +177,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
         f for f in all_facts if f.get("status") == "unknown"
     ]
 
-    # Build the prompt.  This is our own code — bugs here (e.g. None in a
-    # citation field) must propagate so the run is marked failed and the
-    # user can fix and rerun, rather than silently getting a fallback.
+    # Build the prompt.
     system_prompt = get_prompt("report_generation.system").format(
         path_instruction=path_instruction,
     )
@@ -193,86 +191,111 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
         citations=_format_citations(all_citations),
     )
 
-    # Model call + response parsing — external and unpredictable, so
-    # fall back to a minimal report on failure.
-    report: ResearchReport | None = None
-    resolved = None
-    response = None
-    try:
-        registry = _get_model(config)
-        resolved = await registry.resolve("intelligence")
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
+    # ---- Model call ----
+    registry = _get_model(config)
+    resolved = await registry.resolve("intelligence")
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
 
-        logger.info("REPORT GENERATION Start (path=%s)", generation_path)
-        response = await resolved.client.chat_completion(
-            messages=messages,
-            model=resolved.model_id,
-            temperature=DEFAULT_TEMPERATURE,
-        )
+    logger.info("REPORT GENERATION Start (path=%s)", generation_path)
+    response = await resolved.client.chat_completion(
+        messages=messages,
+        model=resolved.model_id,
+        temperature=DEFAULT_TEMPERATURE,
+    )
 
-        raw = response.content or ""
-        thinking = getattr(response, "thinking", "") or ""
-        if not raw.strip():
-            raise RuntimeError(
-                f"Model returned empty content for report generation "
-                f"(thinking={len(thinking)} chars). "
-                f"Thinking: {thinking}"
-            )
-        parsed = _parse_json_object(raw)
-        raw_answer = parsed.get("answer", "")
-        cited_answer, cited_citations, uncited_citations = (
-            _prune_and_renumber_citations(raw_answer, all_citations)
+    raw = response.content or ""
+    thinking = getattr(response, "thinking", "") or ""
+    detail: dict = {}
+    if thinking:
+        detail["thinking"] = thinking[:2000]
+
+    # ---- Empty response → error ----
+    if not raw.strip():
+        logger.error(
+            "REPORT GENERATION: model returned empty content "
+            "(thinking=%d chars)",
+            len(thinking),
         )
-        report = ResearchReport(
-            answer=cited_answer,
-            citations=cited_citations,
-            uncited_sources=uncited_citations,
-            verified_facts=[
-                dict(f) for f in knowledge.get("facts", [])
-                if f.get("status") == "verified"
-            ],
-            verified_conclusions=[
-                dict(c) for c in knowledge.get("conclusions", [])
-                if c.get("status") == "verified"
-            ],
-            contradicted=[
-                dict(f) for f in knowledge.get("facts", [])
-                if f.get("status") == "contradicted"
-            ] + [
-                dict(c) for c in knowledge.get("conclusions", [])
-                if c.get("status") == "contradicted"
-            ],
-            unknown_facts=[
-                dict(f) for f in knowledge.get("facts", [])
-                if f.get("status") == "unknown"
-            ],
-            critiques=parsed.get("critiques", []),
-            total_cost=es["budget_limit"] - new_budget,
-            tool_call_total_cost=es.get("total_tool_cost_consumed", 0.0),
-            generation_path=generation_path,
+        writer({
+            "event": "run_error",
+            "payload": {
+                "error": "Model returned empty content for report generation",
+                "budget_remaining": new_budget,
+                "detail": detail,
+                "purpose": NODE_NAME,
+                "model": resolved.model_id,
+                "call_count": 1,
+            },
+        })
+        raise RuntimeError(
+            "Model returned empty content for report generation "
+            f"(thinking={len(thinking)} chars)"
         )
 
-    except Exception as e:
-        logger.error("Report generation model call failed: %s", e, exc_info=True)
-        # Fallback: produce a minimal report from whatever we have.
-        # No inline markers in the fallback answer, so all citations
-        # (if any) are uncited.
-        report = ResearchReport(
-            answer=knowledge.get("user_goal", knowledge["question"]),
-            citations=[],
-            uncited_sources=[dict(c) for c in all_citations],
-            verified_facts=[],
-            verified_conclusions=[],
-            contradicted=[],
-            unknown_facts=[dict(f) for f in knowledge.get("facts", [])],
-            critiques=[f"Report generation failed: {e}"],
-            total_cost=es["budget_limit"] - new_budget,
-            tool_call_total_cost=es.get("total_tool_cost_consumed", 0.0),
-            generation_path="error" if error else "budget_exhausted",
+    # ---- Parse response ----
+    parsed = _parse_json_object(raw)
+
+    if not parsed or "answer" not in parsed:
+        logger.error(
+            "REPORT GENERATION: JSON parse failed "
+            "(parsed=%d keys, response=%d chars)",
+            len(parsed),
+            len(raw),
         )
+        writer({
+            "event": "run_error",
+            "payload": {
+                "error": (
+                    "Report generation model returned unparseable JSON "
+                    f"(response={len(raw)} chars, parsed={len(parsed)} keys)"
+                ),
+                "budget_remaining": new_budget,
+                "detail": detail,
+                "purpose": NODE_NAME,
+                "model": resolved.model_id,
+                "call_count": 1,
+            },
+        })
+        raise RuntimeError(
+            "Report generation model returned unparseable JSON "
+            f"(response={len(raw)} chars, parsed={len(parsed)} keys)"
+        )
+
+    raw_answer = parsed.get("answer", "")
+    cited_answer, cited_citations, uncited_citations = (
+        _prune_and_renumber_citations(raw_answer, all_citations)
+    )
+    report = ResearchReport(
+        answer=cited_answer,
+        citations=cited_citations,
+        uncited_sources=uncited_citations,
+        verified_facts=[
+            dict(f) for f in knowledge.get("facts", [])
+            if f.get("status") == "verified"
+        ],
+        verified_conclusions=[
+            dict(c) for c in knowledge.get("conclusions", [])
+            if c.get("status") == "verified"
+        ],
+        contradicted=[
+            dict(f) for f in knowledge.get("facts", [])
+            if f.get("status") == "contradicted"
+        ] + [
+            dict(c) for c in knowledge.get("conclusions", [])
+            if c.get("status") == "contradicted"
+        ],
+        unknown_facts=[
+            dict(f) for f in knowledge.get("facts", [])
+            if f.get("status") == "unknown"
+        ],
+        critiques=parsed.get("critiques", []),
+        total_cost=es["budget_limit"] - new_budget,
+        tool_call_total_cost=es.get("total_tool_cost_consumed", 0.0),
+        generation_path=generation_path,
+    )
 
     writer({
         "event": "run_complete",
@@ -288,10 +311,10 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
             "node": NODE_NAME,
             "budget_remaining": new_budget,
             "purpose": NODE_NAME,
-            "model": resolved.model_id if resolved is not None else "",
+            "model": resolved.model_id,
             "call_count": 1,
             "detail": {"generation_path": generation_path},
-            **(_response_meta(response) if response is not None else {}),
+            **_response_meta(response),
         },
     })
     logger.info("REPORT GENERATION Complete (path=%s)", generation_path)

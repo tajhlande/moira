@@ -2023,7 +2023,10 @@ class TestReportGeneration:
                 or result["execution_state"].get("error") == "")
 
     @pytest.mark.asyncio
-    async def test_model_failure_fallback(self, config, mock_writer, mock_model):
+    async def test_model_call_failure_raises_error(self, config, mock_writer, mock_model):
+        """When the model call itself fails (network error, crash),
+        the node must raise RuntimeError and emit run_error — not
+        silently produce a fallback report."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = RuntimeError("Model crashed")
 
@@ -2032,12 +2035,8 @@ class TestReportGeneration:
         state = _build_state(config, "Test question")
         state["knowledge"]["user_goal"] = "Find info"
 
-        result = await report_generation(state, _make_run_config(config))
-
-        assert result["knowledge"]["report"] is not None
-        assert result["knowledge"]["report"]["generation_path"] == "budget_exhausted"
-        assert len(result["knowledge"]["report"]["critiques"]) > 0
-        assert "failed" in result["knowledge"]["report"]["critiques"][0].lower()
+        with pytest.raises(RuntimeError, match="Model crashed"):
+            await report_generation(state, _make_run_config(config))
 
     @pytest.mark.asyncio
     async def test_error_generation_path(self, config, mock_writer, mock_model):
@@ -2214,13 +2213,56 @@ class TestReportGeneration:
         assert len(report["uncited_sources"]) == 2
 
     @pytest.mark.asyncio
-    async def test_model_failure_puts_all_in_uncited(
+    async def test_parse_failure_raises_error(self, config, mock_writer, mock_model):
+        """When the model returns content that can't be parsed as JSON,
+        the node must raise RuntimeError and emit run_error — not
+        silently produce an empty report."""
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content="This is not JSON at all.",
+        )
+
+        from moira.workflow.nodes.report_generation import report_generation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["citations"] = [
+            {"id": "cit001", "source": "web_search",
+             "url": "https://a.com", "title": "A", "excerpt": "aa"},
+        ]
+
+        with pytest.raises(RuntimeError, match="unparseable JSON"):
+            await report_generation(state, _make_run_config(config))
+
+    @pytest.mark.asyncio
+    async def test_empty_response_raises_error(self, config, mock_writer, mock_model):
+        """When the model returns empty content, the node must raise."""
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content="",
+            thinking="I was thinking but produced nothing.",
+        )
+
+        from moira.workflow.nodes.report_generation import report_generation
+
+        state = _build_state(config, "Test question")
+
+        with pytest.raises(RuntimeError, match="empty content"):
+            await report_generation(state, _make_run_config(config))
+
+    @pytest.mark.asyncio
+    async def test_literal_newlines_in_json_are_repaired(
         self, config, mock_writer, mock_model,
     ):
-        """When the model fails, the fallback answer has no markers,
-        so all citations go to uncited_sources."""
+        """When a quantized model emits literal newlines inside JSON string
+        values, _fix_json_control_chars should repair them so parsing
+        succeeds and the report is generated normally."""
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.side_effect = RuntimeError("Model crashed")
+        # Build a response with a LITERAL newline inside the answer string.
+        # This is what quantized models sometimes produce.
+        raw = '{"answer": "line1\nline2 [1]", "critiques": ["c1"]}'
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=raw,
+        )
 
         from moira.workflow.nodes.report_generation import report_generation
 
@@ -2233,9 +2275,82 @@ class TestReportGeneration:
         result = await report_generation(state, _make_run_config(config))
         report = result["knowledge"]["report"]
 
-        assert report["citations"] == []
-        assert len(report["uncited_sources"]) == 1
-        assert report["uncited_sources"][0]["url"] == "https://a.com"
+        assert "line1" in report["answer"]
+        assert "line2" in report["answer"]
+        assert report["critiques"] == ["c1"]
+
+
+# ---------------------------------------------------------------------------
+# _fix_json_control_chars unit tests
+# ---------------------------------------------------------------------------
+
+class TestFixJsonControlChars:
+    """Unit tests for the literal-control-character repair utility."""
+
+    def test_noop_on_valid_json(self):
+        """Already-valid JSON should pass through unchanged."""
+        from moira.workflow.nodes._helpers import _fix_json_control_chars
+
+        valid = '{"answer": "hello\\nworld", "x": 1}'
+        assert _fix_json_control_chars(valid) == valid
+
+    def test_noop_on_json_without_strings(self):
+        """JSON with no string values should pass through unchanged."""
+        from moira.workflow.nodes._helpers import _fix_json_control_chars
+
+        valid = '{"x": 1, "y": [1, 2, 3]}'
+        assert _fix_json_control_chars(valid) == valid
+
+    def test_repairs_literal_newline_in_string(self):
+        """Literal newline inside a JSON string value should be escaped."""
+        from moira.workflow.nodes._helpers import _fix_json_control_chars
+
+        broken = '{"answer": "line1\nline2"}'
+        fixed = _fix_json_control_chars(broken)
+        assert fixed == '{"answer": "line1\\nline2"}'
+
+    def test_preserves_structural_newlines(self):
+        """Newlines between JSON tokens (outside strings) should be
+        preserved as-is — they are valid JSON whitespace."""
+        from moira.workflow.nodes._helpers import _fix_json_control_chars
+
+        text = '{\n  "answer": "ok"\n}'
+        assert _fix_json_control_chars(text) == text
+
+    def test_repairs_literal_tab_in_string(self):
+        """Literal tab inside a JSON string value should be escaped."""
+        from moira.workflow.nodes._helpers import _fix_json_control_chars
+
+        broken = '{"a": "col1\tcol2"}'
+        fixed = _fix_json_control_chars(broken)
+        assert fixed == '{"a": "col1\\tcol2"}'
+
+    def test_handles_escaped_quotes(self):
+        """Escaped quotes (\\") should not toggle the in-string state."""
+        from moira.workflow.nodes._helpers import _fix_json_control_chars
+
+        # The \" inside the string should not end the string, so the
+        # literal newline after it should be escaped.
+        broken = '{"a": "say \\"hi\\" then\nmore"}'
+        fixed = _fix_json_control_chars(broken)
+        assert "\\n" in fixed
+        assert "\n" not in fixed.split('"')[3]  # inside the string value
+
+    def test_parse_succeeds_after_repair(self):
+        """End-to-end: json.loads should succeed after repair."""
+        import json
+
+        from moira.workflow.nodes._helpers import _fix_json_control_chars
+
+        broken = '{"answer": "line1\nline2", "x": 1}'
+        # Direct json.loads should fail
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(broken)
+        # After repair, it should succeed
+        fixed = _fix_json_control_chars(broken)
+        result = json.loads(fixed)
+        assert result["answer"] == "line1\nline2"
+        assert result["x"] == 1
 
 
 # ===========================================================================
