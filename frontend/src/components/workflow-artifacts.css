@@ -642,10 +642,11 @@
   color: var(--n-success-color, #18a058);
 }
 
-.contradicted {
+.contradicted .markdown-content {
   color: var(--n-error-color, #d03050);
   text-decoration: line-through;
-  text-decoration-color: var(--n-error-color, #d0305060);
+  text-decoration-color: var(--n-error-color, #d03050);
+  text-decoration-thickness: 2px;
 }
 
 .contradiction-note {
@@ -654,6 +655,8 @@
   opacity: 0.8;
   font-style: italic;
   margin-top: 2px;
+  color: var(--n-error-color, #d03050);
+  text-decoration: none;
 }
 
 .budget-consumed {
