@@ -34,6 +34,7 @@ const dialog = useDialog();
 const inputText = ref("");
 const showSettings = ref(false);
 const messagesScrollbar = ref<InstanceType<typeof NScrollbar> | null>(null);
+const scrollContent = ref<HTMLElement | null>(null);
 
 // Sync store state with the current route.
 // - /conversation/new → startNewChat()
@@ -67,25 +68,44 @@ watch(
   },
 );
 
-// Scroll to bottom when switching conversations so the most recent
-// content (usually the end) is immediately visible.
+// Track conversation switches so we can scroll to the report after data loads.
+const justSwitchedConversation = ref(false);
+
 watch(
   () => store.currentConversationId,
   () => {
+    justSwitchedConversation.value = true;
+  },
+);
+
+// On conversation switch: scroll to the top of the latest report.
+// Uses a separate watcher from streaming auto-scroll so the two don't
+// interfere.  The flag is cleared inside nextTick (not synchronously),
+// so the streaming watcher below sees it as true and skips during the
+// same flush cycle.
+watch(
+  () => store.messages,
+  () => {
+    if (!justSwitchedConversation.value) return;
     nextTick(() => {
-      messagesScrollbar.value?.scrollTo({ top: 999999, behavior: "smooth" });
+      justSwitchedConversation.value = false;
+      const reports = scrollContent.value?.querySelectorAll<HTMLElement>(".report-panel");
+      if (reports && reports.length > 0) {
+        reports[reports.length - 1].scrollIntoView({ block: "start", behavior: "smooth" });
+      }
     });
   },
 );
 
 // Auto-scroll during streaming as new steps/content arrive.
+// Skips during conversation switch (flag still true in same flush cycle).
 watch(
   () => [
-    store.messages.length,
     store.activeRun?.execution_steps?.length,
     store.activeRun?.report,
   ],
   () => {
+    if (justSwitchedConversation.value) return;
     nextTick(() => {
       messagesScrollbar.value?.scrollTo({ top: 999999, behavior: "smooth" });
     });
@@ -145,47 +165,49 @@ function confirmRerun(msgId: number) {
     </div>
 
     <NScrollbar ref="messagesScrollbar" class="messages-area">
-      <template v-for="(msg, i) in store.messages" :key="i">
-        <!-- Message bubble -->
-        <div :class="['message', msg.role]">
-          <div class="message-role">
-            {{ msg.role === "user" ? "You" : "MOiRA" }}
+      <div ref="scrollContent">
+        <template v-for="(msg, i) in store.messages" :key="i">
+          <!-- Message bubble -->
+          <div :class="['message', msg.role]">
+            <div class="message-role">
+              {{ msg.role === "user" ? "You" : "MOiRA" }}
+            </div>
+            <MarkdownContent class="message-content" :content="msg.content" />
+            <div class="message-actions">
+              <NButton
+                v-if="msg.role === 'user' && runForMessage(msg.id)"
+                quaternary
+                circle
+                size="tiny"
+                class="icon-action-btn"
+                title="Rerun from this message"
+                @click="confirmRerun(msg.id)"
+              >
+                <template #icon>
+                  <IconRefresh :size="14" />
+                </template>
+              </NButton>
+              <NButton
+                quaternary
+                circle
+                size="tiny"
+                class="icon-action-btn"
+                @click="copyMessage(msg.content, i)"
+              >
+                <template #icon>
+                  <IconCopy v-if="copiedMsgIndex !== i" :size="14" />
+                  <IconCircleCheck v-else :size="14" />
+                </template>
+              </NButton>
+            </div>
           </div>
-          <MarkdownContent class="message-content" :content="msg.content" />
-          <div class="message-actions">
-            <NButton
-              v-if="msg.role === 'user' && runForMessage(msg.id)"
-              quaternary
-              circle
-              size="tiny"
-              class="icon-action-btn"
-              title="Rerun from this message"
-              @click="confirmRerun(msg.id)"
-            >
-              <template #icon>
-                <IconRefresh :size="14" />
-              </template>
-            </NButton>
-            <NButton
-              quaternary
-              circle
-              size="tiny"
-              class="icon-action-btn"
-              @click="copyMessage(msg.content, i)"
-            >
-              <template #icon>
-                <IconCopy v-if="copiedMsgIndex !== i" :size="14" />
-                <IconCircleCheck v-else :size="14" />
-              </template>
-            </NButton>
-          </div>
-        </div>
 
-        <!-- After a user message: render associated run artifacts -->
-        <template v-if="msg.role === 'user' && runForMessage(msg.id)">
-          <RunArtifacts :run="runForMessage(msg.id)!" />
+          <!-- After a user message: render associated run artifacts -->
+          <template v-if="msg.role === 'user' && runForMessage(msg.id)">
+            <RunArtifacts :run="runForMessage(msg.id)!" />
+          </template>
         </template>
-      </template>
+      </div>
     </NScrollbar>
 
     <NAlert v-if="store.error" type="error" style="margin: 8px 40px" closable>
