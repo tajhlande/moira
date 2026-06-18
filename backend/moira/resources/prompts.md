@@ -46,6 +46,64 @@ Respond with a JSON object with these keys:
 Produce enough specific facts to materially answer the question. Do not pad the list
 with facts that are merely interesting about the domain but not needed for the answer.
 
+Example decomposition for the question "Could life exist on Europa (Jupiter's moon)?":
+
+{
+  "user_goal": "Assess whether Europa's environmental conditions could support life as we understand it.",
+  "topic": "astrobiology",
+  "entities": ["Europa", "Jupiter"],
+  "concepts": ["habitability", "tidal heating", "hydrothermal vents", "chemosynthesis"],
+  "unknown_facts": [
+    {
+      "subject": "Europa",
+      "fact_needed": "Whether Europa has a subsurface liquid water ocean, and the evidence supporting this"
+    },
+    {
+      "subject": "Europa ocean",
+      "fact_needed": "Estimated volume and depth of the subsurface ocean"
+    },
+    {
+      "subject": "Europa energy",
+      "fact_needed": "Whether tidal heating from Jupiter provides enough energy to sustain a liquid ocean"
+    },
+    {
+      "subject": "Europa seafloor",
+      "fact_needed": "Whether hydrothermal vent activity is plausible on Europa's ocean floor"
+    },
+    {
+      "subject": "Europa chemistry",
+      "fact_needed": "What is known or theorized about the chemical composition of Europa's ocean"
+    },
+    {
+      "subject": "Europa organics",
+      "fact_needed": "Whether organic molecules have been detected on Europa's surface"
+    },
+    {
+      "subject": "Europa ocean age",
+      "fact_needed": "How long the subsurface ocean is estimated to have been liquid"
+    },
+    {
+      "subject": "Life requirements",
+      "fact_needed": "What conditions are considered minimally required for life (water, energy, carbon, time)"
+    },
+    {
+      "subject": "Earth analogues",
+      "fact_needed": "Whether Earth's deep-sea hydrothermal vent ecosystems demonstrate life can thrive without sunlight"
+    },
+    {
+      "subject": "Europa radiation",
+      "fact_needed": "How Jupiter's radiation affects surface habitability and whether the ocean is shielded"
+    }
+  ]
+}
+
+Notice how the facts trace the chain of reasoning needed to answer the question:
+what does life require? → does Europa have liquid water? → is there an energy
+source? → is there chemistry for building blocks? → has the ocean existed long
+enough? → do we have Earth analogues proving these conditions can work? Each
+fact is a prerequisite that must be established before the overall question can
+be answered.
+
 ## decomposition.user
 
 Research question: {question}
@@ -302,14 +360,20 @@ You are a synthesis assistant. Your job is to derive conclusions from a set of
 discovered facts. You must NOT use any world knowledge beyond what is in the facts
 provided to you.
 
+Your job is to construct a chain of support.
+Retrieved facts support derived claims.
+Derived claims support conclusions.
+Every claim and conclusion must identify the specific
+facts or claims that support it.
+
 Rules:
 - Derive conclusions ONLY from the provided facts
 - Each conclusion must reference the specific facts that support it by ID
-- Show your reasoning chain: how do the supporting facts lead to the conclusion?
+- Show your reasoning chain: how do the supporting facts lead to the conclusion via derived claims?
 - If the facts are insufficient to support a conclusion, do NOT draw that conclusion.
-  Instead, note what additional facts would be needed.
-- Do not combine facts in ways that introduce new information not present in the
-  facts themselves. For example, if fact f005 says "X is weak to Y" and fact f008
+- You MAY derive new claims that logically follow from the supplied facts.
+- You should then derive conclusions from the facts and the derived claims.
+- You MUST NOT introduce additional domain knowledge that does not come from the supplied facts. For example, if fact f005 says "X is weak to Y" and fact f008
   says "Z resists Y", you may conclude "Z covers X's weakness to Y" but you may NOT
   conclude "Z is a good teammate for X" without additional facts about team
   evaluation criteria.
@@ -320,10 +384,26 @@ Only use facts with status "verified" or "unverified" as support. Do not draw
 conclusions from facts with status "unknown" or "contradicted".
 
 Respond with a JSON object with key "conclusions": a list of objects, each with:
-- "conclusion": the derived conclusion (one clear statement)
+- "conclusion": the derived claim or conclusion (one clear statement)
 - "supporting_fact_ids": list of fact IDs that support this conclusion (e.g., ["f001", "f005"])
 - "reasoning": step-by-step explanation of how the supporting facts lead to this
-  conclusion
+  conclusion, including derived claims that support the conclusion.
+
+Example JSON structure: 
+{
+  "conclusions": [
+    {
+      "conclusion" : "Caesar was murdered by Cassius, Brutus, and other Roman senators.",
+      "supporting_fact_ids": ["f001", "f004", "f007", "f009", "f011"],
+      "reasoning": "Caesar died. His cause of death was stab wounds and exsanguination. Cassius and Brutus conspired to kill him along with other senators, hoping to prevent him becoming a tyrant. They had daggers with which to kill him. And the conspirators used a fake petition to create the opportunity for the murder. Means, motive, and opportunity are all present, therefore he was murdered."
+    },
+    {
+      "conclusion": "Caesar ignored the warning about the risk of his impending murder.",
+      "supporting_fact_ids": ["f002", "f004"],
+      "reasoning": "Caesar was warned by a soothsayer, but continued with his plan to convince the people he was reluctant to take the crown."
+    }
+  ]
+}
 
 ## synthesis.user
 
@@ -460,7 +540,8 @@ Rules:
 - Use third-person voice only (no "I" statements)
 - For contradicted or unknown facts, state explicitly what is uncertain and why
 - Include inline citation markers [n] referencing the citation list where the
-  report draws directly from a cited source
+  report draws directly from a cited source, where n is the integer number of the citation 
+  (leaving out the leading "cit" of a citation ID)
 - For multiple citations on the same point, use sequential markers like [2][4]
 - Do not manufacture or invent any URLs or citations not provided in the data
 
