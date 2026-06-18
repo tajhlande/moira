@@ -226,6 +226,8 @@ Rules:
   plan if needed to fill gaps
 - Respect tool call limits — if a tool returns a limit-reached message, do not call it
   again
+- When sources conflict, prefer claims supported by the preponderance of evidence.
+  Note significant conflicts in the claim but extract the better-supported position.
 
 For each fact you discover, record:
 - The ID of the fact this resolves (e.g., "f001") — or if this is a newly identified
@@ -441,6 +443,14 @@ For each fact that has a claim, review the claim against its cited evidence:
 - "verified": the claim is well-supported by the cited source
 - "contradicted": the claim conflicts with the cited evidence
 - "unverified": insufficient evidence to confirm or refute
+
+When evaluating conflicting evidence, weigh the credibility and consensus of
+sources. Official documentation, peer-reviewed research, and specialized
+databases carry more weight than forum posts, blogs, or single opinions.
+Multiple independent sources agreeing on a point outweigh a single dissenting
+source. If the weight of evidence supports a claim, mark it verified even if a
+minority source disagrees. Reserve "contradicted" for cases where the weight of
+evidence actively opposes the claim, not merely where any disagreement exists.
 
 Then assess overall coverage:
 - Are the materially required facts answered?
