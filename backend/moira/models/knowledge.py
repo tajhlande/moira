@@ -174,22 +174,23 @@ def knowledge_summary(knowledge: Knowledge) -> dict:
     """Produce a JSON-serializable summary of the knowledge model.
 
     Intended for inclusion in run snapshots and the knowledge API endpoint.
-    Strips internal-only fields and presents a clean view of facts,
-    conclusions, and citations grouped by status.
+    Facts are grouped by subject, conclusions by status, with full structured
+    fields for the KnowledgePanel to render.
     """
-    facts_by_status: dict[str, list[dict]] = {}
+    facts_by_subject: dict[str, list[dict]] = {}
     for f in knowledge.get("facts", []):
-        status = f.get("status", "unknown")
-        facts_by_status.setdefault(status, []).append(
+        subject = f.get("subject", "(unspecified)")
+        facts_by_subject.setdefault(subject, []).append(
             {
                 "id": f["id"],
-                "subject": f.get("subject", ""),
+                "subject": subject,
                 "fact_needed": f.get("fact_needed", ""),
                 "claim": f.get("claim", ""),
                 "relation": f.get("relation"),
                 "value": f.get("value"),
-                "status": status,
+                "status": f.get("status", "unknown"),
                 "verification_note": f.get("verification_note"),
+                "citation_ids": f.get("citation_ids", []),
             }
         )
 
@@ -212,7 +213,7 @@ def knowledge_summary(knowledge: Knowledge) -> dict:
         "topic": knowledge.get("topic", ""),
         "entities": knowledge.get("entities", []),
         "concepts": knowledge.get("concepts", []),
-        "facts": facts_by_status,
+        "facts": facts_by_subject,
         "conclusions": conclusions_by_status,
         "citations": [
             {

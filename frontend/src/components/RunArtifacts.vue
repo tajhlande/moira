@@ -15,6 +15,7 @@ import type { WorkflowRunInfo, ExecutionStep } from "../api/client";
 import { useChatStore } from "../stores/chat";
 import StepDetailContent from "./StepDetailContent.vue";
 import ReportPanel from "./ReportPanel.vue";
+import KnowledgePanel from "./KnowledgePanel.vue";
 import "./workflow-artifacts.css";
 
 const props = defineProps<{ run: WorkflowRunInfo }>();
@@ -285,6 +286,8 @@ function fmt(n: number): string {
         {{ run.status === 'error' ? 'Retry' : 'Resume' }}
       </NButton>
     </div>
+
+    <KnowledgePanel v-if="run.knowledge" :knowledge="run.knowledge" />
 
     <ReportPanel v-if="run.report" :report="run.report" />
 

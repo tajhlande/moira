@@ -9,6 +9,7 @@ from typing import Any, cast
 from langgraph.graph.state import CompiledStateGraph, RunnableConfig
 
 from moira.config import MoiraConfig
+from moira.models.knowledge import knowledge_summary
 from moira.persistence.interfaces import ConversationRepository, WorkflowRun
 
 logger = logging.getLogger(__name__)
@@ -231,14 +232,17 @@ class ActiveRun:
         """Iterate graph.astream(), accumulate state, persist incrementally,
         and broadcast events to subscribers."""
         try:
-            async for event in graph.astream(
+            async for mode, data in graph.astream(
                 initial_state,
                 config=graph_config,
-                stream_mode="custom",
+                stream_mode=["custom", "values"],
             ):
-                event_type = event.get("event", "unknown")
-                payload = event.get("payload", {})
-                self._handle_event(event_type, payload)
+                if mode == "custom":
+                    event_type = data.get("event", "unknown")
+                    payload = data.get("payload", {})
+                    self._handle_event(event_type, payload)
+                elif mode == "values":
+                    self._handle_state_values(data)
 
             if self._stop_requested:
                 await self._handle_stop()
@@ -338,14 +342,17 @@ class ActiveRun:
         to ``_run_graph`` but invokes ``astream`` with a ``Command`` rather
         than fresh initial state."""
         try:
-            async for event in graph.astream(
+            async for mode, data in graph.astream(
                 resume_input,
                 config=graph_config,
-                stream_mode="custom",
+                stream_mode=["custom", "values"],
             ):
-                event_type = event.get("event", "unknown")
-                payload = event.get("payload", {})
-                self._handle_event(event_type, payload)
+                if mode == "custom":
+                    event_type = data.get("event", "unknown")
+                    payload = data.get("payload", {})
+                    self._handle_event(event_type, payload)
+                elif mode == "values":
+                    self._handle_state_values(data)
 
             if self._stop_requested:
                 await self._handle_stop()
@@ -484,6 +491,22 @@ class ActiveRun:
             self.run_id,
             stopped_node,
         )
+
+    def _handle_state_values(self, state: dict) -> None:
+        """Extract knowledge from the full graph state after a node executes.
+
+        Called when ``stream_mode='values'`` delivers the accumulated state.
+        Computes a knowledge summary and broadcasts a snapshot so the
+        KnowledgePanel updates live during the run.
+        """
+        raw_knowledge = state.get("knowledge")
+        if not raw_knowledge or not isinstance(raw_knowledge, dict):
+            return
+        new_summary = knowledge_summary(raw_knowledge)
+        if new_summary != self.knowledge:
+            self.knowledge = new_summary
+            self._mark_state_changed()
+            self._broadcast_run_snapshot()
 
     def _handle_event(self, event_type: str, payload: dict) -> None:
         """Process a single graph event: update accumulated state,

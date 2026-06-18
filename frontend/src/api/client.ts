@@ -59,6 +59,7 @@ export interface FactRecord {
   value?: string;
   status: string;
   verification_note?: string;
+  citation_ids?: string[];
 }
 
 export interface ConclusionRecord {
