@@ -1,0 +1,325 @@
+# Native Tool Calling
+
+Design for migrating the research node's tool-calling mechanism from a
+prompt-engineered JSON protocol parsed from model text to native tool calling
+via the inference server's tool-calling API.
+
+## Problem
+
+The research node currently instructs the model to emit a single JSON object
+containing `tool_calls`, `discovered_facts`, and `sources`. This text is parsed
+from `response.content` with extensive defensive logic
+(`_fix_json_control_chars`, `_parse_json_object`, `_parse_tool_calls`,
+parse-retry loop). All of this machinery exists because local/quantized models
+produce malformed JSON when asked to format tool calls as text.
+
+Native tool calling moves the tool-invocation protocol into the inference
+server's chat template and structured response format, eliminating the text
+parsing layer for tool calls. Qwen3 models are specifically trained for this,
+and vLLM supports the OpenAI-compatible tools API.
+
+## Design Goals
+
+1. **Feature-flagged** — the existing text-based protocol is retained, not
+   replaced. A per-provider configuration flag controls which mode is used.
+2. **Multi-provider compatible** — the design accommodates OpenAI Chat
+   Completions, OpenAI Responses, and Anthropic Messages APIs, even though the
+   initial implementation targets OpenAI-compatible servers (vLLM).
+3. **Hybrid fact extraction** — discovered_facts and sources remain as
+   structured text output from the model's `content` field. Native tool calling
+   only handles tool invocation; fact/source extraction stays text-based.
+4. **No disruption to existing runs** — the text-based protocol continues to
+   work unchanged when the feature flag is disabled.
+
+## Feature Flag
+
+The flag lives on the inference **provider** configuration, since tool calling
+support is a property of the inference server, not the model:
+
+```yaml
+inference:
+  providers:
+    - name: local
+      base_url: "http://llmhost1.internal.tajh.house:8080/v1"
+      api_key: ""
+      provider_type: "openai"         # "openai" | "anthropic" | "responses"
+      native_tool_calling: true       # enable native tool calling
+```
+
+`provider_type` defaults to `"openai"` (the current behavior).
+`native_tool_calling` defaults to `false`. When `false`, the research node uses
+the existing text-based protocol regardless of `provider_type`.
+
+The `ModelRegistry.resolve()` method propagates both fields through
+`ResolvedModel` so the research node can check capabilities without reaching
+into config:
+
+```
+ResolvedModel
+    model_id: str
+    client: InferenceClient
+    native_tool_calling: bool
+    provider_type: str
+```
+
+## Provider API Differences
+
+The three target provider APIs differ in tool definition format, tool call
+response format, tool result message format, and finish reason signaling:
+
+### Tool definitions (request side)
+
+| Provider | Wire format |
+|---|---|
+| OpenAI Completions | `{"type": "function", "function": {"name", "description", "parameters": <JSON Schema>}}` |
+| Anthropic Messages | `{"name", "description", "input_schema": <JSON Schema>}` |
+| OpenAI Responses | `{"type": "function", "name", "description", "parameters": <JSON Schema>}` |
+
+The existing `ToolDefinition.argument_schema` is already standard JSON Schema.
+Conversion is a thin envelope wrapper that varies by provider.
+
+### Tool calls in responses
+
+| Provider | Location | Format |
+|---|---|---|
+| OpenAI Completions | `message.tool_calls[]` | `{"id", "type": "function", "function": {"name", "arguments": "<JSON string>"}}` |
+| Anthropic Messages | `content[]` blocks | `{"type": "tool_use", "id", "name", "input": <dict>}` |
+| OpenAI Responses | `output[]` items | `{"type": "function_call", "id", "name", "arguments": "<JSON string>"}` |
+
+Key difference: OpenAI sends `arguments` as a JSON **string** that must be
+parsed. Anthropic sends `input` as a parsed **dict**.
+
+### Tool results (fed back to model)
+
+| Provider | Message format |
+|---|---|
+| OpenAI Completions | `{"role": "tool", "tool_call_id": "<id>", "content": "<text>"}` |
+| Anthropic Messages | `{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "<id>", "content": "<text>"}]}` |
+| OpenAI Responses | Separate `function_call_output` item in `input` array |
+
+### Finish reason
+
+| Provider | Field | Value when calling tools |
+|---|---|---|
+| OpenAI Completions | `finish_reason` | `"tool_calls"` |
+| Anthropic Messages | `stop_reason` | `"tool_use"` |
+| OpenAI Responses | `status` | `"in_progress"` (with function_call items) |
+
+## Canonical Internal Format
+
+To isolate the research node from provider differences, a canonical
+representation normalizes all tool-related data:
+
+**ToolCall** — a single tool invocation extracted from a model response:
+```
+ToolCall
+    id: str           # server-assigned call ID
+    name: str         # tool name
+    arguments: dict   # parsed arguments (always a dict, never a JSON string)
+```
+
+The `ChatResponse` dataclass gains a `tool_calls: list[ToolCall]` field.
+Provider-specific parsing happens in the inference client layer; the research
+node only sees the canonical form.
+
+## Tool Calling Adapter
+
+A provider-specific adapter handles the format conversions. Each adapter knows
+how to:
+
+1. **Format tool definitions** — convert `list[ToolDefinition]` to the
+   provider's wire format
+2. **Parse tool calls from response** — extract and normalize tool calls from
+   the provider's response message structure into `list[ToolCall]`
+3. **Format tool result messages** — convert a tool execution result into the
+   provider's expected message format
+
+The adapter is selected based on `provider_type` from the resolved model
+configuration. The inference client delegates tool-related operations to the
+adapter when `native_tool_calling` is enabled.
+
+Three adapter implementations:
+
+- **OpenAICompletionsAdapter** — wraps tools in `{"type": "function", ...}`,
+  parses `message.tool_calls`, emits `{"role": "tool", ...}` results. This is
+  the initial implementation for vLLM.
+- **AnthropicMessagesAdapter** — wraps tools in `{"name", "input_schema", ...}`,
+  parses `content[].type == "tool_use"`, emits tool results as user messages
+  with `tool_result` content blocks. Note: Anthropic also requires a different
+  HTTP endpoint and request body, which implies broader client changes beyond
+  tool calling.
+- **OpenAIResponsesAdapter** — wraps tools without the `function` nesting,
+  parses `output[]` items, emits `function_call_output` items. This API is
+  still evolving; the adapter can be implemented when the Responses API is
+  available on self-hosted servers.
+
+The Anthropic and Responses adapters are described for design completeness.
+The initial implementation delivers only the OpenAI Completions adapter.
+
+## Research Node Changes
+
+When `native_tool_calling` is enabled on the resolved model, the research node:
+
+1. **Builds tool definitions** — converts `candidate_tools` to the provider's
+   tool format via the adapter, passes them to `chat_completion`
+2. **Replaces the inner parse-execute-feedback cycle** — instead of parsing
+   JSON from `response.content` for tool calls, reads `response.tool_calls`
+   directly
+3. **Uses native message format** — assistant messages carry `tool_calls`;
+   results go back as `tool` role messages (or provider equivalent) via the
+   adapter
+4. **Keeps hybrid fact extraction** — when the model emits text `content`
+   alongside tool calls (or when it stops calling tools), `discovered_facts`
+   and `sources` are parsed from that text using the existing `_parse_json_object`
+   helper
+
+### Loop structure (native mode)
+
+The loop retains its `MAX_ROUNDS` structure, post-loop summary, and post-loop
+fact extraction. The inner cycle changes:
+
+1. Call `chat_completion` with `tools` and `tool_choice`
+2. If `response.tool_calls` is non-empty:
+   - Append assistant message with tool_calls to conversation
+   - Parse any `discovered_facts`/`sources` from `response.content` (hybrid)
+   - Validate calls (allowed names, call limits, required args)
+   - Execute via `executor.execute_batch`
+   - Append tool result messages via adapter format
+   - Continue to next round
+3. If `response.tool_calls` is empty (model is done):
+   - Parse `discovered_facts`/`sources` from `response.content`
+   - Break out of loop
+
+### What is eliminated in native mode
+
+- `_parse_tool_calls(raw)` — legacy bare-array parser
+- `_looks_like_failed_tool_calls(raw)` — heuristic for detecting failed calls
+- Parse-retry loop (`DEFAULT_MAX_PARSE_RETRIES`, correction prompts)
+- `_fix_json_control_chars` for tool call parsing (still needed for
+  `discovered_facts`/`sources` text parsing)
+
+### What is retained
+
+- `_parse_json_object` — for parsing `discovered_facts`/`sources` from content
+- `_apply_discovered_facts` / `_apply_sources` — unchanged
+- Citation building (`_find_or_merge_citation`) — unchanged
+- Post-loop summary and fact extraction — unchanged
+- Budget deduction and call limit enforcement — unchanged
+
+## Prompt Changes
+
+When native tool calling is enabled, the model receives tool definitions
+through the server's chat template, not through the user prompt. Two new prompt
+sections are needed:
+
+**`research.system_native_tools`** — variant system prompt that:
+- Removes the `tool_calls` JSON format instructions
+- Removes the "RESPONSE FORMAT" section about tool_calls structure
+- Removes tool call parameter format guidance
+- Keeps `discovered_facts` and `sources` JSON format instructions (the model
+  still emits these as text in `content`)
+- Keeps the rules about fact discovery, not drawing conclusions, tool limits
+- Includes a brief instruction: "When you have gathered enough information,
+  respond with your discovered_facts and sources as JSON. Do not include
+  tool_calls — use the tool calling interface instead."
+
+**`research.user_native`** — variant user prompt that:
+- Removes `{tool_call_plan}` (no text plan to follow)
+- Removes `{tool_descriptions}` (server provides these)
+- Keeps `{user_goal}` and `{unknown_facts}` (the model needs to know what to
+  research)
+
+The existing `research.system` and `research.user` prompts remain unchanged for
+the text-based fallback mode.
+
+## Backward Compatibility
+
+The text-based protocol is fully retained. The research node checks
+`resolved.native_tool_calling` at entry:
+
+- If `True`: use native prompts, pass `tools` to `chat_completion`, read
+  `response.tool_calls`, use adapter for message format
+- If `False`: use existing text-based prompts, parse JSON from
+  `response.content`, use correction prompts on parse failure
+
+Both code paths coexist. No existing tests change. New tests cover the native
+mode. The feature flag can be toggled at any time via config.
+
+## Configuration Changes
+
+### `InferenceEndpointConfig` (config.py)
+
+Add two fields:
+
+- `provider_type: str = "openai"` — identifies the API dialect
+- `native_tool_calling: bool = False` — enables native tool calling
+
+### `ResolvedModel` (registry.py)
+
+Propagate both fields so the research node can check capabilities.
+
+### Config template (moira-config-template.yaml)
+
+Document the new fields with comments.
+
+## Testing Strategy
+
+### Unit tests
+
+- **Adapter tests** — verify format conversion for tool definitions, tool call
+  parsing, and tool result messages for each provider type
+- **Client tests** — mock responses with `tool_calls` in provider-specific
+  format, verify canonical `ToolCall` extraction
+- **Research node tests (native)** — mock `ChatResponse` with `tool_calls`,
+  verify execution, message format, fact extraction from content
+- **Research node tests (fallback)** — existing tests unchanged
+
+### Integration test
+
+- Full graph run with `native_tool_calling: true`, mock model that emits
+  tool_calls for 2 rounds then text with discovered_facts
+- Verify same knowledge model state as equivalent text-mode run
+
+### Manual validation
+
+- Compare native vs text mode on the evaluation canary question
+- Monitor for malformed tool call arguments (server-side vs client-side parsing)
+- Verify vLLM tool calling works with the Qwen3.6-35B-A3B model
+
+## Implementation Phases
+
+1. **Inference layer** — add `ToolCall` canonical type, `tool_calls` field on
+   `ChatResponse`, `tools`/`tool_choice` parameters on `chat_completion`,
+   OpenAI Completions adapter
+2. **Config and registry** — add `provider_type` and `native_tool_calling` to
+   config, propagate through `ResolvedModel`
+3. **Research node** — native mode loop, adapter integration, hybrid fact
+   extraction, feature flag branch
+4. **Prompts** — add `research.system_native_tools` and `research.user_native`
+5. **Tests** — adapter tests, research node native mode tests, integration test
+6. **Validation** — manual A/B test against text mode, evaluate quality
+
+Phases 1-2 are infrastructure with no behavior change. Phase 3 is the core
+change. Phases 4-6 are dependent on 3.
+
+Future phases (not in initial scope):
+- Anthropic Messages adapter (requires broader client refactoring for different
+  HTTP contract)
+- OpenAI Responses adapter (requires different endpoint and request structure)
+- Removal of text-based parsing machinery (only after native mode is proven
+  stable across multiple models)
+
+## Open Questions
+
+1. **Does vLLM correctly format Qwen3.6-35B-A3B's tool calling template?**
+   Needs validation before implementation. If the server's chat template is
+   broken, native tool calling won't work regardless of the client code.
+
+2. **Does the model reliably emit `discovered_facts` in `content` alongside
+   tool calls?** The hybrid approach depends on this. If the model only emits
+   facts when it stops calling tools, fact extraction moves to the post-loop
+   pass (which already exists as a fallback).
+
+3. **Token budget impact** — native tool definitions in the system prompt may
+   use more tokens than the text description approach. Need to measure context
+   window consumption for runs with many candidate tools.
