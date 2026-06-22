@@ -16,7 +16,21 @@ produce malformed JSON when asked to format tool calls as text.
 Native tool calling moves the tool-invocation protocol into the inference
 server's chat template and structured response format, eliminating the text
 parsing layer for tool calls. Qwen3 models are specifically trained for this,
-and vLLM supports the OpenAI-compatible tools API.
+and both vLLM and llama.cpp's OpenAI-compatible server support the `tools`
+parameter, so native tool calling works with self-hosted models, not just
+cloud providers.
+
+## Tradeoffs
+
+| | Text-based (current) | Native tool calling |
+|---|---|---|
+| Model compatibility | Works with any model that can follow instructions and output JSON | Requires a model with tool-calling support (chat template or cloud API) |
+| Reliability | Fragile — multi-format parsing, retry on malformed output, model confusion between prose and tool calls | Structured parsing, no regex, no retry hacks |
+| Tool name constraints | None (tool names are just strings in parsed JSON) | Must match provider regex (see below) |
+| Argument validation | None — raw dicts parsed from text | Provider validates against the JSON Schema parameter definition |
+| Token efficiency | Tool descriptions consume prompt tokens as text | Tool descriptions are passed separately; some providers handle them more efficiently |
+| Transparency | Tool calls visible in model's text response | Tool calls in a separate response field (still inspectable, different location) |
+| Streaming | Tool calls arrive as text tokens, parsed after completion | Some providers stream tool call arguments incrementally |
 
 ## Design Goals
 
@@ -50,6 +64,24 @@ inference:
 `native_tool_calling` defaults to `false`. When `false`, the research node uses
 the existing text-based protocol regardless of `provider_type`.
 
+## Model Considerations
+
+Not all models handle native tool calling equally:
+
+- **Models with tool-calling chat templates** (e.g., Qwen, Mistral, Llama
+  3.1+): produce clean, structured tool calls via the `tools` parameter. These
+  models have special tokens and templates for tool use.
+- **Models without tool-calling templates**: may ignore the `tools` parameter
+  entirely, produce malformed tool call objects, or fall back to generating
+  text. These models work better with the text-based approach where tool
+  descriptions are in the prompt.
+- **Cloud models** (OpenAI, Anthropic): native tool calling is the intended
+  interface — more reliable and structured than text-in-prompt.
+
+Because capability varies, the feature flag is per-provider rather than
+global. Models with known tool-calling templates enable the flag; others
+leave it disabled.
+
 The `ModelRegistry.resolve()` method propagates both fields through
 `ResolvedModel` so the research node can check capabilities without reaching
 into config:
@@ -77,6 +109,12 @@ response format, tool result message format, and finish reason signaling:
 
 The existing `ToolDefinition.argument_schema` is already standard JSON Schema.
 Conversion is a thin envelope wrapper that varies by provider.
+
+**Tool name constraints** — providers enforce regex patterns on tool names:
+OpenAI requires `^[a-zA-Z0-9_]+$`; Anthropic requires `^[a-zA-Z0-9_-]{1,128}$`.
+The naming scheme described in `dynamic-tool-discovery.md` uses
+`^[a-zA-Z0-9_]+$` compatible names with `__` delimiters, which satisfies both
+constraints preemptively. No naming changes are needed.
 
 ### Tool calls in responses
 
@@ -306,6 +344,12 @@ Future phases (not in initial scope):
 - Anthropic Messages adapter (requires broader client refactoring for different
   HTTP contract)
 - OpenAI Responses adapter (requires different endpoint and request structure)
+- Streaming tool call arguments (some providers support incremental streaming
+  of tool call arguments)
+- Parallel tool call execution hints (Anthropic supports `tool_choice` options
+  for directing parallel execution)
+- Automatic detection of model tool-calling capability (for now, the user
+  configures the feature flag per provider)
 - Removal of text-based parsing machinery (only after native mode is proven
   stable across multiple models)
 

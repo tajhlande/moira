@@ -52,7 +52,7 @@ have not been fully completed yet.
 | **latex-rendering.md** | Plan for adding LaTeX formula rendering to the markdown pipeline (KaTeX integration with disambiguation heuristics). |
 | **context-management.md** | Plan for adaptive context window management — auto-detect limits, proactive tool output capping, evidence truncation, and progressive message trimming. |
 | **dynamic-tool-discovery.md** | Design for dynamic tool discovery — ingest external APIs via OpenAPI/Swagger specs, register as tools with credential binding, guided wizard UX. |
-| **native-function-calling.md** | Design for native function calling — structured tool parameters to LLM APIs, per-model text-based vs. native selection, tradeoffs and model considerations. |
+| **native-tool-calling.md** | Design for migrating the research node's tool-calling from text-based JSON parsing to native tool calling via the inference server's API — multi-provider adapter pattern (OpenAI, Anthropic, Responses), per-provider feature flag, hybrid fact extraction, tradeoffs and model considerations. |
 | **docker-deployment.md** | Plan for single-container Docker deployment — multi-stage build, FastAPI static file serving, volume mounts, deploy script. |
 | **application-deployment-readiness.md** | Assessment of what is needed to deploy this app to family members for testing. |
 | **verification-split.md** | Plan to replace the single verification node with two focused, tool-free steps: research_review (evaluate evidence coverage) and judgment (evaluate conclusion logic). Driven by small-model format mixing problems in the combined verification node. |
