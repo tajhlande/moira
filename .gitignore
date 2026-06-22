@@ -7,3 +7,4 @@ frontend/dist/
 **/.coverage
 .DS_Store
 **/.env
+session*.md
