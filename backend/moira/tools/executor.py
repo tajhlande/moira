@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, cast
 
 from moira.persistence.write_queue import AsyncWriteQueue
-from moira.tools.base import BaseTool, ToolDefinition, ToolResult
+from moira.tools.base import BaseTool, ToolCall, ToolDefinition, ToolResult
 from moira.tools.metrics import ToolMetricsRepository
 
 logger = logging.getLogger(__name__)
@@ -180,11 +180,13 @@ class ToolExecutor:
 
     async def execute_batch(
         self,
-        calls: list[tuple[str, dict[str, Any]]],
+        calls: list[ToolCall],
         allowed_tools: set[str] | None = None,
     ) -> list[ToolResult]:
         """Execute multiple tool calls concurrently.
         If allowed_tools is provided, calls for tools outside the set are
         rejected immediately without execution."""
-        tasks = [self.execute(name, args, allowed_tools=allowed_tools) for name, args in calls]
+        tasks = [
+            self.execute(call.name, call.arguments, allowed_tools=allowed_tools) for call in calls
+        ]
         return list(await asyncio.gather(*tasks))

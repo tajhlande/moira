@@ -47,6 +47,25 @@ class ToolDefinition:
 
 
 @dataclass
+class ToolCall:
+    """Canonical representation of a single tool call request.
+
+    Used for both text-based parsing (model emits JSON, parser generates
+    the ``id``) and native API tool calling (server assigns the ``id``).
+    This uniform structure means downstream code never branches on data
+    shape — every tool call has the same fields regardless of origin.
+    """
+
+    id: str
+    name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.id or not self.id.strip():
+            raise ValueError("ToolCall.id must be a non-empty string")
+
+
+@dataclass
 class ToolResult:
     """Structured result from tool execution. Always produced, even on
     failure, so the model can reason about what went wrong.

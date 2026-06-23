@@ -38,7 +38,7 @@ cloud providers.
    replaced. A per-model configuration flag controls which mode is used.
 2. **Multi-provider compatible** — the design accommodates OpenAI Chat
    Completions, OpenAI Responses, and Anthropic Messages APIs, even though the
-   initial implementation targets OpenAI-compatible servers (vLLM).
+   initial implementation targets OpenAI-compatible servers (llama.cpp).
 3. **Hybrid fact extraction** — discovered_facts and sources remain as
    structured text output from the model's `content` field. Native tool calling
    only handles tool invocation; fact/source extraction stays text-based.
@@ -49,7 +49,7 @@ cloud providers.
 
 The flag lives on the **model** configuration. Tool calling
 support is a property of the model via its chat template and training.
-A single provider (e.g., one vLLM instance) can serve
+A single provider (e.g., one llama.cpp instance) can serve
 multiple models where only some support tool calling:
 
 ```yaml
@@ -438,7 +438,7 @@ Future phases (not in initial scope):
 
 ## Open Questions
 
-1. **Does vLLM correctly format Qwen3.6-35B-A3B's tool calling template?**
+1. **Does llama.cpp correctly format Qwen3.6-35B-A3B's tool calling template?**
    Needs validation before implementation. If the server's chat template is
    broken, native tool calling won't work regardless of the client code.
 

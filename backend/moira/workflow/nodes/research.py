@@ -15,6 +15,7 @@ Discovered facts and sources are applied each round, not just at the end.
 """
 
 import logging
+import uuid
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
@@ -22,7 +23,7 @@ from langgraph.config import get_stream_writer
 from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.models.knowledge import Citation, Fact, ResearchState, next_id
 from moira.prompts import get_prompt
-from moira.tools.base import ToolDefinition
+from moira.tools.base import ToolCall, ToolDefinition
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
     _check_stop,
@@ -100,12 +101,27 @@ def _format_unknown_facts(facts: list[Fact]) -> str:
     return "\n".join(lines)
 
 
-def _parse_tool_calls(text: str) -> list[tuple[str, dict]]:
+def _make_tool_call(name: str, args: object) -> ToolCall | None:
+    """Build a ToolCall with a generated ID, or return None if name is empty."""
+    if not name:
+        return None
+    return ToolCall(
+        id=f"tc_{uuid.uuid4().hex[:8]}",
+        name=name,
+        arguments=args if isinstance(args, dict) else {},
+    )
+
+
+def _parse_tool_calls(text: str) -> list[ToolCall]:
     """Parse tool calls from model response. Handles formats:
     1. JSON array: [{"tool": "name", "args": {...}}, ...]
     2. Line-delimited JSON objects: {"tool": "name", "args": {...}}
     3. Markdown-fenced arrays
-    Local models often produce formats 2 and 3."""
+    Local models often produce formats 2 and 3.
+
+    Generates a unique ``id`` for each call so downstream code never
+    needs to check for missing IDs.
+    """
     import json
     import re
 
@@ -120,8 +136,9 @@ def _parse_tool_calls(text: str) -> list[tuple[str, dict]]:
                         continue
                     name = call.get("tool") or call.get("name", "")
                     args = call.get("args") or call.get("arguments", {})
-                    if name:
-                        result.append((name, args if isinstance(args, dict) else {}))
+                    tc = _make_tool_call(name, args)
+                    if tc:
+                        result.append(tc)
                 if result:
                     return result
         except (json.JSONDecodeError, TypeError):
@@ -141,8 +158,9 @@ def _parse_tool_calls(text: str) -> list[tuple[str, dict]]:
                         if isinstance(call, dict):
                             name = call.get("tool") or call.get("name", "")
                             args = call.get("args") or call.get("arguments", {})
-                            if name:
-                                result.append((name, args if isinstance(args, dict) else {}))
+                            tc = _make_tool_call(name, args)
+                            if tc:
+                                result.append(tc)
                     continue
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -151,8 +169,9 @@ def _parse_tool_calls(text: str) -> list[tuple[str, dict]]:
                 obj = json.loads(line)
                 name = obj.get("tool") or obj.get("name", "")
                 args = obj.get("args") or obj.get("arguments", {})
-                if name:
-                    result.append((name, args if isinstance(args, dict) else {}))
+                tc = _make_tool_call(name, args)
+                if tc:
+                    result.append(tc)
             except (json.JSONDecodeError, TypeError):
                 continue
     return result
@@ -173,11 +192,11 @@ def _looks_like_failed_tool_calls(text: str) -> bool:
     return False
 
 
-def _extract_tool_calls(parsed: dict) -> list[tuple[str, dict]]:
+def _extract_tool_calls(parsed: dict) -> list[ToolCall]:
     """Extract tool calls from the parsed JSON object response.
 
     The model returns {tool_calls: [{tool, args}, ...], ...}.
-    Returns a list of (tool_name, args) tuples.
+    Returns a list of ToolCall objects with generated IDs.
     """
     raw_calls = parsed.get("tool_calls", [])
     if not isinstance(raw_calls, list):
@@ -188,8 +207,9 @@ def _extract_tool_calls(parsed: dict) -> list[tuple[str, dict]]:
             continue
         name = call.get("tool", "")
         args = call.get("args", {})
-        if name:
-            result.append((name, args))
+        tc = _make_tool_call(name, args)
+        if tc:
+            result.append(tc)
     return result
 
 
@@ -665,37 +685,38 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
 
         # Filter to allowed tools, enforce call limits, validate required args
         call_limits = es.get("tool_call_limits", {})
-        valid_calls = []
-        rejected: list[tuple[str, dict]] = []
-        for n, a in parsed_calls:
-            if n not in allowed_names:
-                rejected.append((n, a))
+        valid_calls: list[ToolCall] = []
+        rejected: list[ToolCall] = []
+        for call in parsed_calls:
+            if call.name not in allowed_names:
+                rejected.append(call)
                 continue
-            limit = call_limits.get(n, 0)
-            used = call_counts.get(n, 0)
+            limit = call_limits.get(call.name, 0)
+            used = call_counts.get(call.name, 0)
             if limit > 0 and used >= limit:
                 logger.warning(
                     "Tool %s hit call limit (%d/%d), skipping",
-                    n,
+                    call.name,
                     used,
                     limit,
                 )
                 continue
-            required = _required_params.get(n)
+            required = _required_params.get(call.name)
             if required:
-                args_dict = a if isinstance(a, dict) else {}
                 missing = [
-                    p for p in required if p not in args_dict or not str(args_dict[p]).strip()
+                    p
+                    for p in required
+                    if p not in call.arguments or not str(call.arguments[p]).strip()
                 ]
                 if missing:
                     logger.warning(
                         "Tool %s missing required params: %s, skipping",
-                        n,
+                        call.name,
                         missing,
                     )
                     continue
-            valid_calls.append((n, a))
-        rejected_names = [n for n, _ in rejected]
+            valid_calls.append(call)
+        rejected_names = [c.name for c in rejected]
         if rejected_names:
             logger.warning(
                 "Model requested disallowed tools: %s",
@@ -718,7 +739,9 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
 
         # Process results and build summary for next round
         tool_summary_parts = []
-        for result, (name, args) in zip(results, valid_calls):
+        for result, call in zip(results, valid_calls):
+            name = call.name
+            args = call.arguments
             writer(
                 {
                     "event": "tool_result",

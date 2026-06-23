@@ -1,7 +1,7 @@
 import pytest
 
 from moira.config import ToolConfig
-from moira.tools.base import ToolDefinition, ToolResult
+from moira.tools.base import ToolCall, ToolDefinition, ToolResult
 from moira.tools.catalog import ToolCatalog
 from moira.tools.executor import ToolExecutor
 
@@ -12,7 +12,6 @@ def sample_tools():
         ToolConfig(
             name="web_search",
             description="Search the web for information on any topic",
-            type="rest",
             endpoint="https://api.example.com/search",
             method="POST",
             argument_schema={"type": "object", "properties": {"query": {"type": "string"}}},
@@ -22,7 +21,6 @@ def sample_tools():
         ToolConfig(
             name="paper_search",
             description="Search academic papers and scientific publications",
-            type="rest",
             endpoint="https://api.example.com/papers",
             method="GET",
             argument_schema={"type": "object", "properties": {"query": {"type": "string"}}},
@@ -111,3 +109,35 @@ class TestToolResult:
         )
         assert result.success is False
         assert result.error == "timeout"
+
+
+class TestToolCall:
+    def test_basic_construction(self):
+        call = ToolCall(id="call_1", name="web_search", arguments={"query": "test"})
+        assert call.id == "call_1"
+        assert call.name == "web_search"
+        assert call.arguments == {"query": "test"}
+
+    def test_arguments_default_empty(self):
+        call = ToolCall(id="call_1", name="calculator")
+        assert call.arguments == {}
+
+    def test_id_required_at_construction(self):
+        """Omitting id entirely must raise — the field has no default."""
+        with pytest.raises(TypeError):
+            ToolCall(name="web_search", arguments={})  # type: ignore
+
+    def test_id_rejects_empty_string(self):
+        with pytest.raises(ValueError, match="non-empty"):
+            ToolCall(id="", name="web_search", arguments={})
+
+    def test_id_rejects_whitespace_only(self):
+        with pytest.raises(ValueError, match="non-empty"):
+            ToolCall(id="   ", name="web_search", arguments={})
+
+    def test_equality(self):
+        a = ToolCall(id="call_1", name="web_search", arguments={"q": "x"})
+        b = ToolCall(id="call_1", name="web_search", arguments={"q": "x"})
+        c = ToolCall(id="call_2", name="web_search", arguments={"q": "x"})
+        assert a == b
+        assert a != c

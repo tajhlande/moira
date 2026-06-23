@@ -14,7 +14,7 @@ from moira.inference.client import ChatResponse, InferenceClient
 from moira.inference.registry import ModelRegistry, ResolvedModel
 from moira.models.knowledge import Conclusion, Fact, ToolCallPlan
 from moira.service_setup import _services
-from moira.tools.base import ToolDefinition, ToolResult
+from moira.tools.base import ToolCall, ToolDefinition, ToolResult
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -1107,7 +1107,7 @@ class TestResearch:
                             {
                                 "title": "Result",
                                 "url": "https://shared.com",
-                                "snippet": f"snippet from query '{calls[i][1]['query']}'",
+                                "snippet": f"snippet from query '{calls[i].arguments['query']}'",
                             },
                         ]
                     },
@@ -2942,7 +2942,7 @@ class TestResearchCallLimits:
 
         executed_calls = mock_executor.execute_batch.call_args[0][0]
         assert len(executed_calls) == 1
-        assert executed_calls[0][0] == "api_tool"
+        assert executed_calls[0].name == "api_tool"
         assert result["execution_state"]["tool_call_counts"]["api_tool"] == 1
 
     @pytest.mark.asyncio
@@ -3433,3 +3433,100 @@ class TestResearchSummaryRound:
 
         # web_search should NOT have been executed (missing required param)
         mock_executor.execute_batch.assert_not_called()
+
+
+# ===========================================================================
+# Tool-call parser unit tests
+# ===========================================================================
+
+
+class TestParseToolCalls:
+    """Unit tests for _parse_tool_calls — verifies text-based parsing
+    returns ToolCall objects with generated IDs."""
+
+    def test_json_array(self):
+        from moira.workflow.nodes.research import _parse_tool_calls
+
+        text = json.dumps([{"tool": "web_search", "args": {"query": "x"}}])
+        calls = _parse_tool_calls(text)
+        assert len(calls) == 1
+        assert isinstance(calls[0], ToolCall)
+        assert calls[0].name == "web_search"
+        assert calls[0].arguments == {"query": "x"}
+        assert calls[0].id  # non-empty
+
+    def test_line_delimited_json(self):
+        from moira.workflow.nodes.research import _parse_tool_calls
+
+        text = '{"tool": "calc", "args": {"expr": "1+1"}}\n{"tool": "search", "args": {"q": "x"}}'
+        calls = _parse_tool_calls(text)
+        assert len(calls) == 2
+        assert calls[0].name == "calc"
+        assert calls[1].name == "search"
+
+    def test_markdown_fenced(self):
+        from moira.workflow.nodes.research import _parse_tool_calls
+
+        text = '```json\n[{"tool": "calc", "args": {}}]\n```'
+        calls = _parse_tool_calls(text)
+        assert len(calls) == 1
+        assert calls[0].name == "calc"
+
+    def test_empty_text(self):
+        from moira.workflow.nodes.research import _parse_tool_calls
+
+        assert _parse_tool_calls("") == []
+        assert _parse_tool_calls("no json here") == []
+
+    def test_generated_ids_unique(self):
+        from moira.workflow.nodes.research import _parse_tool_calls
+
+        text = json.dumps(
+            [
+                {"tool": "a", "args": {}},
+                {"tool": "b", "args": {}},
+            ]
+        )
+        calls = _parse_tool_calls(text)
+        ids = {c.id for c in calls}
+        assert len(ids) == 2  # unique
+
+
+class TestExtractToolCalls:
+    """Unit tests for _extract_tool_calls — verifies structured JSON
+    object parsing returns ToolCall objects with generated IDs."""
+
+    def test_happy_path(self):
+        from moira.workflow.nodes.research import _extract_tool_calls
+
+        parsed = {
+            "tool_calls": [
+                {"tool": "web_search", "args": {"query": "x"}},
+                {"tool": "calc", "args": {"expr": "2+2"}},
+            ],
+        }
+        calls = _extract_tool_calls(parsed)
+        assert len(calls) == 2
+        assert all(isinstance(c, ToolCall) for c in calls)
+        assert calls[0].name == "web_search"
+        assert calls[1].name == "calc"
+        assert all(c.id for c in calls)
+
+    def test_empty_tool_calls(self):
+        from moira.workflow.nodes.research import _extract_tool_calls
+
+        assert _extract_tool_calls({"tool_calls": []}) == []
+        assert _extract_tool_calls({}) == []
+
+    def test_tool_calls_not_list(self):
+        from moira.workflow.nodes.research import _extract_tool_calls
+
+        assert _extract_tool_calls({"tool_calls": "not a list"}) == []
+
+    def test_skips_missing_name(self):
+        from moira.workflow.nodes.research import _extract_tool_calls
+
+        parsed = {"tool_calls": [{"args": {"x": 1}}, {"tool": "ok", "args": {}}]}
+        calls = _extract_tool_calls(parsed)
+        assert len(calls) == 1
+        assert calls[0].name == "ok"
