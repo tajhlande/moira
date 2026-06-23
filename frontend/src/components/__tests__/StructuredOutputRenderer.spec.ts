@@ -13,7 +13,10 @@ function render(so: Record<string, unknown>) {
 
 describe("StructuredOutputRenderer", () => {
   it("renders text fields", () => {
-    const wrapper = render({ user_goal: "Learn about Python", topic: "programming" });
+    const wrapper = render({
+      user_goal: "Learn about Python",
+      topic: "programming",
+    });
     expect(wrapper.text()).toContain("User Goal");
     expect(wrapper.text()).toContain("Learn about Python");
     expect(wrapper.text()).toContain("Topic");
@@ -21,13 +24,18 @@ describe("StructuredOutputRenderer", () => {
   });
 
   it("renders pill-list fields", () => {
-    const wrapper = render({ entities: ["Python", "LLM"], concepts: ["programming"] });
+    const wrapper = render({
+      entities: ["Python", "LLM"],
+      concepts: ["programming"],
+    });
     expect(wrapper.text()).toContain("Entities");
     expect(wrapper.text()).toContain("Python");
     expect(wrapper.text()).toContain("LLM");
     expect(wrapper.text()).toContain("Concepts");
     expect(wrapper.text()).toContain("programming");
-    expect(wrapper.findAll(".tool-tag.default").length).toBeGreaterThanOrEqual(3);
+    expect(wrapper.findAll(".tool-tag.default").length).toBeGreaterThanOrEqual(
+      3,
+    );
   });
 
   it("renders empty pill-list with None", () => {
@@ -56,8 +64,18 @@ describe("StructuredOutputRenderer", () => {
   it("renders fact-cards for unknown_facts", () => {
     const wrapper = render({
       unknown_facts: [
-        { id: "f1", subject: "Python", fact_needed: "What is it?", status: "unknown" },
-        { id: "f2", subject: "LLM", fact_needed: "How does it work?", claim: "It generates text" },
+        {
+          id: "f1",
+          subject: "Python",
+          fact_needed: "What is it?",
+          status: "unknown",
+        },
+        {
+          id: "f2",
+          subject: "LLM",
+          fact_needed: "How does it work?",
+          claim: "It generates text",
+        },
       ],
     });
     expect(wrapper.text()).toContain("Unknown Facts");
@@ -72,20 +90,33 @@ describe("StructuredOutputRenderer", () => {
   it("renders object-list for calls", () => {
     const wrapper = render({
       calls: [
-        { tool: "web_search", args: { q: "Python" }, target_fact_ids: ["f1"], rationale: "Search for info" },
+        {
+          tool: "web_search",
+          args: { q: "Python" },
+          target_fact_ids: ["f1"],
+          rationale: "Search for info",
+        },
       ],
     });
     expect(wrapper.text()).toContain("Planned Calls");
     expect(wrapper.text()).toContain("web_search");
     expect(wrapper.text()).toContain("Search for info");
     expect(wrapper.find(".so-kv-list").exists()).toBe(true);
-    expect(wrapper.findAll(".tool-tag.default").length).toBeGreaterThanOrEqual(1);
+    expect(wrapper.findAll(".tool-tag.default").length).toBeGreaterThanOrEqual(
+      1,
+    );
   });
 
   it("renders object-list for conclusions", () => {
     const wrapper = render({
       conclusions: [
-        { id: "c1", conclusion: "Python is a language", supporting_fact_ids: ["f1"], reasoning: "Based on evidence", status: "verified" },
+        {
+          id: "c1",
+          conclusion: "Python is a language",
+          supporting_fact_ids: ["f1"],
+          reasoning: "Based on evidence",
+          status: "verified",
+        },
       ],
     });
     expect(wrapper.text()).toContain("Conclusions");
@@ -161,7 +192,11 @@ describe("StructuredOutputRenderer", () => {
       concepts: ["interpreted language", "high-level language"],
       unknown_facts: [
         { id: "f1", subject: "Python", fact_needed: "When was it created?" },
-        { id: "f2", subject: "Guido van Rossum", fact_needed: "What is his role?" },
+        {
+          id: "f2",
+          subject: "Guido van Rossum",
+          fact_needed: "What is his role?",
+        },
       ],
     });
     expect(wrapper.text()).toContain("User Goal");

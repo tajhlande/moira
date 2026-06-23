@@ -9,7 +9,14 @@ import {
   useMessage,
   useDialog,
 } from "naive-ui";
-import { IconArrowLeft, IconTool, IconTrash, IconCheck, IconX, IconMinus } from "@tabler/icons-vue";
+import {
+  IconArrowLeft,
+  IconTool,
+  IconTrash,
+  IconCheck,
+  IconX,
+  IconMinus,
+} from "@tabler/icons-vue";
 import { useToolsStore, type ToolDefinition } from "../stores/tools";
 import { useRoute, useRouter } from "vue-router";
 import { computed, ref } from "vue";
@@ -28,8 +35,8 @@ const groupDisplayName = computed(
   () => groupTools.value[0]?.groupDisplayName || groupName.value,
 );
 
-const enabledCount = computed(() =>
-  groupTools.value.filter((t) => t.enabled).length,
+const enabledCount = computed(
+  () => groupTools.value.filter((t) => t.enabled).length,
 );
 
 const editingName = ref(false);
@@ -105,9 +112,7 @@ async function confirmRename() {
               });
             }
           } catch (e2) {
-            message.error(
-              e2 instanceof Error ? e2.message : "Merge failed",
-            );
+            message.error(e2 instanceof Error ? e2.message : "Merge failed");
           }
         },
       });
@@ -176,8 +181,18 @@ async function doDeleteTool(name: string) {
         <div class="group-title-area">
           <div v-if="!editingName" class="group-title-row">
             <NText class="group-title">Tool Group: </NText>
-            <NText class="group-title group-name-text">{{ groupDisplayName }}</NText>
-            <NButton v-if="!isProtected" strong secondary type="primary" size="tiny" @click="startRename">Rename</NButton>
+            <NText class="group-title group-name-text">{{
+              groupDisplayName
+            }}</NText>
+            <NButton
+              v-if="!isProtected"
+              strong
+              secondary
+              type="primary"
+              size="tiny"
+              @click="startRename"
+              >Rename</NButton
+            >
           </div>
           <div v-else class="group-rename-row">
             <NText class="group-title">Tool Group: </NText>
@@ -189,7 +204,11 @@ async function doDeleteTool(name: string) {
               @keyup.enter="confirmRename"
               @keyup.escape="cancelRename"
             />
-            <NButton size="small" type="primary" :loading="saving" @click="confirmRename"
+            <NButton
+              size="small"
+              type="primary"
+              :loading="saving"
+              @click="confirmRename"
               >Save</NButton
             >
             <NButton size="small" @click="cancelRename">Cancel</NButton>
@@ -197,12 +216,12 @@ async function doDeleteTool(name: string) {
           <div class="group-controls">
             <div class="control-item">
               <NText depth="3" class="control-label">All enabled</NText>
-              <NSwitch
-                :value="enabledCount > 0"
-                @update:value="onToggleAll"
-              >
+              <NSwitch :value="enabledCount > 0" @update:value="onToggleAll">
                 <template #icon>
-                  <IconCheck v-if="enabledCount === groupTools.length" :size="12" />
+                  <IconCheck
+                    v-if="enabledCount === groupTools.length"
+                    :size="12"
+                  />
                   <IconX v-else-if="enabledCount === 0" :size="12" />
                   <IconMinus v-else :size="12" />
                 </template>
@@ -255,12 +274,7 @@ async function doDeleteTool(name: string) {
       <NDivider v-if="!isProtected" />
 
       <div v-if="!isProtected" class="danger-section">
-        <NButton
-          type="error"
-          ghost
-          :loading="deleting"
-          @click="confirmDelete"
-        >
+        <NButton type="error" ghost :loading="deleting" @click="confirmDelete">
           <template #icon>
             <IconTrash :size="16" />
           </template>
@@ -271,9 +285,7 @@ async function doDeleteTool(name: string) {
 
     <div class="group-view" v-else>
       <NText>Group "{{ groupName }}" not found.</NText>
-      <NButton @click="router.push({ name: 'tools' })"
-        >Back to catalog</NButton
-      >
+      <NButton @click="router.push({ name: 'tools' })">Back to catalog</NButton>
     </div>
   </NScrollbar>
 </template>

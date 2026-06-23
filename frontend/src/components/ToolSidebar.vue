@@ -112,11 +112,9 @@ const groupCounts = computed(() => {
             class="group-chevron"
             @click.stop="toggleGroupCollapse(group)"
           />
-          <NText
-            strong
-            class="group-name"
-            >{{ tools[0]?.groupDisplayName || group }}</NText
-          >
+          <NText strong class="group-name">{{
+            tools[0]?.groupDisplayName || group
+          }}</NText>
           <NText depth="3" class="group-count">
             ({{ groupCounts[group]?.enabled ?? 0 }}/{{
               groupCounts[group]?.total ?? 0
@@ -131,8 +129,14 @@ const groupCounts = computed(() => {
             @click.stop
           >
             <template #icon>
-              <IconCheck v-if="groupCounts[group]?.enabled === groupCounts[group]?.total" :size="10" />
-              <IconX v-else-if="(groupCounts[group]?.enabled ?? 0) === 0" :size="10" />
+              <IconCheck
+                v-if="groupCounts[group]?.enabled === groupCounts[group]?.total"
+                :size="10"
+              />
+              <IconX
+                v-else-if="(groupCounts[group]?.enabled ?? 0) === 0"
+                :size="10"
+              />
               <IconMinus v-else :size="10" />
             </template>
           </NSwitch>

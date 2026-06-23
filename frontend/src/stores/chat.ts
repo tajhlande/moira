@@ -47,8 +47,7 @@ function mergeHistoricalCarryover(
 
   const carryover = previous.filter(
     (step) =>
-      step.status !== "running" &&
-      (!step.id || !incomingIds.has(step.id)),
+      step.status !== "running" && (!step.id || !incomingIds.has(step.id)),
   );
 
   if (carryover.length === 0) {
@@ -87,7 +86,10 @@ export const useChatStore = defineStore("chat", () => {
 
   const stepDetails = ref<Map<string, ExecutionStepDetailResponse>>(new Map());
   const loadingStepDetails = ref<Set<string>>(new Set());
-  const stepDetailInflight = new Map<string, Promise<ExecutionStepDetailResponse>>();
+  const stepDetailInflight = new Map<
+    string,
+    Promise<ExecutionStepDetailResponse>
+  >();
 
   const runSettings = ref<RunSettings>({
     budget: DEFAULT_BUDGET,
@@ -103,15 +105,18 @@ export const useChatStore = defineStore("chat", () => {
         api.getSetting("retry.max_evaluation"),
       ]);
       runSettings.value = {
-        budget: budgetResp?.value != null
-          ? parseInt(budgetResp.value, 10) || DEFAULT_BUDGET
-          : DEFAULT_BUDGET,
-        max_review: maxReviewResp?.value != null
-          ? parseInt(maxReviewResp.value, 10) || DEFAULT_MAX_REVIEW
-          : DEFAULT_MAX_REVIEW,
-        max_evaluation: maxEvalResp?.value != null
-          ? parseInt(maxEvalResp.value, 10) || DEFAULT_MAX_EVALUATION
-          : DEFAULT_MAX_EVALUATION,
+        budget:
+          budgetResp?.value != null
+            ? parseInt(budgetResp.value, 10) || DEFAULT_BUDGET
+            : DEFAULT_BUDGET,
+        max_review:
+          maxReviewResp?.value != null
+            ? parseInt(maxReviewResp.value, 10) || DEFAULT_MAX_REVIEW
+            : DEFAULT_MAX_REVIEW,
+        max_evaluation:
+          maxEvalResp?.value != null
+            ? parseInt(maxEvalResp.value, 10) || DEFAULT_MAX_EVALUATION
+            : DEFAULT_MAX_EVALUATION,
       };
     } catch {
       // Settings endpoint unavailable; keep the current defaults.
@@ -173,12 +178,15 @@ export const useChatStore = defineStore("chat", () => {
       cost: typeof step.cost === "number" ? step.cost : 0,
       budget_remaining:
         typeof step.budget_remaining === "number" ? step.budget_remaining : 0,
-      elapsed_ms: typeof step.elapsed_ms === "number" ? step.elapsed_ms : undefined,
+      elapsed_ms:
+        typeof step.elapsed_ms === "number" ? step.elapsed_ms : undefined,
       started_at:
         typeof step.started_at === "string" ? step.started_at : undefined,
       error: typeof step.error === "string" ? step.error : undefined,
       tool_call_count:
-        typeof step.tool_call_count === "number" ? step.tool_call_count : undefined,
+        typeof step.tool_call_count === "number"
+          ? step.tool_call_count
+          : undefined,
       step_version:
         typeof step.step_version === "number" ? step.step_version : undefined,
       has_detail:
@@ -209,13 +217,13 @@ export const useChatStore = defineStore("chat", () => {
 
     const executionStepsRaw = Array.isArray(snapshot.execution_steps)
       ? snapshot.execution_steps
-      : existing?.execution_steps ?? [];
+      : (existing?.execution_steps ?? []);
     const executionSteps = executionStepsRaw.map((step) =>
       normalizeStep(step as Record<string, unknown>),
     );
 
     return {
-      id: typeof snapshot.id === "string" ? snapshot.id : existing?.id ?? "",
+      id: typeof snapshot.id === "string" ? snapshot.id : (existing?.id ?? ""),
       conversation_id:
         typeof snapshot.conversation_id === "string"
           ? snapshot.conversation_id
@@ -227,21 +235,23 @@ export const useChatStore = defineStore("chat", () => {
       execution_steps: executionSteps,
       tool_executions: Array.isArray(snapshot.tool_executions)
         ? snapshot.tool_executions
-        : existing?.tool_executions ?? [],
+        : (existing?.tool_executions ?? []),
       report:
         snapshot.report !== undefined
           ? (snapshot.report as WorkflowRunInfo["report"])
-          : existing?.report ?? null,
+          : (existing?.report ?? null),
       budget_limit:
         typeof snapshot.budget_limit === "number"
           ? snapshot.budget_limit
-          : existing?.budget_limit ?? 0,
+          : (existing?.budget_limit ?? 0),
       budget_consumed:
         typeof snapshot.budget_consumed === "number"
           ? snapshot.budget_consumed
-          : existing?.budget_consumed ?? 0,
+          : (existing?.budget_consumed ?? 0),
       error:
-        typeof snapshot.error === "string" ? snapshot.error : existing?.error ?? "",
+        typeof snapshot.error === "string"
+          ? snapshot.error
+          : (existing?.error ?? ""),
       status,
       state_version:
         typeof snapshot.state_version === "number"
@@ -250,11 +260,11 @@ export const useChatStore = defineStore("chat", () => {
       started_at:
         typeof snapshot.started_at === "string"
           ? snapshot.started_at
-          : existing?.started_at ?? new Date().toISOString(),
+          : (existing?.started_at ?? new Date().toISOString()),
       completed_at:
         typeof snapshot.completed_at === "string"
           ? snapshot.completed_at
-          : existing?.completed_at ?? "",
+          : (existing?.completed_at ?? ""),
       updated_at:
         typeof snapshot.updated_at === "string"
           ? snapshot.updated_at
@@ -266,19 +276,19 @@ export const useChatStore = defineStore("chat", () => {
       input_tokens:
         typeof snapshot.input_tokens === "number"
           ? snapshot.input_tokens
-          : existing?.input_tokens ?? 0,
+          : (existing?.input_tokens ?? 0),
       output_tokens:
         typeof snapshot.output_tokens === "number"
           ? snapshot.output_tokens
-          : existing?.output_tokens ?? 0,
+          : (existing?.output_tokens ?? 0),
       thinking_tokens:
         typeof snapshot.thinking_tokens === "number"
           ? snapshot.thinking_tokens
-          : existing?.thinking_tokens ?? 0,
+          : (existing?.thinking_tokens ?? 0),
       knowledge:
         snapshot.knowledge != null && typeof snapshot.knowledge === "object"
           ? (snapshot.knowledge as WorkflowRunInfo["knowledge"])
-          : existing?.knowledge ?? null,
+          : (existing?.knowledge ?? null),
     };
   }
 
@@ -317,7 +327,9 @@ export const useChatStore = defineStore("chat", () => {
 
     const current = runs.value.get(normalized.user_message_id);
     const incomingVersion =
-      typeof normalized.state_version === "number" ? normalized.state_version : null;
+      typeof normalized.state_version === "number"
+        ? normalized.state_version
+        : null;
     const currentVersion =
       typeof current?.state_version === "number" ? current.state_version : null;
 
@@ -401,7 +413,9 @@ export const useChatStore = defineStore("chat", () => {
     stepDetailInflight.clear();
 
     let activeMessageId: number | null = null;
-    const runningRun = [...nextRuns.values()].find((r) => r.status === "running");
+    const runningRun = [...nextRuns.values()].find(
+      (r) => r.status === "running",
+    );
     if (runningRun) {
       activeMessageId = runningRun.user_message_id;
       loading.value = true;
@@ -625,7 +639,8 @@ export const useChatStore = defineStore("chat", () => {
       const candidates = [...runs.value.values()].filter(
         (r) => r.status === "stopped" || r.status === "error",
       );
-      const last = candidates.length > 0 ? candidates[candidates.length - 1] : null;
+      const last =
+        candidates.length > 0 ? candidates[candidates.length - 1] : null;
       targetMessageId = last?.user_message_id ?? null;
     }
 
@@ -727,7 +742,11 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
-  function handleEvent(eventType: string, payload: any, userMessageId?: number) {
+  function handleEvent(
+    eventType: string,
+    payload: any,
+    userMessageId?: number,
+  ) {
     if (eventType === "run_snapshot") {
       const run = upsertRunSnapshot(payload as RunSnapshotInput, userMessageId);
       if (run && run.status !== "running") {
@@ -857,9 +876,7 @@ export const useChatStore = defineStore("chat", () => {
       );
 
       // Truncate local messages: keep up to and including the rerun message
-      const msgIndex = messages.value.findIndex(
-        (m) => m.id === userMessageId,
-      );
+      const msgIndex = messages.value.findIndex((m) => m.id === userMessageId);
       if (msgIndex >= 0) {
         messages.value = messages.value.slice(0, msgIndex + 1);
       }

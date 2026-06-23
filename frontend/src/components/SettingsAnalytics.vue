@@ -3,7 +3,11 @@ import { NDatePicker, NText, NSpin } from "naive-ui";
 import { IconChartLine } from "@tabler/icons-vue";
 import { ref, computed, onMounted, watch, nextTick } from "vue";
 import { useChart } from "../composables/useChart";
-import { api, type ToolMetricsRow, type InferenceMetricsRow } from "../api/client";
+import {
+  api,
+  type ToolMetricsRow,
+  type InferenceMetricsRow,
+} from "../api/client";
 import {
   Chart as ChartJS,
   LineController,
@@ -217,7 +221,10 @@ interface TokenDayBucket {
 }
 
 const infChartData = computed(() => {
-  const byDay = new Map<string, { input: number; output: number; thinking: number }>();
+  const byDay = new Map<
+    string,
+    { input: number; output: number; thinking: number }
+  >();
 
   for (const r of infRows.value) {
     const day = r.period_hour.substring(0, 10);
@@ -341,7 +348,10 @@ async function fetchMetrics() {
   }
 
   try {
-    const result = await api.getInferenceMetrics(startDate.value, endDate.value);
+    const result = await api.getInferenceMetrics(
+      startDate.value,
+      endDate.value,
+    );
     infRows.value = result.metrics;
     infLoading.value = false;
     await nextTick();
@@ -407,7 +417,9 @@ onMounted(fetchMetrics);
         <NText type="error">{{ infError }}</NText>
       </div>
       <div v-else-if="infRows.length === 0" class="chart-empty">
-        <NText depth="3">No inference metrics data available for this period.</NText>
+        <NText depth="3"
+          >No inference metrics data available for this period.</NText
+        >
       </div>
       <div v-else class="chart-container">
         <canvas ref="infCanvasRef"></canvas>

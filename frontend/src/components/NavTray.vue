@@ -23,11 +23,11 @@ const items: NavItem[] = [
     label: "Conversations",
     route: { name: "new-conversation" },
   },
-  { 
-    mode: "tools", 
-    icon: IconTools, 
-    label: "Tools", 
-    route: { name: "tools" } 
+  {
+    mode: "tools",
+    icon: IconTools,
+    label: "Tools",
+    route: { name: "tools" },
   },
   {
     mode: "settings",

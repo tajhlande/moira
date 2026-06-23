@@ -6,7 +6,9 @@ import { api } from "../api/client";
 
 const query = ref("");
 const loading = ref(false);
-const results = ref<{ name: string; description: string; enabled: boolean; distance: number }[]>([]);
+const results = ref<
+  { name: string; description: string; enabled: boolean; distance: number }[]
+>([]);
 
 const columns = [
   { title: "Rank", key: "rank", width: 55 },
@@ -16,7 +18,15 @@ const columns = [
   { title: "Description", key: "description" },
 ];
 
-const tableData = ref<{ rank: number; distance: string; enabled: string; name: string; description: string }[]>([]);
+const tableData = ref<
+  {
+    rank: number;
+    distance: string;
+    enabled: string;
+    name: string;
+    description: string;
+  }[]
+>([]);
 
 async function search() {
   if (!query.value.trim()) return;

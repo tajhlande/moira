@@ -103,7 +103,9 @@ const enabledCount = () => store.tools.filter((t) => t.enabled).length;
             <div class="source-header">
               <div class="source-title-row">
                 <NText strong class="source-name">{{ source.name }}</NText>
-                <NText depth="3" class="source-url">{{ source.base_url }}</NText>
+                <NText depth="3" class="source-url">{{
+                  source.base_url
+                }}</NText>
               </div>
               <div class="source-actions">
                 <NText depth="3" class="source-count"

@@ -149,11 +149,7 @@ async function resetGroup(group: GroupConfig) {
 
     <NSpin :show="loading">
       <div v-if="!loading" class="settings-body">
-        <div
-          class="settings-group"
-          v-for="group in groups"
-          :key="group.key"
-        >
+        <div class="settings-group" v-for="group in groups" :key="group.key">
           <div class="group-header">
             <NText class="group-title">{{ group.title }}</NText>
             <NTooltip>
@@ -193,7 +189,9 @@ async function resetGroup(group: GroupConfig) {
               size="tiny"
               :show-button="false"
               class="setting-input"
-              @update:value="(v: number | null) => v != null && saveSetting(defn.key, v)"
+              @update:value="
+                (v: number | null) => v != null && saveSetting(defn.key, v)
+              "
             />
           </div>
         </div>

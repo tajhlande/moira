@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { NButton, NScrollbar, NInput, useDialog } from "naive-ui";
-import { IconPencil, IconCheck, IconSparkles, IconTrash, IconHandStop } from "@tabler/icons-vue";
+import {
+  IconPencil,
+  IconCheck,
+  IconSparkles,
+  IconTrash,
+  IconHandStop,
+} from "@tabler/icons-vue";
 import { useChatStore } from "../stores/chat";
 import { useRouter } from "vue-router";
 import { ref, nextTick } from "vue";
@@ -55,7 +61,8 @@ async function handleGenerateTitle(conversationId: string) {
 async function handleDelete(conversationId: string) {
   dialog.error({
     title: "Delete conversation?",
-    content: "This will permanently delete the conversation and all its messages. This cannot be undone.",
+    content:
+      "This will permanently delete the conversation and all its messages. This cannot be undone.",
     positiveText: "Delete",
     negativeText: "Cancel",
     onPositiveClick: async () => {
@@ -218,8 +225,16 @@ function hasMessages(conversationId: string): boolean {
     linear-gradient(0deg, #36ad6a 50%, transparent 50%),
     linear-gradient(0deg, #36ad6a 50%, transparent 50%);
   background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
-  background-size: 16px 2px, 16px 2px, 2px 16px, 2px 16px;
-  background-position: 0 0, 100% 100%, 0 100%, 100% 0;
+  background-size:
+    16px 2px,
+    16px 2px,
+    2px 16px,
+    2px 16px;
+  background-position:
+    0 0,
+    100% 100%,
+    0 100%,
+    100% 0;
   animation: border-dance 6s infinite linear;
 }
 
@@ -280,10 +295,18 @@ function hasMessages(conversationId: string): boolean {
 <style>
 @keyframes border-dance {
   0% {
-    background-position: 0 0, 100% 100%, 0 100%, 100% 0;
+    background-position:
+      0 0,
+      100% 100%,
+      0 100%,
+      100% 0;
   }
   100% {
-    background-position: 100% 0, 0 100%, 0 0, 100% 100%;
+    background-position:
+      100% 0,
+      0 100%,
+      0 0,
+      100% 100%;
   }
 }
 </style>

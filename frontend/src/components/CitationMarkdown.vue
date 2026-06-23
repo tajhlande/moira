@@ -29,7 +29,10 @@ function annotateCitations(html: string): string {
         result += html.slice(i);
         break;
       }
-      const tag = html.slice(i + 1, close).split(/[\s/>]/)[0].toUpperCase();
+      const tag = html
+        .slice(i + 1, close)
+        .split(/[\s/>]/)[0]
+        .toUpperCase();
       result += html.slice(i, close + 1);
       i = close + 1;
       // Skip content inside self-closing or void-style tags we want to avoid
@@ -49,14 +52,11 @@ function annotateCitations(html: string): string {
     const textEnd = nextTag === -1 ? len : nextTag;
     const text = html.slice(i, textEnd);
 
-    result += text.replace(
-      citeRefPattern,
-      (match, numStr) => {
-        const num = parseInt(numStr, 10);
-        if (num < 1 || num > props.citations.length) return match;
-        return `<a class="cite-ref" data-cite="${num}" href="#cite-${num}">${match}</a>`;
-      },
-    );
+    result += text.replace(citeRefPattern, (match, numStr) => {
+      const num = parseInt(numStr, 10);
+      if (num < 1 || num > props.citations.length) return match;
+      return `<a class="cite-ref" data-cite="${num}" href="#cite-${num}">${match}</a>`;
+    });
 
     i = textEnd;
   }

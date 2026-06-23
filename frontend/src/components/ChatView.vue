@@ -1,13 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from "vue";
-import {
-  NInput,
-  NButton,
-  NAlert,
-  NScrollbar,
-  NText,
-  NSlider,
-} from "naive-ui";
+import { NInput, NButton, NAlert, NScrollbar, NText, NSlider } from "naive-ui";
 import {
   IconCircleCheck,
   IconCopy,
@@ -89,9 +82,13 @@ watch(
     if (!justSwitchedConversation.value) return;
     nextTick(() => {
       justSwitchedConversation.value = false;
-      const reports = scrollContent.value?.querySelectorAll<HTMLElement>(".report-panel");
+      const reports =
+        scrollContent.value?.querySelectorAll<HTMLElement>(".report-panel");
       if (reports && reports.length > 0) {
-        reports[reports.length - 1].scrollIntoView({ block: "start", behavior: "smooth" });
+        reports[reports.length - 1].scrollIntoView({
+          block: "start",
+          behavior: "smooth",
+        });
       }
     });
   },
@@ -100,10 +97,7 @@ watch(
 // Auto-scroll during streaming as new steps/content arrive.
 // Skips during conversation switch (flag still true in same flush cycle).
 watch(
-  () => [
-    store.activeRun?.execution_steps?.length,
-    store.activeRun?.report,
-  ],
+  () => [store.activeRun?.execution_steps?.length, store.activeRun?.report],
   () => {
     if (justSwitchedConversation.value) return;
     nextTick(() => {
@@ -143,8 +137,7 @@ async function copyMessage(content: string, index: number) {
 
 function confirmRerun(msgId: number) {
   const hasSubsequent =
-    store.messages.findIndex((m) => m.id === msgId) <
-    store.messages.length - 1;
+    store.messages.findIndex((m) => m.id === msgId) < store.messages.length - 1;
 
   dialog.warning({
     title: "Rerun from this message?",
@@ -153,7 +146,9 @@ function confirmRerun(msgId: number) {
       : "This will discard the previous run and start a new research run from this message.",
     positiveText: "Rerun",
     negativeText: "Cancel",
-    onPositiveClick: () => { store.rerunFromMessage(msgId); },
+    onPositiveClick: () => {
+      store.rerunFromMessage(msgId);
+    },
   });
 }
 </script>
@@ -224,11 +219,11 @@ function confirmRerun(msgId: number) {
             :step="1"
             :tooltip="false"
             style="flex: 1"
-            @update:value="
-              (v: number) => (store.runSettings.budget = v)
-            "
+            @update:value="(v: number) => (store.runSettings.budget = v)"
           />
-          <span class="settings-value">{{ store.runSettings.budget ?? DEFAULT_BUDGET }}</span>
+          <span class="settings-value">{{
+            store.runSettings.budget ?? DEFAULT_BUDGET
+          }}</span>
         </div>
         <div class="settings-row">
           <label class="settings-label">Review Retries</label>
@@ -239,11 +234,11 @@ function confirmRerun(msgId: number) {
             :step="1"
             :tooltip="false"
             style="flex: 1"
-            @update:value="
-              (v: number) => (store.runSettings.max_review = v)
-            "
+            @update:value="(v: number) => (store.runSettings.max_review = v)"
           />
-          <span class="settings-value">{{ store.runSettings.max_review ?? DEFAULT_MAX_REVIEW }}</span>
+          <span class="settings-value">{{
+            store.runSettings.max_review ?? DEFAULT_MAX_REVIEW
+          }}</span>
         </div>
         <div class="settings-row">
           <label class="settings-label">Eval Retries</label>
@@ -258,7 +253,9 @@ function confirmRerun(msgId: number) {
               (v: number) => (store.runSettings.max_evaluation = v)
             "
           />
-          <span class="settings-value">{{ store.runSettings.max_evaluation ?? DEFAULT_MAX_EVALUATION }}</span>
+          <span class="settings-value">{{
+            store.runSettings.max_evaluation ?? DEFAULT_MAX_EVALUATION
+          }}</span>
         </div>
       </div>
     </div>
@@ -282,11 +279,7 @@ function confirmRerun(msgId: number) {
           <IconAdjustments :size="18" />
         </template>
       </NButton>
-      <NButton
-        v-if="store.loading"
-        type="warning"
-        @click="store.stopRun()"
-      >
+      <NButton v-if="store.loading" type="warning" @click="store.stopRun()">
         <template #icon>
           <IconHandStop :size="16" />
         </template>
@@ -388,7 +381,10 @@ function confirmRerun(msgId: number) {
   max-height: 0;
   opacity: 0;
   flex-shrink: 0;
-  transition: max-height 200ms ease, opacity 150ms ease, padding 200ms ease;
+  transition:
+    max-height 200ms ease,
+    opacity 150ms ease,
+    padding 200ms ease;
   padding: 0 40px;
   border-top: 1px solid transparent;
 }

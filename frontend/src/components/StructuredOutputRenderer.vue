@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import "./workflow-artifacts.css";
 
-type RenderType = "text" | "pill-list" | "string-list" | "badge" | "fact-cards" | "object-list" | "key-value" | "code";
+type RenderType =
+  | "text"
+  | "pill-list"
+  | "string-list"
+  | "badge"
+  | "fact-cards"
+  | "object-list"
+  | "key-value"
+  | "code";
 
 interface ItemFieldSpec {
   key: string;
@@ -41,7 +49,11 @@ const FIELD_REGISTRY: Record<string, FieldSpec> = {
     label: "Conclusions",
     itemFields: [
       { key: "conclusion", label: "Conclusion", type: "text" },
-      { key: "supporting_fact_ids", label: "Supporting Facts", type: "pill-list" },
+      {
+        key: "supporting_fact_ids",
+        label: "Supporting Facts",
+        type: "pill-list",
+      },
       { key: "reasoning", label: "Reasoning", type: "text" },
       { key: "status", label: "Status", type: "badge" },
     ],
@@ -145,7 +157,10 @@ function asStringArray(val: unknown): string[] {
 }
 
 function asObjectArray(val: unknown): Record<string, unknown>[] {
-  if (Array.isArray(val) && val.every((v) => typeof v === "object" && v !== null))
+  if (
+    Array.isArray(val) &&
+    val.every((v) => typeof v === "object" && v !== null)
+  )
     return val as Record<string, unknown>[];
   return [];
 }
@@ -173,38 +188,63 @@ const entries = () => Object.entries(props.so);
   <div class="so-renderer">
     <div v-for="([key, value], idx) in entries()" :key="idx" class="so-field">
       <template v-if="resolveSpec(key, value).type === 'text'">
-        <div class="detail-label">{{ resolveSpec(key, value).label || prettyLabel(key) }}</div>
+        <div class="detail-label">
+          {{ resolveSpec(key, value).label || prettyLabel(key) }}
+        </div>
         <div class="so-text-value">{{ value }}</div>
       </template>
 
       <template v-else-if="resolveSpec(key, value).type === 'pill-list'">
-        <div class="detail-label">{{ resolveSpec(key, value).label || prettyLabel(key) }}</div>
+        <div class="detail-label">
+          {{ resolveSpec(key, value).label || prettyLabel(key) }}
+        </div>
         <div class="so-pill-list">
-          <span v-for="item in asStringArray(value)" :key="item" class="tool-tag default">{{ item }}</span>
-          <span v-if="asStringArray(value).length === 0" class="tool-tag none">None</span>
+          <span
+            v-for="item in asStringArray(value)"
+            :key="item"
+            class="tool-tag default"
+            >{{ item }}</span
+          >
+          <span v-if="asStringArray(value).length === 0" class="tool-tag none"
+            >None</span
+          >
         </div>
       </template>
 
       <template v-else-if="resolveSpec(key, value).type === 'string-list'">
-        <div class="detail-label">{{ resolveSpec(key, value).label || prettyLabel(key) }}</div>
+        <div class="detail-label">
+          {{ resolveSpec(key, value).label || prettyLabel(key) }}
+        </div>
         <ul class="so-string-list">
-          <li v-for="(item, i) in (value as string[])" :key="i">{{ item }}</li>
+          <li v-for="(item, i) in value as string[]" :key="i">{{ item }}</li>
         </ul>
         <div v-if="(value as string[]).length === 0" class="so-empty">None</div>
       </template>
 
       <template v-else-if="resolveSpec(key, value).type === 'badge'">
-        <div class="detail-label">{{ resolveSpec(key, value).label || prettyLabel(key) }}</div>
-        <span :class="badgeClass(resolveSpec(key, value), value)">{{ badgeText(value) }}</span>
+        <div class="detail-label">
+          {{ resolveSpec(key, value).label || prettyLabel(key) }}
+        </div>
+        <span :class="badgeClass(resolveSpec(key, value), value)">{{
+          badgeText(value)
+        }}</span>
       </template>
 
       <template v-else-if="resolveSpec(key, value).type === 'fact-cards'">
-        <div class="detail-label">{{ resolveSpec(key, value).label || prettyLabel(key) }}</div>
+        <div class="detail-label">
+          {{ resolveSpec(key, value).label || prettyLabel(key) }}
+        </div>
         <div class="so-card-list">
-          <div v-for="(fact, fi) in asObjectArray(value)" :key="fi" class="so-card">
+          <div
+            v-for="(fact, fi) in asObjectArray(value)"
+            :key="fi"
+            class="so-card"
+          >
             <div class="so-card-field">
               <span class="so-card-key">Subject</span>
-              <span class="so-card-val">{{ fact.subject ?? fact.id ?? "" }}</span>
+              <span class="so-card-val">{{
+                fact.subject ?? fact.id ?? ""
+              }}</span>
             </div>
             <div class="so-card-field">
               <span class="so-card-key">Fact Needed</span>
@@ -216,39 +256,101 @@ const entries = () => Object.entries(props.so);
             </div>
             <div v-if="fact.status" class="so-card-field">
               <span class="so-card-key">Status</span>
-              <span :class="['so-badge', fact.status === 'verified' ? 'success' : fact.status === 'contradicted' ? 'error' : 'neutral']">{{ fact.status }}</span>
+              <span
+                :class="[
+                  'so-badge',
+                  fact.status === 'verified'
+                    ? 'success'
+                    : fact.status === 'contradicted'
+                      ? 'error'
+                      : 'neutral',
+                ]"
+                >{{ fact.status }}</span
+              >
             </div>
           </div>
         </div>
-        <div v-if="asObjectArray(value).length === 0" class="so-empty">None</div>
+        <div v-if="asObjectArray(value).length === 0" class="so-empty">
+          None
+        </div>
       </template>
 
       <template v-else-if="resolveSpec(key, value).type === 'object-list'">
-        <div class="detail-label">{{ resolveSpec(key, value).label || prettyLabel(key) }}</div>
+        <div class="detail-label">
+          {{ resolveSpec(key, value).label || prettyLabel(key) }}
+        </div>
         <div class="so-card-list">
-          <div v-for="(item, oi) in asObjectArray(value)" :key="oi" class="so-card">
-            <div v-for="field in (resolveSpec(key, value).itemFields ?? [])" :key="field.key" class="so-card-field">
+          <div
+            v-for="(item, oi) in asObjectArray(value)"
+            :key="oi"
+            class="so-card"
+          >
+            <div
+              v-for="field in resolveSpec(key, value).itemFields ?? []"
+              :key="field.key"
+              class="so-card-field"
+            >
               <template v-if="item[field.key] != null">
                 <span class="so-card-key">{{ field.label }}</span>
                 <template v-if="field.type === 'pill-list'">
                   <div class="so-pill-list so-card-val">
-                    <span v-for="p in asStringArray(item[field.key])" :key="p" class="tool-tag default">{{ p }}</span>
-                    <span v-if="asStringArray(item[field.key]).length === 0" class="tool-tag none">None</span>
+                    <span
+                      v-for="p in asStringArray(item[field.key])"
+                      :key="p"
+                      class="tool-tag default"
+                      >{{ p }}</span
+                    >
+                    <span
+                      v-if="asStringArray(item[field.key]).length === 0"
+                      class="tool-tag none"
+                      >None</span
+                    >
                   </div>
                 </template>
                 <template v-else-if="field.type === 'badge'">
-                  <span :class="badgeClass({ type: 'badge', label: '', variants: field.key === 'status' ? { verified: 'success', contradicted: 'error', unverified: 'warning', unknown: 'neutral' } : undefined }, item[field.key])">{{ badgeText(item[field.key]) }}</span>
+                  <span
+                    :class="
+                      badgeClass(
+                        {
+                          type: 'badge',
+                          label: '',
+                          variants:
+                            field.key === 'status'
+                              ? {
+                                  verified: 'success',
+                                  contradicted: 'error',
+                                  unverified: 'warning',
+                                  unknown: 'neutral',
+                                }
+                              : undefined,
+                        },
+                        item[field.key],
+                      )
+                    "
+                    >{{ badgeText(item[field.key]) }}</span
+                  >
                 </template>
                 <template v-else-if="field.type === 'code'">
-                  <pre class="so-card-code">{{ renderSubValue(item[field.key], 'code') }}</pre>
+                  <pre class="so-card-code">{{
+                    renderSubValue(item[field.key], "code")
+                  }}</pre>
                 </template>
                 <template v-else-if="field.type === 'key-value'">
                   <div class="so-kv-list so-card-val">
-                    <template v-for="([kvKey, kvVal], kvi) in asKvPairs(item[field.key])" :key="kvi">
+                    <template
+                      v-for="([kvKey, kvVal], kvi) in asKvPairs(
+                        item[field.key],
+                      )"
+                      :key="kvi"
+                    >
                       <span class="so-kv-key">{{ kvKey }}</span>
                       <span class="so-kv-val">{{ kvVal }}</span>
                     </template>
-                    <span v-if="asKvPairs(item[field.key]).length === 0" class="so-empty">None</span>
+                    <span
+                      v-if="asKvPairs(item[field.key]).length === 0"
+                      class="so-empty"
+                      >None</span
+                    >
                   </div>
                 </template>
                 <template v-else>
@@ -258,22 +360,35 @@ const entries = () => Object.entries(props.so);
             </div>
           </div>
         </div>
-        <div v-if="asObjectArray(value).length === 0" class="so-empty">None</div>
+        <div v-if="asObjectArray(value).length === 0" class="so-empty">
+          None
+        </div>
       </template>
 
       <template v-else-if="resolveSpec(key, value).type === 'code'">
-        <div class="detail-label">{{ resolveSpec(key, value).label || prettyLabel(key) }}</div>
-        <pre class="detail-text-block">{{ JSON.stringify(value, null, 2) }}</pre>
+        <div class="detail-label">
+          {{ resolveSpec(key, value).label || prettyLabel(key) }}
+        </div>
+        <pre class="detail-text-block">{{
+          JSON.stringify(value, null, 2)
+        }}</pre>
       </template>
 
       <template v-else-if="resolveSpec(key, value).type === 'key-value'">
-        <div class="detail-label">{{ resolveSpec(key, value).label || prettyLabel(key) }}</div>
+        <div class="detail-label">
+          {{ resolveSpec(key, value).label || prettyLabel(key) }}
+        </div>
         <div class="so-kv-list">
-          <template v-for="([kvKey, kvVal], kvi) in asKvPairs(value)" :key="kvi">
+          <template
+            v-for="([kvKey, kvVal], kvi) in asKvPairs(value)"
+            :key="kvi"
+          >
             <span class="so-kv-key">{{ kvKey }}</span>
             <span class="so-kv-val">{{ kvVal }}</span>
           </template>
-          <span v-if="asKvPairs(value).length === 0" class="so-empty">None</span>
+          <span v-if="asKvPairs(value).length === 0" class="so-empty"
+            >None</span
+          >
         </div>
       </template>
     </div>

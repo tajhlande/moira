@@ -92,16 +92,50 @@ export interface KnowledgeSummary {
 
 export interface ResearchReport {
   answer: string;
-  citations: { source: string; url?: string; title?: string; excerpt?: string; snippets?: string[] }[];
-  uncited_sources: { source: string; url?: string; title?: string; excerpt?: string; snippets?: string[] }[];
-  verified_facts: { id: string; subject: string; claim: string; status: string }[];
+  citations: {
+    source: string;
+    url?: string;
+    title?: string;
+    excerpt?: string;
+    snippets?: string[];
+  }[];
+  uncited_sources: {
+    source: string;
+    url?: string;
+    title?: string;
+    excerpt?: string;
+    snippets?: string[];
+  }[];
+  verified_facts: {
+    id: string;
+    subject: string;
+    claim: string;
+    status: string;
+  }[];
   verified_conclusions: { id: string; conclusion: string; status: string }[];
-  contradicted: { id: string; subject?: string; conclusion?: string; claim?: string; verification_note?: string; status: string }[];
-  unknown_facts: { id: string; subject: string; fact_needed: string; status: string }[];
+  contradicted: {
+    id: string;
+    subject?: string;
+    conclusion?: string;
+    claim?: string;
+    verification_note?: string;
+    status: string;
+  }[];
+  unknown_facts: {
+    id: string;
+    subject: string;
+    fact_needed: string;
+    status: string;
+  }[];
   critiques: string[];
   total_cost: number;
   tool_call_total_cost: number;
-  generation_reason?: "verified" | "retries_exhausted" | "budget_exhausted" | "incomplete" | "error";
+  generation_reason?:
+    | "verified"
+    | "retries_exhausted"
+    | "budget_exhausted"
+    | "incomplete"
+    | "error";
 }
 
 export interface RunAttemptSummary {
@@ -217,10 +251,14 @@ export const api = {
     request<ConversationDetail>(`/conversations/${id}`),
 
   getRunStepDetail: (runId: string, stepId: number) =>
-    request<ExecutionStepDetailResponse>(`/runs/${runId}/steps/${stepId}/detail`),
+    request<ExecutionStepDetailResponse>(
+      `/runs/${runId}/steps/${stepId}/detail`,
+    ),
 
   getRunKnowledge: (runId: string) =>
-    request<{ run_id: string; knowledge: KnowledgeSummary | null }>(`/runs/${runId}/knowledge`),
+    request<{ run_id: string; knowledge: KnowledgeSummary | null }>(
+      `/runs/${runId}/knowledge`,
+    ),
 
   updateConversation: (id: string, title: string) =>
     request<ConversationInfo>(`/conversations/${id}`, {
@@ -247,17 +285,20 @@ export const api = {
       },
     ),
 
-  rerunMessage: (conversationId: string, userMessageId: number, settings?: RunSettings) =>
+  rerunMessage: (
+    conversationId: string,
+    userMessageId: number,
+    settings?: RunSettings,
+  ) =>
     request<{ run_id: string; user_message_id: number }>(
       `/conversations/${conversationId}/messages/${userMessageId}/rerun`,
       { method: "POST", body: JSON.stringify({ settings }) },
     ),
 
   stopRun: (conversationId: string) =>
-    request<{ status: string }>(
-      `/conversations/${conversationId}/runs/stop`,
-      { method: "POST" },
-    ),
+    request<{ status: string }>(`/conversations/${conversationId}/runs/stop`, {
+      method: "POST",
+    }),
 
   resumeRun: (conversationId: string) =>
     request<{ run_id: string; user_message_id: number }>(
@@ -301,7 +342,12 @@ export const api = {
     if (topK) params.set("top_k", String(topK));
     return request<{
       query: string;
-      results: { name: string; description: string; enabled: boolean; distance: number }[];
+      results: {
+        name: string;
+        description: string;
+        enabled: boolean;
+        distance: number;
+      }[];
     }>(`/tools/embeddings/search?${params}`);
   },
 
@@ -359,7 +405,9 @@ export const api = {
     const params = new URLSearchParams();
     if (prefix) params.set("prefix", prefix);
     const qs = params.toString();
-    return request<{ settings: SettingEntry[] }>(`/settings${qs ? `?${qs}` : ""}`);
+    return request<{ settings: SettingEntry[] }>(
+      `/settings${qs ? `?${qs}` : ""}`,
+    );
   },
 
   getSetting: (key: string) =>

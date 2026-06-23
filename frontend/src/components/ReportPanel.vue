@@ -24,8 +24,12 @@ const report = computed(() => ({
   contradicted: props.report.contradicted ?? [],
   unknown_facts: props.report.unknown_facts ?? [],
   critiques: props.report.critiques ?? [],
-  total_cost: typeof props.report.total_cost === "number" ? props.report.total_cost : 0,
-  tool_call_total_cost: typeof props.report.tool_call_total_cost === "number" ? props.report.tool_call_total_cost : 0,
+  total_cost:
+    typeof props.report.total_cost === "number" ? props.report.total_cost : 0,
+  tool_call_total_cost:
+    typeof props.report.tool_call_total_cost === "number"
+      ? props.report.tool_call_total_cost
+      : 0,
 }));
 
 const warningMessage = computed(() => {
@@ -85,11 +89,13 @@ function buildFullReport(): string {
   }
   if (report.value.verified_facts.length > 0) {
     parts.push("\n\n## Verified Facts\n");
-    for (const f of report.value.verified_facts) parts.push(`- ${f.subject}: ${f.claim}`);
+    for (const f of report.value.verified_facts)
+      parts.push(`- ${f.subject}: ${f.claim}`);
   }
   if (report.value.verified_conclusions.length > 0) {
     parts.push("\n\n## Verified Conclusions\n");
-    for (const c of report.value.verified_conclusions) parts.push(`- ${c.conclusion}`);
+    for (const c of report.value.verified_conclusions)
+      parts.push(`- ${c.conclusion}`);
   }
   if (report.value.contradicted.length > 0) {
     parts.push("\n\n## Contradicted\n");
@@ -108,7 +114,8 @@ function buildFullReport(): string {
   }
   if (report.value.unknown_facts.length > 0) {
     parts.push("\n\n## Unresolved Facts\n");
-    for (const f of report.value.unknown_facts) parts.push(`- ${f.subject}: ${f.fact_needed}`);
+    for (const f of report.value.unknown_facts)
+      parts.push(`- ${f.subject}: ${f.fact_needed}`);
   }
   return parts.join("\n");
 }
@@ -209,7 +216,11 @@ function handleTooltipLeave() {
     <div v-if="report.citations.length > 0" class="report-secondary-section">
       <h4>Sources</h4>
       <ol>
-        <li v-for="(c, ci) in report.citations" :key="ci" :id="'cite-' + (ci + 1)">
+        <li
+          v-for="(c, ci) in report.citations"
+          :key="ci"
+          :id="'cite-' + (ci + 1)"
+        >
           {{ c.source }}
           <a
             v-if="c.url"
@@ -229,7 +240,9 @@ function handleTooltipLeave() {
               >{{ s }}</span
             >
           </span>
-          <span v-else-if="c.excerpt" class="citation-excerpt">{{ c.excerpt }}</span>
+          <span v-else-if="c.excerpt" class="citation-excerpt">{{
+            c.excerpt
+          }}</span>
         </li>
       </ol>
     </div>
@@ -238,7 +251,12 @@ function handleTooltipLeave() {
       v-if="report.uncited_sources.length > 0"
       class="report-secondary-section report-uncited-sources"
     >
-      <h4>Additional Sources <span class="uncited-count">({{ report.uncited_sources.length }} consulted, not cited)</span></h4>
+      <h4>
+        Additional Sources
+        <span class="uncited-count"
+          >({{ report.uncited_sources.length }} consulted, not cited)</span
+        >
+      </h4>
       <ul>
         <li
           v-for="(c, ci) in report.uncited_sources"
@@ -257,20 +275,22 @@ function handleTooltipLeave() {
       </ul>
     </div>
 
-    <div v-if="report.verified_facts.length > 0" class="report-secondary-section">
+    <div
+      v-if="report.verified_facts.length > 0"
+      class="report-secondary-section"
+    >
       <h4>Verified Facts</h4>
       <ul>
-        <li
-          v-for="(f, fi) in report.verified_facts"
-          :key="fi"
-          class="verified"
-        >
+        <li v-for="(f, fi) in report.verified_facts" :key="fi" class="verified">
           <MarkdownContent :content="`${f.subject}: ${f.claim}`" inline />
         </li>
       </ul>
     </div>
 
-    <div v-if="report.verified_conclusions.length > 0" class="report-secondary-section">
+    <div
+      v-if="report.verified_conclusions.length > 0"
+      class="report-secondary-section"
+    >
       <h4>Verified Conclusions</h4>
       <ul>
         <li
@@ -292,7 +312,11 @@ function handleTooltipLeave() {
           class="contradicted"
         >
           <MarkdownContent
-            :content="c.claim ? `${c.subject ? c.subject + ': ' : ''}${c.claim}` : (c.conclusion ?? c.id)"
+            :content="
+              c.claim
+                ? `${c.subject ? c.subject + ': ' : ''}${c.claim}`
+                : (c.conclusion ?? c.id)
+            "
             inline
           />
           <span v-if="c.verification_note" class="contradiction-note">{{
@@ -311,7 +335,10 @@ function handleTooltipLeave() {
       </ul>
     </div>
 
-    <div v-if="report.unknown_facts.length > 0" class="report-secondary-section">
+    <div
+      v-if="report.unknown_facts.length > 0"
+      class="report-secondary-section"
+    >
       <h4>Unresolved Facts</h4>
       <ul>
         <li

@@ -51,7 +51,9 @@ function stepRunId(step: ExecutionStep): string {
 
 function boundaryLabel(previousRunId: string): string {
   const attempts = props.run.attempts || [];
-  const previousAttempt = attempts.find((attempt) => attempt.run_id === previousRunId);
+  const previousAttempt = attempts.find(
+    (attempt) => attempt.run_id === previousRunId,
+  );
   if (!previousAttempt) return "Resumed";
   if (previousAttempt.status === "error") return "Restarted after error";
   return "Resumed";
@@ -139,7 +141,9 @@ function stepIsLoading(step: ExecutionStep): boolean {
   return store.isStepDetailLoading(detailRunId, stepId, stepVersion);
 }
 
-function resolvedStepDetail(step: ExecutionStep): Record<string, unknown> | null {
+function resolvedStepDetail(
+  step: ExecutionStep,
+): Record<string, unknown> | null {
   if (step.detail && Object.keys(step.detail).length > 0) return step.detail;
   const stepId = step.id;
   const stepVersion = step.step_version;
@@ -197,13 +201,32 @@ function fmt(n: number): string {
           </div>
           <template v-else>
             <div :class="['step-row', row.step.status]">
-              <IconRestore v-if="isRetryBranch(row.step)" :size="16" class="retry-branch-icon" />
-              <IconLoader v-else-if="row.step.status === 'running'" :size="16" class="spinning" />
-              <IconHandStop v-else-if="row.step.status === 'stopped'" :size="16" class="step-stopped-icon" />
-              <IconCircleCheck v-else-if="row.step.status === 'completed'" :size="16" class="step-completed-icon" />
+              <IconRestore
+                v-if="isRetryBranch(row.step)"
+                :size="16"
+                class="retry-branch-icon"
+              />
+              <IconLoader
+                v-else-if="row.step.status === 'running'"
+                :size="16"
+                class="spinning"
+              />
+              <IconHandStop
+                v-else-if="row.step.status === 'stopped'"
+                :size="16"
+                class="step-stopped-icon"
+              />
+              <IconCircleCheck
+                v-else-if="row.step.status === 'completed'"
+                :size="16"
+                class="step-completed-icon"
+              />
               <IconCircleX v-else :size="16" class="step-error-icon" />
               <span class="step-label">{{ row.step.label }}</span>
-              <span v-if="toolCallCount(row.step) > 0" class="step-tool-indicators">
+              <span
+                v-if="toolCallCount(row.step) > 0"
+                class="step-tool-indicators"
+              >
                 <template v-if="toolCallCount(row.step) <= 10">
                   <IconTool
                     v-for="ti in toolCallCount(row.step)"
@@ -222,15 +245,30 @@ function fmt(n: number): string {
               <span v-if="row.step.status === 'completed'" class="step-cost"
                 >-{{ Math.abs(row.step.cost) }}</span
               >
-              <span v-else-if="row.step.elapsed_ms != null || row.step.status === 'running'" class="step-cost step-cost-placeholder"
+              <span
+                v-else-if="
+                  row.step.elapsed_ms != null || row.step.status === 'running'
+                "
+                class="step-cost step-cost-placeholder"
               ></span>
-              <span v-if="row.step.elapsed_ms != null || row.step.status === 'running'" class="step-elapsed">{{
-                formatElapsed(liveElapsedMs(row.step))
-              }}</span>
-              <span v-if="row.step.status === 'completed' || row.step.status === 'running'" class="step-budget"
+              <span
+                v-if="
+                  row.step.elapsed_ms != null || row.step.status === 'running'
+                "
+                class="step-elapsed"
+                >{{ formatElapsed(liveElapsedMs(row.step)) }}</span
+              >
+              <span
+                v-if="
+                  row.step.status === 'completed' ||
+                  row.step.status === 'running'
+                "
+                class="step-budget"
                 >{{ row.step.budget_remaining }} remaining</span
               >
-              <span v-else-if="row.step.elapsed_ms != null" class="step-budget step-budget-placeholder"
+              <span
+                v-else-if="row.step.elapsed_ms != null"
+                class="step-budget step-budget-placeholder"
               ></span>
               <span
                 v-if="row.step.status === 'error' && row.step.error"
@@ -242,7 +280,10 @@ function fmt(n: number): string {
                 class="step-toggle"
                 @click="toggleStep(row.stepIndex)"
               >
-                <IconChevronDown v-if="expandedSteps.has(row.stepIndex)" :size="18" />
+                <IconChevronDown
+                  v-if="expandedSteps.has(row.stepIndex)"
+                  :size="18"
+                />
                 <IconChevronRight v-else :size="18" />
               </button>
               <span v-else class="step-toggle-placeholder" />
@@ -262,7 +303,10 @@ function fmt(n: number): string {
             </div>
           </template>
         </div>
-        <div v-if="run.status === 'running' && !hasRunningStep" class="step-row running">
+        <div
+          v-if="run.status === 'running' && !hasRunningStep"
+          class="step-row running"
+        >
           <IconLoader :size="16" class="spinning" />
           <span class="step-label">Starting...</span>
         </div>
@@ -283,7 +327,7 @@ function fmt(n: number): string {
         <template #icon>
           <IconRestore :size="16" />
         </template>
-        {{ run.status === 'error' ? 'Retry' : 'Resume' }}
+        {{ run.status === "error" ? "Retry" : "Resume" }}
       </NButton>
     </div>
 
@@ -294,7 +338,7 @@ function fmt(n: number): string {
     <div v-if="run.total_elapsed_ms != null" class="total-elapsed">
       Time: {{ formatElapsed(run.total_elapsed_ms) }}
       <span v-if="(run.input_tokens ?? 0) > 0" class="token-stats">
-        &middot; Tokens: 
+        &middot; Tokens:
         {{ fmt(run.input_tokens ?? 0) }} in /
         {{ fmt(run.output_tokens ?? 0) }} out
         <template v-if="(run.thinking_tokens ?? 0) > 0">

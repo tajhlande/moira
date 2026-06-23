@@ -10,7 +10,12 @@ import {
   useMessage,
   useDialog,
 } from "naive-ui";
-import { IconArrowLeft, IconTrash, IconPencil, IconArrowBackUp } from "@tabler/icons-vue";
+import {
+  IconArrowLeft,
+  IconTrash,
+  IconPencil,
+  IconArrowBackUp,
+} from "@tabler/icons-vue";
 import { useToolsStore } from "../stores/tools";
 import { useRoute, useRouter } from "vue-router";
 import { computed } from "vue";
@@ -53,7 +58,9 @@ async function saveDesc() {
   if (!toolName.value || !descEdit.value.trim()) return;
   descSaving.value = true;
   try {
-    await store.patchTool(toolName.value, { description: descEdit.value.trim() });
+    await store.patchTool(toolName.value, {
+      description: descEdit.value.trim(),
+    });
     editingDesc.value = false;
     descEdit.value = "";
   } finally {
@@ -215,188 +222,208 @@ const configEntries = computed(() => {
 <template>
   <NScrollbar class="detail-scroll">
     <div class="detail-view" v-if="tool">
-    <div class="detail-header">
-      <NButton quaternary circle @click="router.push({ name: 'tools' })">
-        <template #icon>
-          <IconArrowLeft />
-        </template>
-      </NButton>
-      <div class="detail-title-area">
-        <div class="detail-title-line">
-          <NText class="detail-name">{{ tool.name }}</NText>
-          <NText v-if="tool.builtIn" depth="3" class="detail-badge"
-            >Built-in</NText
-          >
-        </div>
-        <div class="detail-controls">
-          <div class="control-item">
-            <NText depth="3" class="control-label">Enabled</NText>
-            <NSwitch :value="tool.enabled" @update:value="onToggleEnabled" />
-          </div>
-          <div class="control-item">
-            <NText depth="3" class="control-label">Default</NText>
-            <NSwitch :value="tool.isDefault" @update:value="onToggleDefault" />
-          </div>
-          <NButton
-            v-if="!isProtected"
-            type="error"
-            ghost
-            size="small"
-            @click="confirmDelete"
-          >
-            <template #icon>
-              <IconTrash :size="16" />
-            </template>
-            Delete
-          </NButton>
-        </div>
-      </div>
-    </div>
-
-    <div v-if="!editingDesc" class="desc-section">
-      <div class="desc-display">
-        <NText class="detail-desc">{{ tool.description }}</NText>
-        <div class="desc-actions">
-          <NButton
-            quaternary
-            circle
-            size="tiny"
-            class="desc-edit-btn"
-            @click="startEditDesc"
-            title="Edit description"
-          >
-            <template #icon>
-              <IconPencil :size="18" />
-            </template>
-          </NButton>
-          <NButton
-            v-if="hasOriginalDesc"
-            quaternary
-            circle
-            size="tiny"
-            class="desc-edit-btn"
-            @click="resetDesc"
-            title="Reset to original"
-            :loading="descSaving"
-          >
-            <template #icon>
-              <IconArrowBackUp :size="18" />
-            </template>
-          </NButton>
-        </div>
-      </div>
-    </div>
-    <div v-else class="desc-edit-section">
-      <NInput
-        v-model:value="descEdit"
-        type="textarea"
-        :autosize="{ minRows: 3, maxRows: 10 }"
-        placeholder="Tool description"
-      />
-      <div class="desc-edit-actions">
-        <NButton size="small" type="primary" :loading="descSaving" @click="saveDesc">
-          Save
+      <div class="detail-header">
+        <NButton quaternary circle @click="router.push({ name: 'tools' })">
+          <template #icon>
+            <IconArrowLeft />
+          </template>
         </NButton>
-        <NButton size="small" @click="cancelEditDesc">Cancel</NButton>
-      </div>
-    </div>
-
-    <NDivider />
-
-    <div v-if="requiredParams.length > 0" class="param-section">
-      <NText strong>Required Parameters</NText>
-      <div class="param-list">
-        <div v-for="p in requiredParams" :key="p.name" class="param-card">
-          <NText strong class="param-name">{{ p.name }}</NText>
-          <NText depth="3" class="param-type">{{ p.type }}</NText>
-          <NText class="param-desc">{{ p.description }}</NText>
-        </div>
-      </div>
-    </div>
-
-    <div v-if="optionalParams.length > 0" class="param-section">
-      <NText strong>Optional Parameters</NText>
-      <div class="param-list">
-        <div v-for="p in optionalParams" :key="p.name" class="param-card">
-          <NText strong class="param-name">{{ p.name }}</NText>
-          <NText depth="3" class="param-type">{{ p.type }}</NText>
-          <NText class="param-desc">{{ p.description }}</NText>
-          <NText v-if="p.default !== undefined" depth="3" class="param-default">
-            Default: {{ p.default }}
-          </NText>
-        </div>
-      </div>
-    </div>
-
-    <NDivider />
-
-    <div v-if="configProperties.length > 0" class="config-section">
-      <NText strong class="config-heading">Configuration</NText>
-      <div class="config-form">
-        <div
-          v-for="prop in configProperties"
-          :key="prop.key"
-          class="config-field"
-        >
-          <div class="config-field-header">
-            <NText strong class="config-field-title">{{ prop.title }}</NText>
-            <NText v-if="prop.required" depth="3" class="config-field-required"
-              >required</NText
+        <div class="detail-title-area">
+          <div class="detail-title-line">
+            <NText class="detail-name">{{ tool.name }}</NText>
+            <NText v-if="tool.builtIn" depth="3" class="detail-badge"
+              >Built-in</NText
             >
           </div>
-          <NText v-if="prop.description" depth="3" class="config-field-desc">{{
-            prop.description
-          }}</NText>
-          <NInput
-            :value="configEdits[prop.key] ?? prop.currentValue"
-            @update:value="(v: string) => (configEdits[prop.key] = v)"
-            :placeholder="prop.currentValue || `Enter ${prop.title}`"
-            size="small"
-          />
-        </div>
-        <NButton
-          type="primary"
-          size="small"
-          :loading="configSaving"
-          :disabled="Object.keys(configEdits).length === 0"
-          @click="saveConfig"
-        >
-          Save Config
-        </NButton>
-      </div>
-    </div>
-
-    <div class="info-section">
-      <NText strong class="info-heading">Implementation</NText>
-      <div class="info-box">
-        <div class="info-row">
-          <NText depth="3" class="info-key">Class</NText>
-          <NText code class="info-val">{{ tool.implementation || "—" }}</NText>
-        </div>
-        <template v-if="configEntries.length > 0">
-          <NDivider style="margin: 8px 0" />
-          <NText depth="3" class="info-key">Configuration</NText>
-          <NScrollbar class="config-scroll">
-            <div class="config-entries">
-              <div
-                v-for="entry in configEntries"
-                :key="entry.path"
-                class="config-row"
-              >
-                <NText code class="config-path">{{ entry.path }}</NText>
-                <NText class="config-value">{{ entry.value }}</NText>
-              </div>
+          <div class="detail-controls">
+            <div class="control-item">
+              <NText depth="3" class="control-label">Enabled</NText>
+              <NSwitch :value="tool.enabled" @update:value="onToggleEnabled" />
             </div>
-          </NScrollbar>
-        </template>
+            <div class="control-item">
+              <NText depth="3" class="control-label">Default</NText>
+              <NSwitch
+                :value="tool.isDefault"
+                @update:value="onToggleDefault"
+              />
+            </div>
+            <NButton
+              v-if="!isProtected"
+              type="error"
+              ghost
+              size="small"
+              @click="confirmDelete"
+            >
+              <template #icon>
+                <IconTrash :size="16" />
+              </template>
+              Delete
+            </NButton>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="!editingDesc" class="desc-section">
+        <div class="desc-display">
+          <NText class="detail-desc">{{ tool.description }}</NText>
+          <div class="desc-actions">
+            <NButton
+              quaternary
+              circle
+              size="tiny"
+              class="desc-edit-btn"
+              @click="startEditDesc"
+              title="Edit description"
+            >
+              <template #icon>
+                <IconPencil :size="18" />
+              </template>
+            </NButton>
+            <NButton
+              v-if="hasOriginalDesc"
+              quaternary
+              circle
+              size="tiny"
+              class="desc-edit-btn"
+              @click="resetDesc"
+              title="Reset to original"
+              :loading="descSaving"
+            >
+              <template #icon>
+                <IconArrowBackUp :size="18" />
+              </template>
+            </NButton>
+          </div>
+        </div>
+      </div>
+      <div v-else class="desc-edit-section">
+        <NInput
+          v-model:value="descEdit"
+          type="textarea"
+          :autosize="{ minRows: 3, maxRows: 10 }"
+          placeholder="Tool description"
+        />
+        <div class="desc-edit-actions">
+          <NButton
+            size="small"
+            type="primary"
+            :loading="descSaving"
+            @click="saveDesc"
+          >
+            Save
+          </NButton>
+          <NButton size="small" @click="cancelEditDesc">Cancel</NButton>
+        </div>
+      </div>
+
+      <NDivider />
+
+      <div v-if="requiredParams.length > 0" class="param-section">
+        <NText strong>Required Parameters</NText>
+        <div class="param-list">
+          <div v-for="p in requiredParams" :key="p.name" class="param-card">
+            <NText strong class="param-name">{{ p.name }}</NText>
+            <NText depth="3" class="param-type">{{ p.type }}</NText>
+            <NText class="param-desc">{{ p.description }}</NText>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="optionalParams.length > 0" class="param-section">
+        <NText strong>Optional Parameters</NText>
+        <div class="param-list">
+          <div v-for="p in optionalParams" :key="p.name" class="param-card">
+            <NText strong class="param-name">{{ p.name }}</NText>
+            <NText depth="3" class="param-type">{{ p.type }}</NText>
+            <NText class="param-desc">{{ p.description }}</NText>
+            <NText
+              v-if="p.default !== undefined"
+              depth="3"
+              class="param-default"
+            >
+              Default: {{ p.default }}
+            </NText>
+          </div>
+        </div>
+      </div>
+
+      <NDivider />
+
+      <div v-if="configProperties.length > 0" class="config-section">
+        <NText strong class="config-heading">Configuration</NText>
+        <div class="config-form">
+          <div
+            v-for="prop in configProperties"
+            :key="prop.key"
+            class="config-field"
+          >
+            <div class="config-field-header">
+              <NText strong class="config-field-title">{{ prop.title }}</NText>
+              <NText
+                v-if="prop.required"
+                depth="3"
+                class="config-field-required"
+                >required</NText
+              >
+            </div>
+            <NText
+              v-if="prop.description"
+              depth="3"
+              class="config-field-desc"
+              >{{ prop.description }}</NText
+            >
+            <NInput
+              :value="configEdits[prop.key] ?? prop.currentValue"
+              @update:value="(v: string) => (configEdits[prop.key] = v)"
+              :placeholder="prop.currentValue || `Enter ${prop.title}`"
+              size="small"
+            />
+          </div>
+          <NButton
+            type="primary"
+            size="small"
+            :loading="configSaving"
+            :disabled="Object.keys(configEdits).length === 0"
+            @click="saveConfig"
+          >
+            Save Config
+          </NButton>
+        </div>
+      </div>
+
+      <div class="info-section">
+        <NText strong class="info-heading">Implementation</NText>
+        <div class="info-box">
+          <div class="info-row">
+            <NText depth="3" class="info-key">Class</NText>
+            <NText code class="info-val">{{
+              tool.implementation || "—"
+            }}</NText>
+          </div>
+          <template v-if="configEntries.length > 0">
+            <NDivider style="margin: 8px 0" />
+            <NText depth="3" class="info-key">Configuration</NText>
+            <NScrollbar class="config-scroll">
+              <div class="config-entries">
+                <div
+                  v-for="entry in configEntries"
+                  :key="entry.path"
+                  class="config-row"
+                >
+                  <NText code class="config-path">{{ entry.path }}</NText>
+                  <NText class="config-value">{{ entry.value }}</NText>
+                </div>
+              </div>
+            </NScrollbar>
+          </template>
+        </div>
       </div>
     </div>
-  </div>
 
-  <div class="detail-view" v-else>
-    <NText>Tool "{{ toolName }}" not found.</NText>
-    <NButton @click="router.push({ name: 'tools' })">Back to catalog</NButton>
-  </div>
+    <div class="detail-view" v-else>
+      <NText>Tool "{{ toolName }}" not found.</NText>
+      <NButton @click="router.push({ name: 'tools' })">Back to catalog</NButton>
+    </div>
   </NScrollbar>
 </template>
 

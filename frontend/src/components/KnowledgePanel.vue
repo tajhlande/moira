@@ -51,9 +51,7 @@ const conclusionCounts = computed(() => {
   return counts;
 });
 
-const citationCount = computed(
-  () => props.knowledge.citations?.length ?? 0,
-);
+const citationCount = computed(() => props.knowledge.citations?.length ?? 0);
 
 const hasContent = computed(
   () =>
@@ -66,7 +64,10 @@ const hasContent = computed(
 const subjectGroups = computed(() => {
   const grouped = props.knowledge.facts;
   if (!grouped || typeof grouped !== "object") return [];
-  return Object.entries(grouped).map(([subject, facts]) => ({ subject, facts }));
+  return Object.entries(grouped).map(([subject, facts]) => ({
+    subject,
+    facts,
+  }));
 });
 
 // Conclusion status groups
@@ -80,7 +81,12 @@ const conclusionGroups = computed(() => {
 });
 
 // Status filter
-type StatusFilter = "all" | "verified" | "unverified" | "contradicted" | "unknown";
+type StatusFilter =
+  | "all"
+  | "verified"
+  | "unverified"
+  | "contradicted"
+  | "unknown";
 const factFilter = ref<StatusFilter>("all");
 
 const filteredSubjectGroups = computed(() => {
@@ -119,13 +125,16 @@ function toggleExpand() {
     <div class="knowledge-summary-strip" @click="toggleExpand">
       <div class="summary-left">
         <IconDatabase :size="16" class="summary-icon" />
-        <span v-if="knowledge.topic" class="summary-topic">{{ knowledge.topic }}</span>
+        <span v-if="knowledge.topic" class="summary-topic">{{
+          knowledge.topic
+        }}</span>
         <div v-if="knowledge.entities?.length" class="summary-entities">
           <span
             v-for="e in knowledge.entities.slice(0, 4)"
             :key="e"
             class="entity-pill"
-          >{{ e }}</span>
+            >{{ e }}</span
+          >
           <span v-if="knowledge.entities.length > 4" class="entity-pill more">
             +{{ knowledge.entities.length - 4 }}
           </span>
@@ -141,7 +150,10 @@ function toggleExpand() {
             <span v-if="factCounts.unverified" class="count-badge unverified">
               {{ factCounts.unverified }} unverified
             </span>
-            <span v-if="factCounts.contradicted" class="count-badge contradicted">
+            <span
+              v-if="factCounts.contradicted"
+              class="count-badge contradicted"
+            >
               {{ factCounts.contradicted }} contradicted
             </span>
             <span v-if="factCounts.unknown" class="count-badge unknown">
@@ -153,10 +165,16 @@ function toggleExpand() {
             <span v-if="conclusionCounts.verified" class="count-badge verified">
               {{ conclusionCounts.verified }} verified
             </span>
-            <span v-if="conclusionCounts.unverified" class="count-badge unverified">
+            <span
+              v-if="conclusionCounts.unverified"
+              class="count-badge unverified"
+            >
               {{ conclusionCounts.unverified }} unverified
             </span>
-            <span v-if="conclusionCounts.contradicted" class="count-badge contradicted">
+            <span
+              v-if="conclusionCounts.contradicted"
+              class="count-badge contradicted"
+            >
               {{ conclusionCounts.contradicted }} contradicted
             </span>
           </span>
@@ -164,14 +182,21 @@ function toggleExpand() {
             <span class="count-badge neutral">{{ citationCount }} sources</span>
           </span>
         </div>
-        <component :is="expanded ? IconChevronDown : IconChevronRight" :size="18" class="expand-icon" />
+        <component
+          :is="expanded ? IconChevronDown : IconChevronRight"
+          :size="18"
+          class="expand-icon"
+        />
       </div>
     </div>
 
     <!-- Expandable body -->
     <div v-if="expanded && hasContent" class="knowledge-body">
       <!-- Analysis section -->
-      <div v-if="knowledge.user_goal || knowledge.concepts?.length" class="knowledge-section">
+      <div
+        v-if="knowledge.user_goal || knowledge.concepts?.length"
+        class="knowledge-section"
+      >
         <h4 class="section-title">Analysis</h4>
         <div v-if="knowledge.user_goal" class="analysis-field">
           <span class="field-label">Goal:</span>
@@ -180,7 +205,12 @@ function toggleExpand() {
         <div v-if="knowledge.concepts?.length" class="analysis-field">
           <span class="field-label">Concepts:</span>
           <div class="pill-row">
-            <span v-for="c in knowledge.concepts" :key="c" class="entity-pill">{{ c }}</span>
+            <span
+              v-for="c in knowledge.concepts"
+              :key="c"
+              class="entity-pill"
+              >{{ c }}</span
+            >
           </div>
         </div>
       </div>
@@ -210,22 +240,31 @@ function toggleExpand() {
             <div class="subject-facts">
               <div v-for="f in group.facts" :key="f.id" class="fact-card">
                 <div class="fact-header">
-                  <span :class="['fact-status', statusClass(f.status)]">{{ f.status }}</span>
+                  <span :class="['fact-status', statusClass(f.status)]">{{
+                    f.status
+                  }}</span>
                   <span class="fact-id">{{ f.id }}</span>
                 </div>
                 <div class="fact-needed">{{ f.fact_needed }}</div>
                 <div v-if="f.claim" class="fact-claim">{{ f.claim }}</div>
                 <div v-if="f.relation || f.value" class="fact-structured">
-                  <span v-if="f.relation" class="structured-field">{{ f.relation }}</span>
-                  <span v-if="f.value" class="structured-value">{{ f.value }}</span>
+                  <span v-if="f.relation" class="structured-field">{{
+                    f.relation
+                  }}</span>
+                  <span v-if="f.value" class="structured-value">{{
+                    f.value
+                  }}</span>
                 </div>
-                <div v-if="f.verification_note" class="fact-note">{{ f.verification_note }}</div>
+                <div v-if="f.verification_note" class="fact-note">
+                  {{ f.verification_note }}
+                </div>
                 <div v-if="f.citation_ids?.length" class="fact-citations">
                   <span
                     v-for="cid in f.citation_ids"
                     :key="cid"
                     class="citation-ref"
-                  >{{ cid }}</span>
+                    >{{ cid }}</span
+                  >
                 </div>
               </div>
             </div>
@@ -239,7 +278,9 @@ function toggleExpand() {
         <div class="conclusions-list">
           <div v-for="c in allConclusions" :key="c.id" class="conclusion-card">
             <div class="fact-header">
-              <span :class="['fact-status', statusClass(c.status)]">{{ c.status }}</span>
+              <span :class="['fact-status', statusClass(c.status)]">{{
+                c.status
+              }}</span>
               <span class="fact-id">{{ c.id }}</span>
             </div>
             <div class="conclusion-text">{{ c.conclusion }}</div>
@@ -249,9 +290,12 @@ function toggleExpand() {
                 v-for="fid in c.supporting_fact_ids"
                 :key="fid"
                 class="fact-ref"
-              >{{ fid }}</span>
+                >{{ fid }}</span
+              >
             </div>
-            <div v-if="c.reasoning" class="conclusion-reasoning">{{ c.reasoning }}</div>
+            <div v-if="c.reasoning" class="conclusion-reasoning">
+              {{ c.reasoning }}
+            </div>
           </div>
         </div>
       </div>
@@ -260,9 +304,20 @@ function toggleExpand() {
       <div v-if="citationCount" class="knowledge-section">
         <h4 class="section-title">Sources ({{ citationCount }})</h4>
         <ol class="sources-list">
-          <li v-for="(cit, ci) in knowledge.citations" :key="cit.id || ci" class="source-item">
+          <li
+            v-for="(cit, ci) in knowledge.citations"
+            :key="cit.id || ci"
+            class="source-item"
+          >
             <span class="source-name">{{ cit.source }}</span>
-            <a v-if="cit.url" :href="cit.url" target="_blank" rel="noopener" class="source-url">{{ cit.url }}</a>
+            <a
+              v-if="cit.url"
+              :href="cit.url"
+              target="_blank"
+              rel="noopener"
+              class="source-url"
+              >{{ cit.url }}</a
+            >
             <span v-if="cit.title" class="source-title">{{ cit.title }}</span>
             <span v-if="cit.id" class="source-id">{{ cit.id }}</span>
           </li>

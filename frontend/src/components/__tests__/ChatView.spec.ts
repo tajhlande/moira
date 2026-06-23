@@ -137,9 +137,10 @@ function mockStartRunAndStream(events: { event: string; data: string }[]) {
   mockFetch.mockResolvedValueOnce(createSSEResponse(events));
 }
 
-function runSnapshot(
-  partial: Partial<Record<string, unknown>>,
-): { event: string; data: string } {
+function runSnapshot(partial: Partial<Record<string, unknown>>): {
+  event: string;
+  data: string;
+} {
   return {
     event: "run_snapshot",
     data: JSON.stringify({
@@ -807,7 +808,9 @@ describe("ChatView", () => {
     const run = store.getRunForMessage(1);
     expect(run).not.toBeNull();
     expect(run!.status).toBe("running");
-    expect(run!.execution_steps.some((s) => s.status === "completed")).toBe(true);
+    expect(run!.execution_steps.some((s) => s.status === "completed")).toBe(
+      true,
+    );
     expect(run!.execution_steps.some((s) => s.status === "stopped")).toBe(true);
 
     getConversationMock.mockImplementation(async () => ({

@@ -164,22 +164,32 @@ function kvPairs(obj: Record<string, unknown>): [string, string][] {
     </NCollapse>
 
     <!-- Tool identification detail -->
-    <div v-if="candidateTools.length > 0 || queries.length > 0" class="detail-section">
+    <div
+      v-if="candidateTools.length > 0 || queries.length > 0"
+      class="detail-section"
+    >
       <div v-if="candidateTools.length > 0" class="structured-section">
         <div class="detail-label">Candidate Tools</div>
         <div class="tool-tags">
           <span
             v-for="name in candidateTools"
             :key="name"
-            :class="['tool-tag', toolsStore.defaultToolNames.includes(name) ? 'default' : 'discovered']"
-          >{{ name }}</span>
+            :class="[
+              'tool-tag',
+              toolsStore.defaultToolNames.includes(name)
+                ? 'default'
+                : 'discovered',
+            ]"
+            >{{ name }}</span
+          >
         </div>
       </div>
       <div v-if="queries.length > 0" class="structured-section">
         <div class="detail-label">Fact Queries</div>
         <ul>
           <li v-for="(q, qi) in queries" :key="qi">
-            <strong>{{ q.fact_id }}</strong>: {{ q.query }}
+            <strong>{{ q.fact_id }}</strong
+            >: {{ q.query }}
           </li>
         </ul>
       </div>
@@ -189,7 +199,9 @@ function kvPairs(obj: Record<string, unknown>): [string, string][] {
     <div v-if="generationReason" class="detail-section">
       <div class="structured-section">
         <div class="detail-label">Generation Reason</div>
-        <span :class="['generation-reason-badge', generationReason]">{{ generationReason }}</span>
+        <span :class="['generation-reason-badge', generationReason]">{{
+          generationReason
+        }}</span>
       </div>
     </div>
 
@@ -225,10 +237,7 @@ function kvPairs(obj: Record<string, unknown>): [string, string][] {
                 tr.tool
               }}</span>
               <span class="tool-duration">{{ tr.duration_ms }}ms</span>
-              <button
-                class="tool-result-toggle"
-                @click="toggleToolResult(tri)"
-              >
+              <button class="tool-result-toggle" @click="toggleToolResult(tri)">
                 <IconChevronDown
                   v-if="expandedToolResults.has(tri)"
                   :size="18"
@@ -240,8 +249,14 @@ function kvPairs(obj: Record<string, unknown>): [string, string][] {
               v-if="expandedToolResults.has(tri)"
               class="step-tool-result-body"
             >
-              <div v-if="tr.args && Object.keys(tr.args).length > 0" class="so-kv-list">
-                <template v-for="([kvKey, kvVal], kvi) in kvPairs(tr.args)" :key="kvi">
+              <div
+                v-if="tr.args && Object.keys(tr.args).length > 0"
+                class="so-kv-list"
+              >
+                <template
+                  v-for="([kvKey, kvVal], kvi) in kvPairs(tr.args)"
+                  :key="kvi"
+                >
                   <span class="so-kv-key">{{ kvKey }}</span>
                   <span class="so-kv-val">{{ kvVal }}</span>
                 </template>

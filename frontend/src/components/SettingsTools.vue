@@ -89,11 +89,7 @@ function authLabel(authType: string | null): string {
         />
 
         <div v-else class="sources-list">
-          <div
-            v-for="source in sources"
-            :key="source.id"
-            class="source-card"
-          >
+          <div v-for="source in sources" :key="source.id" class="source-card">
             <div class="source-header">
               <div class="source-title-row">
                 <NText strong class="source-name">{{ source.name }}</NText>

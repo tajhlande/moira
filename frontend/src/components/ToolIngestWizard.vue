@@ -66,7 +66,8 @@ const METHOD_COLORS: Record<string, string> = {
 };
 
 const canProceed = computed(() => {
-  if (step.value === 0) return !!(baseUrl.value || specUrl.value || specFile.value);
+  if (step.value === 0)
+    return !!(baseUrl.value || specUrl.value || specFile.value);
   if (step.value === 1) return !!preview.value;
   if (step.value === 2) return selectedOps.value.length > 0;
   if (step.value === 3) return true;
@@ -130,9 +131,7 @@ async function analyzeSpec() {
 
     step.value = 1;
   } catch (e) {
-    message.error(
-      e instanceof Error ? e.message : "Failed to analyze spec",
-    );
+    message.error(e instanceof Error ? e.message : "Failed to analyze spec");
   } finally {
     loading.value = false;
   }
@@ -214,9 +213,7 @@ async function commitIngestion() {
     store.refreshTools();
   } catch (e) {
     stopProgress();
-    message.error(
-      e instanceof Error ? e.message : "Provisioning failed",
-    );
+    message.error(e instanceof Error ? e.message : "Provisioning failed");
   } finally {
     committing.value = false;
   }
@@ -262,7 +259,8 @@ function done() {
       </div>
 
       <NText depth="3" class="field-hint"
-        >The system will probe well-known paths for the spec automatically.</NText
+        >The system will probe well-known paths for the spec
+        automatically.</NText
       >
 
       <NDivider class="field-divider">or</NDivider>
@@ -307,7 +305,9 @@ function done() {
         <div class="review-item">
           <NText depth="3" class="review-label">Format</NText>
           <NText class="review-value">{{
-            preview.spec_format.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())
+            preview.spec_format
+              .replace("_", " ")
+              .replace(/\b\w/g, (c) => c.toUpperCase())
           }}</NText>
         </div>
         <div class="review-item">
@@ -320,13 +320,9 @@ function done() {
         </div>
       </div>
 
-      <NAlert
-        v-if="preview.auth_required"
-        type="warning"
-        class="auth-alert"
-      >
-        This API requires authentication ({{ preview.auth_type }}).
-        Tools will be registered as disabled until credentials are configured.
+      <NAlert v-if="preview.auth_required" type="warning" class="auth-alert">
+        This API requires authentication ({{ preview.auth_type }}). Tools will
+        be registered as disabled until credentials are configured.
       </NAlert>
 
       <div class="step-actions">
@@ -345,11 +341,7 @@ function done() {
       </div>
 
       <NCheckboxGroup v-model:value="selectedOps" class="ops-list">
-        <div
-          v-for="[tag, ops] of groupedOps"
-          :key="tag"
-          class="ops-group"
-        >
+        <div v-for="[tag, ops] of groupedOps" :key="tag" class="ops-group">
           <div class="ops-group-header">
             <NText strong>{{ tag }}</NText>
             <NText depth="3" class="ops-group-count"
@@ -362,18 +354,11 @@ function done() {
               class="select-all-btn"
               >All</NButton
             >
-            <NButton
-              text
-              size="tiny"
-              @click="toggleAll(ops, false)"
+            <NButton text size="tiny" @click="toggleAll(ops, false)"
               >None</NButton
             >
           </div>
-          <div
-            v-for="op in ops"
-            :key="op.name"
-            class="op-row"
-          >
+          <div v-for="op in ops" :key="op.name" class="op-row">
             <NCheckbox :value="op.name" :disabled="false">
               <div class="op-info">
                 <span
@@ -409,9 +394,9 @@ function done() {
       <NText depth="3" class="field-hint"
         >This determines the tool name prefix. Tools will be named
         <code
-          >{{ groupNameOverride.replace(/\s+/g, "_").toLowerCase().slice(0, 24) }}__{{
-            preview.operations[0]?.name.split("__")[1] || "method"
-          }}</code
+          >{{
+            groupNameOverride.replace(/\s+/g, "_").toLowerCase().slice(0, 24)
+          }}__{{ preview.operations[0]?.name.split("__")[1] || "method" }}</code
         >
         etc.</NText
       >
@@ -428,11 +413,7 @@ function done() {
 
       <div class="step-actions">
         <NButton @click="prevStep">Back</NButton>
-        <NButton
-          type="primary"
-          :loading="committing"
-          @click="commitIngestion"
-        >
+        <NButton type="primary" :loading="committing" @click="commitIngestion">
           Register Tools
         </NButton>
       </div>
