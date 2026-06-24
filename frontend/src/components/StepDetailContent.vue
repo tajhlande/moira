@@ -83,8 +83,18 @@ const rounds = computed<number | null>(() => {
   return typeof v === "number" ? v : null;
 });
 
+const callCount = computed<number | null>(() => {
+  const v = props.detail.call_count;
+  return typeof v === "number" ? v : null;
+});
+
 const hasMetadata = computed(() => {
-  return Boolean(toolCallingMode.value || modelName.value || rounds.value !== null);
+  return Boolean(
+    toolCallingMode.value ||
+      modelName.value ||
+      rounds.value !== null ||
+      (callCount.value !== null && callCount.value > 1),
+  );
 });
 
 const hasStructuredOutput = computed(() => {
@@ -124,6 +134,11 @@ function kvPairs(obj: Record<string, unknown>): [string, string][] {
       <span v-if="modelName" class="so-badge neutral">{{ modelName }}</span>
       <span v-if="rounds !== null" class="step-metadata-item"
         >{{ rounds }} tool-call {{ rounds === 1 ? "round" : "rounds" }}</span
+      >
+      <span
+        v-if="callCount !== null && callCount > 1"
+        class="so-badge warning"
+        >{{ callCount }} model calls</span
       >
     </div>
 

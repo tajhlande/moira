@@ -391,7 +391,10 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
                 "purpose": NODE_NAME,
                 "model": resolved.model_id,
                 "call_count": call_count,
-                "detail": {"generation_reason": generation_reason},
+                "detail": {
+                    "generation_reason": generation_reason,
+                    "call_count": call_count,
+                },
                 **_response_meta(response),
             },
         }
