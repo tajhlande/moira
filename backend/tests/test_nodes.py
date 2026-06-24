@@ -880,6 +880,36 @@ class TestResearch:
             f"Got citation_ids={fact.get('citation_ids', [])}"
         )
 
+    def test_apply_discovered_facts_preserves_existing_claim(self):
+        """An empty claim in a later _apply_discovered_facts call must not
+        overwrite a non-empty claim set by an earlier call.
+
+        Regression test: when research is retried after review, the model
+        sometimes emits discovered_facts with empty claims for facts it
+        already covered. The earlier claim should be preserved.
+        """
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts = [
+            Fact(
+                id="f001",
+                subject="test",
+                fact_needed="something",
+                claim="Original claim from round 1",
+                status="unverified",
+            ),
+        ]
+
+        # Simulate a later round where the model emits an empty claim
+        _apply_discovered_facts(
+            {"discovered_facts": [{"fact_id": "f001", "claim": ""}]},
+            facts,
+        )
+
+        assert facts[0]["claim"] == "Original claim from round 1", (
+            f"Empty claim should not overwrite existing claim. Got: '{facts[0]['claim']}'"
+        )
+
     @pytest.mark.asyncio
     async def test_structured_results_create_per_result_citations(
         self, config, mock_writer, mock_model
@@ -2044,8 +2074,11 @@ class TestEvaluation:
 
         result = await evaluation(state, _make_run_config(config))
 
-        assert "error" in result["execution_state"]
-        assert "Insufficient budget" in result["execution_state"]["error"]
+        # Evaluation should NOT set error on insufficient budget — it should
+        # return gracefully so report_generation uses "budget_exhausted"
+        # instead of "error" as the generation reason.
+        assert result["execution_state"].get("error", "") == ""
+        assert len(result.get("knowledge", {}).get("evaluation_history", [])) == 0
 
     @pytest.mark.asyncio
     async def test_model_failure(self, config, mock_writer, mock_model):
@@ -2636,9 +2669,7 @@ class TestReportGeneration:
         assert any("without inline citations" in c for c in report["critiques"])
 
     @pytest.mark.asyncio
-    async def test_no_retry_when_no_citations_available(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_no_retry_when_no_citations_available(self, config, mock_writer, mock_model):
         """When the knowledge state has zero citations, no retry should
         be attempted even if the answer lacks [n] markers."""
         _inject_services(config, mock_model)

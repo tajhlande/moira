@@ -91,9 +91,9 @@ const callCount = computed<number | null>(() => {
 const hasMetadata = computed(() => {
   return Boolean(
     toolCallingMode.value ||
-      modelName.value ||
-      rounds.value !== null ||
-      (callCount.value !== null && callCount.value > 1),
+    modelName.value ||
+    rounds.value !== null ||
+    (callCount.value !== null && callCount.value > 1),
   );
 });
 
@@ -129,15 +129,19 @@ function kvPairs(obj: Record<string, unknown>): [string, string][] {
     <div v-if="hasMetadata" class="step-metadata-strip">
       <span
         v-if="toolCallingMode"
-        :class="['so-badge', toolCallingMode === 'native' ? 'success' : 'neutral']"
-      >{{ toolCallingMode === "native" ? "Native Tools" : "Emulated Tools" }}</span>
+        :class="[
+          'so-badge',
+          toolCallingMode === 'native' ? 'success' : 'neutral',
+        ]"
+        >{{
+          toolCallingMode === "native" ? "Native Tools" : "Emulated Tools"
+        }}</span
+      >
       <span v-if="modelName" class="so-badge neutral">{{ modelName }}</span>
       <span v-if="rounds !== null" class="step-metadata-item"
         >{{ rounds }} tool-call {{ rounds === 1 ? "round" : "rounds" }}</span
       >
-      <span
-        v-if="callCount !== null && callCount > 1"
-        class="so-badge warning"
+      <span v-if="callCount !== null && callCount > 1" class="so-badge warning"
         >{{ callCount }} model calls</span
       >
     </div>

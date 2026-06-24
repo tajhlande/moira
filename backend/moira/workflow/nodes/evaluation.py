@@ -18,7 +18,7 @@ from langgraph.config import get_stream_writer
 from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.models.knowledge import EvaluationOutcome, ResearchState
 from moira.prompts import get_prompt
-from moira.workflow.budget import can_execute, deduct_cost
+from moira.workflow.budget import can_execute, deduct_cost, get_node_cost
 from moira.workflow.nodes._helpers import (
     _check_stop,
     _get_model,
@@ -62,6 +62,11 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
     es = state["execution_state"]
     knowledge = state["knowledge"]
     if not can_execute(es["step_costs"], NODE_NAME, es["budget_remaining"]):
+        logger.info(
+            "EVALUATION: insufficient budget (%.1f remaining, need %.1f)",
+            es["budget_remaining"],
+            get_node_cost(es["step_costs"], NODE_NAME),
+        )
         writer(
             {
                 "event": "node_end",
@@ -71,10 +76,11 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
                 },
             }
         )
+        # Do not set error — let report_generation use
+        # generation_reason="budget_exhausted" instead of "error".
         return {
             "execution_state": {
                 **es,
-                "error": f"Insufficient budget for {NODE_NAME}",
             },
         }
 

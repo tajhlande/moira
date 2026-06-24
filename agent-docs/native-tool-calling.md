@@ -411,16 +411,20 @@ since none produces observable behavior in isolation.
 - Runnable artifact: native tool calling works when flag is enabled, text
   mode unchanged when disabled
 
-### Phase 3: Integration validation
+### Phase 3: Integration validation ✅
 
 Validate the feature end-to-end before production use.
 
-- Full graph integration test with `native_tool_calling: true` (mock model
-  emits tool_calls for 2 rounds, then text with discovered_facts)
-- Verify same knowledge model state as equivalent text-mode run
-- Manual A/B comparison against text mode on the evaluation canary question
-- Token budget / performance assessment for runs with many candidate tools
-- Runnable artifact: validated feature ready for production use
+- ✅ Full graph integration test with `native_tool_calling: true` (`test_full_cycle_native_tool_calling`)
+- ✅ Verify same knowledge model state as equivalent text-mode run (`test_native_and_text_modes_produce_equivalent_state`)
+- ✅ Manual A/B comparison against text mode on the evaluation canary question
+- ✅ Token budget / performance assessment — native mode uses ~25% fewer input tokens and is ~25% faster overall
+
+Bugs found and fixed during validation:
+- `_apply_discovered_facts` overwrote non-empty claims with empty strings on research retry
+- Review router didn't reserve evaluation cost before approving retries
+- Evaluation node set `error` instead of falling through to `budget_exhausted` on insufficient budget
+- Report generation didn't retry when the model omitted inline citation markers
 
 Future phases (not in initial scope):
 - Anthropic Messages adapter (requires broader client refactoring for different

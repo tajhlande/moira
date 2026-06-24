@@ -154,6 +154,22 @@ def test_review_router_retry_falls_to_evaluation_on_insufficient_budget():
     assert router(state) == "evaluation"
 
 
+def test_review_router_retry_declined_when_budget_covers_retry_but_not_evaluation():
+    """The router must reserve evaluation cost before allowing a retry.
+    Otherwise the retry consumes the last budget and evaluation can't run.
+
+    Review retry cost = research(10) + synthesis(5) + review(3) = 18
+    Evaluation cost = 5
+    Threshold = 23
+
+    With budget=20, the retry alone is affordable (20 >= 18) but the
+    combined cost is not (20 < 23), so the router should decline.
+    """
+    router = make_review_router()
+    state = _make_review_router_state(route="retry", budget_remaining=20.0, review_count=1)
+    assert router(state) == "evaluation"
+
+
 def test_review_router_retry_falls_to_evaluation_on_max_attempts():
     router = make_review_router()
     state = _make_review_router_state(route="retry", budget_remaining=60.0, review_count=3)

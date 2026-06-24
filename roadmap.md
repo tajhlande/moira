@@ -7,7 +7,7 @@ These are roughly organized by area and not in a plan order.
 ## Major Capabilities
 
 - Classification of wanted facts as a verifiable claim or an opinion/consensus claim,
-  and opinion facts/conclusions are acceptable when the range of views is
+  and opinion facts/conclusions become acceptable when the range of views is
   represented with attribution
 - Runtime tool registration from non OpenAPI REST APIs
 - Runtime inference provider configuration
@@ -28,7 +28,7 @@ These are roughly organized by area and not in a plan order.
 - Web content prompt injection safety
 - long conversation context management
 - "Grind" verification option to split draft text into sentences and
-verify each sentence independently.
+  verify each sentence independently.
 - Memory
   - Fact storage and recall
   - Fact hygiene
@@ -37,6 +37,7 @@ verify each sentence independently.
 
 ## Built-in Tools
 
+- Try refactoring web_search tool to return only URLs, so that fetch_url is used for content
 - Kagi search tool
 - Wikipedia search
 - Arxiv search

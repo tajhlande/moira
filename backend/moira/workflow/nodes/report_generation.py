@@ -287,8 +287,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     if not cited_citations and all_citations:
         for attempt in range(_MAX_CITATION_RETRIES):
             logger.warning(
-                "REPORT GENERATION: answer has no inline citations "
-                "(attempt %d/%d), retrying",
+                "REPORT GENERATION: answer has no inline citations (attempt %d/%d), retrying",
                 attempt + 1,
                 _MAX_CITATION_RETRIES,
             )
@@ -327,8 +326,8 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
             if thinking:
                 detail["thinking"] = thinking[:2000]
             raw_answer = parsed.get("answer", "")
-            cited_answer, cited_citations, uncited_citations = (
-                _prune_and_renumber_citations(raw_answer, all_citations)
+            cited_answer, cited_citations, uncited_citations = _prune_and_renumber_citations(
+                raw_answer, all_citations
             )
             if cited_citations:
                 logger.info(

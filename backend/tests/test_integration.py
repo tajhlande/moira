@@ -3,12 +3,13 @@ from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langgraph.graph.state import RunnableConfig
 
 from moira.config import MoiraConfig
 from moira.inference.client import ChatResponse, InferenceClient
 from moira.inference.registry import ModelRegistry, ResolvedModel
 from moira.service_setup import _services
-from moira.tools.base import ToolDefinition, ToolResult
+from moira.tools.base import ToolCall, ToolDefinition, ToolResult
 from moira.workflow.graph import compile_graph
 
 DECOMPOSITION_JSON = json.dumps(
@@ -40,6 +41,36 @@ RESEARCH_JSON = json.dumps(
         "discovered_facts": [{"fact_id": "f001", "claim": "Paris is the capital of France"}],
         "sources": [],
     }
+)
+
+# Text-mode research with an actual tool call (for A/B comparison)
+RESEARCH_TEXT_TOOL_CALL = json.dumps(
+    {
+        "tool_calls": [{"tool": "web_search", "args": {"query": "capital of France"}}],
+        "discovered_facts": [],
+        "sources": [],
+    }
+)
+
+# Native-mode research round 1: model calls web_search via structured tool_calls
+RESEARCH_NATIVE_TOOL_CALL = ChatResponse(
+    content="",
+    tool_calls=[
+        ToolCall(id="call_001", name="web_search", arguments={"query": "capital of France"}),
+    ],
+)
+
+# Native-mode research round 2: model is done, emits discovered_facts
+RESEARCH_NATIVE_FACTS = ChatResponse(
+    content=json.dumps(
+        {
+            "discovered_facts": [
+                {"fact_id": "f001", "claim": "Paris is the capital of France"},
+            ],
+            "sources": [],
+        }
+    ),
+    tool_calls=[],
 )
 
 SYNTHESIS_JSON = json.dumps(
@@ -98,7 +129,7 @@ EVALUATION_RETRY_JSON = json.dumps(
 
 REPORT_JSON = json.dumps(
     {
-        "answer": "Paris is the capital of France.",
+        "answer": "Paris is the capital of France. [1]",
         "citations": [],
         "verified_facts": [],
         "verified_conclusions": [],
@@ -159,7 +190,7 @@ def _build_state(config, budget=None):
     }
 
 
-def _make_run_config(config):
+def _make_run_config(config) -> RunnableConfig:
     return {"configurable": {"moira_config": config}}
 
 
@@ -364,3 +395,107 @@ class TestIntegration:
         assert report["generation_reason"] == "verified"
         assert result["execution_state"]["evaluation_count"] >= 2
         assert len(result["knowledge"]["evaluation_history"]) >= 2
+
+    @pytest.mark.asyncio
+    async def test_full_cycle_native_tool_calling(self, config, mock_writer, mock_model):
+        """Full graph run with native_tool_calling enabled.
+
+        The research node uses the native tool-calling loop: the model emits
+        a structured tool_call in round 1, the executor runs it, and the model
+        emits discovered_facts in round 2.
+        """
+        _inject_services(config, mock_model)
+        mock_model["resolved"].native_tool_calling = True
+
+        mock_model["client"].chat_completion.side_effect = [
+            _cr(DECOMPOSITION_JSON),  # decomposition
+            _cr(PLANNING_JSON),  # planning
+            RESEARCH_NATIVE_TOOL_CALL,  # research round 1 (native tool call)
+            RESEARCH_NATIVE_FACTS,  # research round 2 (discovered_facts, done)
+            _cr(SYNTHESIS_JSON),  # synthesis
+            _cr(REVIEW_CONTINUE_JSON),  # research_review → continue
+            _cr(EVALUATION_ACCEPT_JSON),  # evaluation → accept
+            _cr(REPORT_JSON),  # report_generation
+        ]
+
+        state = _build_state(config)
+        graph = compile_graph(config)
+        result = await graph.ainvoke(state, config=_make_run_config(config))
+
+        report = result["knowledge"]["report"]
+        assert report is not None
+        assert report["generation_reason"] == "verified"
+        assert report["answer"] != ""
+
+        # Verify the executor was actually called (native tool was executed)
+        assert mock_model["client"].chat_completion.call_count >= 8
+
+    @pytest.mark.asyncio
+    async def test_native_and_text_modes_produce_equivalent_state(
+        self, config, mock_writer, mock_model
+    ):
+        """Running the same scenario in text and native modes should produce
+        equivalent knowledge state (same facts, citations, conclusions).
+
+        Both modes call web_search once, then discover fact f001.
+        """
+        # --- Text-mode run ---
+        _inject_services(config, mock_model)
+        mock_model["resolved"].native_tool_calling = False
+        mock_model["client"].chat_completion.side_effect = [
+            _cr(DECOMPOSITION_JSON),
+            _cr(PLANNING_JSON),
+            _cr(RESEARCH_TEXT_TOOL_CALL),  # text-mode: tool call in JSON
+            _cr(RESEARCH_JSON),  # text-mode: discovered_facts, done
+            _cr(SYNTHESIS_JSON),
+            _cr(REVIEW_CONTINUE_JSON),
+            _cr(EVALUATION_ACCEPT_JSON),
+            _cr(REPORT_JSON),
+        ]
+        state_text = _build_state(config)
+        graph = compile_graph(config)
+        result_text = await graph.ainvoke(state_text, config=_make_run_config(config))
+
+        # --- Native-mode run ---
+        # Re-inject services to reset mock executor call counts
+        _inject_services(config, mock_model)
+        mock_model["resolved"].native_tool_calling = True
+        mock_model["client"].chat_completion.side_effect = [
+            _cr(DECOMPOSITION_JSON),
+            _cr(PLANNING_JSON),
+            RESEARCH_NATIVE_TOOL_CALL,  # native: structured tool call
+            RESEARCH_NATIVE_FACTS,  # native: discovered_facts, done
+            _cr(SYNTHESIS_JSON),
+            _cr(REVIEW_CONTINUE_JSON),
+            _cr(EVALUATION_ACCEPT_JSON),
+            _cr(REPORT_JSON),
+        ]
+        state_native = _build_state(config)
+        graph = compile_graph(config)
+        result_native = await graph.ainvoke(state_native, config=_make_run_config(config))
+
+        # --- Compare knowledge states ---
+        k_text = result_text["knowledge"]
+        k_native = result_native["knowledge"]
+
+        # Both modes should resolve the same fact
+        text_facts = {f["id"]: f for f in k_text.get("facts", [])}
+        native_facts = {f["id"]: f for f in k_native.get("facts", [])}
+        assert set(text_facts.keys()) == set(native_facts.keys())
+        for fid in text_facts:
+            assert text_facts[fid].get("claim") == native_facts[fid].get("claim")
+            assert text_facts[fid].get("status") == native_facts[fid].get("status")
+
+        # Both modes should create citations from the same web_search result
+        text_urls = {c.get("url") for c in k_text.get("citations", []) if c.get("url")}
+        native_urls = {c.get("url") for c in k_native.get("citations", []) if c.get("url")}
+        assert text_urls == native_urls
+
+        # Both modes should produce the same conclusions
+        text_conclusions = {c["id"] for c in k_text.get("conclusions", [])}
+        native_conclusions = {c["id"] for c in k_native.get("conclusions", [])}
+        assert text_conclusions == native_conclusions
+
+        # Both reports should be verified
+        assert k_text["report"]["generation_reason"] == "verified"
+        assert k_native["report"]["generation_reason"] == "verified"

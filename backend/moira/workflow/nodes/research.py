@@ -384,7 +384,9 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
         if fact_id:
             for fact in facts:
                 if fact["id"] == fact_id and fact["status"] in ("unknown", "unverified"):
-                    fact["claim"] = disc.get("claim", "")
+                    new_claim = disc.get("claim", "")
+                    if new_claim:
+                        fact["claim"] = new_claim
                     if disc.get("relation"):
                         fact["relation"] = disc["relation"]
                     if disc.get("value"):

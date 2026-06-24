@@ -23,6 +23,7 @@ from moira.config import MoiraConfig
 from moira.models.knowledge import ResearchState
 from moira.workflow.budget import (
     evaluation_retry_cost,
+    get_node_cost,
     review_retry_cost,
 )
 from moira.workflow.nodes.decomposition import decomposition
@@ -65,24 +66,29 @@ def make_review_router():
             review_count = es.get("review_count", 0)
             budget_remaining = es.get("budget_remaining", 0.0)
             rr_cost = review_retry_cost(step_costs)
+            # Reserve enough budget for evaluation after the retry cycle,
+            # so the retry doesn't consume the last of the budget and
+            # leave evaluation unable to run.
+            eval_cost = get_node_cost(step_costs, "evaluation")
+            threshold = rr_cost + eval_cost
             max_review = es.get("retry_limits", {}).get("max_review", 3)
 
-            if review_count < max_review and budget_remaining >= rr_cost:
+            if review_count < max_review and budget_remaining >= threshold:
                 logger.info(
                     "review retry: budget sufficient (%.1f >= %.1f), count=%d/%d",
                     budget_remaining,
-                    rr_cost,
+                    threshold,
                     review_count,
                     max_review,
                 )
                 return "research"
 
             logger.info(
-                "review retry declined (count=%d/%d, budget=%.1f, cost=%.1f)",
+                "review retry declined (count=%d/%d, budget=%.1f, threshold=%.1f)",
                 review_count,
                 max_review,
                 budget_remaining,
-                rr_cost,
+                threshold,
             )
             # Fall through to evaluation — let evaluation decide
             return "evaluation"
