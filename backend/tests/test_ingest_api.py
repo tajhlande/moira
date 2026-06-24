@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 from fastapi.testclient import TestClient
 
 from moira.config import (
@@ -115,10 +116,12 @@ def _config(tmp_dir: str):
     )
 
 
-@pytest.fixture
-async def app_client(tmp_path):
+@pytest_asyncio.fixture(scope="module")
+async def _app_setup(tmp_path_factory):
+    """Module-scoped expensive setup: migrations, init_services, create_app."""
     import os
 
+    tmp_path = tmp_path_factory.mktemp("ingest_tests")
     data_dir = str(tmp_path / "moira_data")
     os.makedirs(data_dir, exist_ok=True)
     os.environ["MOIRA_DATA_DIR"] = data_dir
@@ -140,6 +143,22 @@ async def app_client(tmp_path):
     yield client
     await shutdown_services()
     os.environ.pop("MOIRA_DATA_DIR", None)
+
+
+@pytest.fixture
+async def app_client(_app_setup):
+    """Function-scoped TestClient with clean tool state.
+
+    Deletes all ingested API sources (and their tools) between tests
+    so each test starts with a clean tool catalog.
+    """
+    client = _app_setup
+    # Clean up any tools ingested by previous tests
+    sources_resp = client.get("/api/tools/ingest/sources")
+    if sources_resp.status_code == 200:
+        for source in sources_resp.json().get("sources", []):
+            client.delete(f"/api/tools/ingest/sources/{source['id']}")
+    yield client
 
 
 MINIMAL_SPEC = json.dumps(

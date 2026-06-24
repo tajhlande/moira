@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 from fastapi.testclient import TestClient
 
 from moira.config import (
@@ -126,16 +127,22 @@ def _config(tmp_dir: str):
     )
 
 
-@pytest.fixture
-async def app_client(tmp_path):
+@pytest_asyncio.fixture(scope="module")
+async def _app_setup(tmp_path_factory):
+    """Module-scoped expensive setup: migrations, init_services, create_app.
+
+    Runs once per module. Function-scoped wrappers (app_client,
+    app_client_with_runs) reset repo state between tests.
+    """
     import os
 
+    tmp_path = tmp_path_factory.mktemp("api_tests")
     data_dir = str(tmp_path / "moira_data")
     os.makedirs(data_dir, exist_ok=True)
     os.environ["MOIRA_DATA_DIR"] = data_dir
 
     config = _config(str(tmp_path))
-    conversation_repo = FakeConversationRepo()
+    conversation_repo = WorkflowRunAwareRepo()
     prefs_repo = FakePrefsRepo()
 
     from moira.config import resolve_db_path
@@ -148,9 +155,32 @@ async def app_client(tmp_path):
 
     app = create_app()
     client = TestClient(app)
-    yield client
+    yield client, conversation_repo
     await shutdown_services()
     os.environ.pop("MOIRA_DATA_DIR", None)
+
+
+def _reset_repo(repo):
+    """Clear in-memory repo state for test isolation."""
+    repo._conversations.clear()
+    repo._counter = 0
+    repo._runs.clear()
+
+
+@pytest.fixture
+async def app_client(_app_setup):
+    """Function-scoped TestClient with clean repo state."""
+    client, repo = _app_setup
+    _reset_repo(repo)
+    yield client
+
+
+@pytest.fixture
+async def app_client_with_runs(_app_setup):
+    """Function-scoped TestClient + repo with clean state."""
+    client, repo = _app_setup
+    _reset_repo(repo)
+    yield client, repo
 
 
 def test_health_endpoint(app_client):
@@ -366,31 +396,6 @@ class WorkflowRunAwareRepo(FakeConversationRepo):
         return [r for r in self._runs.values() if r.conversation_id == conversation_id]
 
 
-@pytest.fixture
-async def app_client_with_runs(tmp_path):
-    import os
-
-    data_dir = str(tmp_path / "moira_data")
-    os.makedirs(data_dir, exist_ok=True)
-    os.environ["MOIRA_DATA_DIR"] = data_dir
-
-    config = _config(str(tmp_path))
-    conversation_repo = WorkflowRunAwareRepo()
-    prefs_repo = FakePrefsRepo()
-
-    from moira.config import resolve_db_path
-    from moira.persistence.sqlite.schema import run_migrations
-
-    run_migrations(resolve_db_path(config))
-
-    await init_services(config, conversation_repo=conversation_repo, prefs_repo=prefs_repo)
-    from moira.main import create_app
-
-    app = create_app()
-    client = TestClient(app)
-    yield client, conversation_repo
-    await shutdown_services()
-    os.environ.pop("MOIRA_DATA_DIR", None)
 
 
 def test_knowledge_endpoint_no_knowledge(app_client_with_runs):
