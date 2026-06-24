@@ -43,6 +43,18 @@ inference:
       # For example, MOIRA_API_KEY_LOCAL for the provider named "local".
       # Env vars take precedence over this value.
       api_key: ""
+      # provider_type identifies the API dialect of this server.
+      # "completions" = OpenAI Chat Completions (vLLM, llama.cpp, OpenAI)
+      # "responses"   = OpenAI Responses API (not yet implemented)
+      # "messages"    = Anthropic Messages API (not yet implemented)
+      provider_type: "completions"
+      # Per-model capability flags. Same model ID on different servers
+      # can have different capabilities depending on the chat template.
+      # models:
+      #   - id: "Qwen3.6-35B-A3B"
+      #     native_tool_calling: true
+      #   - id: "Qwen3.5-2B-No-Thinking"
+      #     native_tool_calling: false  # default
   models:
     intelligence_endpoint: ""  # provider name
     intelligence_model: ""     # model ID
@@ -63,7 +75,6 @@ embedding:
 tools: []
   # - name: web_search
   #   description: "Search the web for information"
-  #   type: rest
   #   endpoint: "https://api.example.com/search"
   #   method: POST
   #   argument_schema:

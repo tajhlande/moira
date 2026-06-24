@@ -35,6 +35,8 @@ REQUIRED_SECTIONS = [
     "research.parse_correction",
     "research.summary",
     "research.tool_feedback",
+    "research.system_native_tools",
+    "research.user_native",
     "research.system_retry_review",
     "research.fact_extraction.system",
     "research.fact_extraction.user",
@@ -52,6 +54,7 @@ REQUIRED_SECTIONS = [
     "report_generation.reason_incomplete",
     "report_generation.reason_error",
     "report_generation.user",
+    "report_generation.citation_retry",
     "tool_enrichment.system",
     "tool_enrichment.user",
 ]

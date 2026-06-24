@@ -35,10 +35,21 @@ class BudgetConfig(BaseModel):
     retry_limits: RetryLimits = RetryLimits()
 
 
+class ModelCapabilityConfig(BaseModel):
+    """Per-model capability flags. Lives under the provider's model list
+    since the same model ID served by different providers can have
+    different capabilities depending on the server's chat template."""
+
+    id: str
+    native_tool_calling: bool = False
+
+
 class InferenceEndpointConfig(BaseModel):
     name: str
     base_url: str
     api_key: str = ""
+    provider_type: str = "completions"
+    models: list[ModelCapabilityConfig] = []
 
 
 class InferenceModelsConfig(BaseModel):

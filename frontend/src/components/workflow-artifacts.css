@@ -438,6 +438,20 @@
   margin-bottom: 6px;
 }
 
+.step-metadata-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.step-metadata-item {
+  font-size: 0.8em;
+  opacity: 0.7;
+  font-family: monospace;
+}
+
 .tool-tags {
   display: flex;
   flex-wrap: wrap;

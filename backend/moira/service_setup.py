@@ -120,7 +120,11 @@ async def init_services(
         if api_key:
             logger.debug("Using API key from %s for endpoint '%s'", env_key, ep.name)
         logger.info("Connecting to inference endpoint '%s' at %s", ep.name, ep.base_url)
-        client = InferenceClient(base_url=ep.base_url, api_key=api_key)
+        client = InferenceClient(
+            base_url=ep.base_url,
+            api_key=api_key,
+            provider_type=ep.provider_type,
+        )
         await client.start()
         clients[ep.name] = client
         _services[f"inference_client:{ep.name}"] = client

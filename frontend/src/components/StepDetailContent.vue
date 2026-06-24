@@ -68,6 +68,25 @@ const generationReason = computed<string | null>(() => {
   return typeof v === "string" ? v : null;
 });
 
+const toolCallingMode = computed<string | null>(() => {
+  const v = props.detail.tool_calling_mode;
+  return typeof v === "string" ? v : null;
+});
+
+const modelName = computed<string | null>(() => {
+  const v = props.detail.model;
+  return typeof v === "string" && v.length > 0 ? v : null;
+});
+
+const rounds = computed<number | null>(() => {
+  const v = props.detail.rounds;
+  return typeof v === "number" ? v : null;
+});
+
+const hasMetadata = computed(() => {
+  return Boolean(toolCallingMode.value || modelName.value || rounds.value !== null);
+});
+
 const hasStructuredOutput = computed(() => {
   return so.value && Object.keys(so.value).length > 0;
 });
@@ -96,6 +115,18 @@ function kvPairs(obj: Record<string, unknown>): [string, string][] {
 
 <template>
   <div class="step-detail-content">
+    <!-- Metadata strip -->
+    <div v-if="hasMetadata" class="step-metadata-strip">
+      <span
+        v-if="toolCallingMode"
+        :class="['so-badge', toolCallingMode === 'native' ? 'success' : 'neutral']"
+      >{{ toolCallingMode === "native" ? "Native Tools" : "Emulated Tools" }}</span>
+      <span v-if="modelName" class="so-badge neutral">{{ modelName }}</span>
+      <span v-if="rounds !== null" class="step-metadata-item"
+        >{{ rounds }} tool-call {{ rounds === 1 ? "round" : "rounds" }}</span
+      >
+    </div>
+
     <!-- Prompt section (string) -->
     <NCollapse
       v-if="promptText"

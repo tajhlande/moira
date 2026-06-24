@@ -28,6 +28,8 @@ NODE_NAME = "report_generation"
 
 _CITE_PATTERN = re.compile(r"\[(\d+)\]")
 
+_MAX_CITATION_RETRIES = 2
+
 
 def _format_facts(facts: list) -> str:
     lines = []
@@ -205,11 +207,13 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     ]
 
     logger.info("REPORT GENERATION Start (reason=%s)", generation_reason)
+    call_count = 0
     response = await resolved.client.chat_completion(
         messages=messages,
         model=resolved.model_id,
         temperature=DEFAULT_TEMPERATURE,
     )
+    call_count += 1
 
     raw = response.content or ""
     thinking = getattr(response, "thinking", "") or ""
@@ -232,7 +236,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
                     "detail": detail,
                     "purpose": NODE_NAME,
                     "model": resolved.model_id,
-                    "call_count": 1,
+                    "call_count": call_count,
                 },
             }
         )
@@ -261,7 +265,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
                     "detail": detail,
                     "purpose": NODE_NAME,
                     "model": resolved.model_id,
-                    "call_count": 1,
+                    "call_count": call_count,
                 },
             }
         )
@@ -274,6 +278,77 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     cited_answer, cited_citations, uncited_citations = _prune_and_renumber_citations(
         raw_answer, all_citations
     )
+
+    # ---- Citation retry ----
+    # If the model produced no inline [n] markers despite having citations
+    # available, retry with a correction prompt.  After retries are exhausted
+    # the report is accepted with a warning critique appended.
+    citation_warning = ""
+    if not cited_citations and all_citations:
+        for attempt in range(_MAX_CITATION_RETRIES):
+            logger.warning(
+                "REPORT GENERATION: answer has no inline citations "
+                "(attempt %d/%d), retrying",
+                attempt + 1,
+                _MAX_CITATION_RETRIES,
+            )
+            messages.append({"role": "assistant", "content": raw})
+            messages.append(
+                {"role": "user", "content": get_prompt("report_generation.citation_retry")}
+            )
+            retry_response = await resolved.client.chat_completion(
+                messages=messages,
+                model=resolved.model_id,
+                temperature=max(DEFAULT_TEMPERATURE - 0.2, 0.1),
+            )
+            call_count += 1
+            retry_raw = retry_response.content or ""
+
+            if not retry_raw.strip():
+                logger.warning(
+                    "REPORT GENERATION: citation retry %d returned empty content",
+                    attempt + 1,
+                )
+                break
+
+            retry_parsed = _parse_json_object(retry_raw)
+            if not retry_parsed or "answer" not in retry_parsed:
+                logger.warning(
+                    "REPORT GENERATION: citation retry %d returned unparseable JSON",
+                    attempt + 1,
+                )
+                break
+
+            # Adopt the retry response
+            response = retry_response
+            raw = retry_raw
+            parsed = retry_parsed
+            thinking = getattr(retry_response, "thinking", "") or ""
+            if thinking:
+                detail["thinking"] = thinking[:2000]
+            raw_answer = parsed.get("answer", "")
+            cited_answer, cited_citations, uncited_citations = (
+                _prune_and_renumber_citations(raw_answer, all_citations)
+            )
+            if cited_citations:
+                logger.info(
+                    "REPORT GENERATION: citation retry %d succeeded (%d citations)",
+                    attempt + 1,
+                    len(cited_citations),
+                )
+                break
+
+        if not cited_citations:
+            citation_warning = (
+                f"Report generated without inline citations despite "
+                f"{len(all_citations)} sources being available"
+            )
+            logger.warning("REPORT GENERATION: %s", citation_warning)
+
+    critiques = list(parsed.get("critiques", []))
+    if citation_warning:
+        critiques.append(citation_warning)
+
     report = ResearchReport(
         answer=cited_answer,
         citations=cited_citations,
@@ -291,7 +366,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
         unknown_facts=[
             dict(f) for f in knowledge.get("facts", []) if f.get("status") == "unknown"
         ],
-        critiques=parsed.get("critiques", []),
+        critiques=critiques,
         total_cost=es["budget_limit"] - new_budget,
         tool_call_total_cost=es.get("total_tool_cost_consumed", 0.0),
         generation_reason=generation_reason,
@@ -315,7 +390,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
                 "budget_remaining": new_budget,
                 "purpose": NODE_NAME,
                 "model": resolved.model_id,
-                "call_count": 1,
+                "call_count": call_count,
                 "detail": {"generation_reason": generation_reason},
                 **_response_meta(response),
             },

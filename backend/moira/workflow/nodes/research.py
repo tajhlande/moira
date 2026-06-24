@@ -16,14 +16,20 @@ Discovered facts and sources are applied each round, not just at the end.
 
 import logging
 import uuid
+from dataclasses import dataclass
+from typing import Any, Callable, cast
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
+from moira.inference.adapters import get_adapter
+from moira.inference.client import ChatResponse
 from moira.inference.defaults import DEFAULT_TEMPERATURE
+from moira.inference.registry import ResolvedModel
 from moira.models.knowledge import Citation, Fact, ResearchState, next_id
 from moira.prompts import get_prompt
 from moira.tools.base import ToolCall, ToolDefinition
+from moira.tools.executor import ToolExecutor
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
     _check_stop,
@@ -211,6 +217,150 @@ def _extract_tool_calls(parsed: dict) -> list[ToolCall]:
         if tc:
             result.append(tc)
     return result
+
+
+def _validate_and_filter_calls(
+    parsed_calls: list[ToolCall],
+    allowed_names: set[str],
+    call_limits: dict[str, int],
+    call_counts: dict[str, int],
+    required_params: dict[str, set[str]],
+) -> tuple[list[ToolCall], list[str]]:
+    """Filter tool calls by allowed names, call limits, and required params.
+
+    Returns ``(valid_calls, rejected_names)``.
+    """
+    valid_calls: list[ToolCall] = []
+    rejected: list[ToolCall] = []
+    for call in parsed_calls:
+        if call.name not in allowed_names:
+            rejected.append(call)
+            continue
+        limit = call_limits.get(call.name, 0)
+        used = call_counts.get(call.name, 0)
+        if limit > 0 and used >= limit:
+            logger.warning(
+                "Tool %s hit call limit (%d/%d), skipping",
+                call.name,
+                used,
+                limit,
+            )
+            continue
+        required = required_params.get(call.name)
+        if required:
+            missing = [
+                p
+                for p in required
+                if p not in call.arguments or not str(call.arguments[p]).strip()
+            ]
+            if missing:
+                logger.warning(
+                    "Tool %s missing required params: %s, skipping",
+                    call.name,
+                    missing,
+                )
+                continue
+        valid_calls.append(call)
+    return valid_calls, [c.name for c in rejected]
+
+
+def _process_execution_results(
+    results: list,
+    valid_calls: list[ToolCall],
+    writer: Callable[[dict[str, Any]], None],
+    citations: list[Citation],
+    seen_urls: dict[str, str],
+    facts: list[Fact],
+    tool_plan: list,
+    tool_results_log: list[dict],
+    call_counts: dict[str, int],
+    tool_costs: dict[str, float],
+    new_budget: float,
+    total_tool_cost: float,
+) -> tuple[list[str], float, float]:
+    """Process execution results into citations, summaries, and cost tracking.
+
+    Mutates ``citations``, ``seen_urls``, ``facts``, ``tool_results_log``,
+    and ``call_counts`` in place. Returns ``(tool_summary_parts,
+    new_budget, total_tool_cost)``.
+    """
+    tool_summary_parts: list[str] = []
+    for result, call in zip(results, valid_calls):
+        name = call.name
+        args = call.arguments
+        writer(
+            {
+                "event": "tool_result",
+                "payload": {
+                    "tool": result.tool_name,
+                    "args": args,
+                    "output": _truncate_for_display(result.output),
+                    "duration_ms": result.duration_ms,
+                    "success": result.success,
+                    "node": NODE_NAME,
+                    "metadata": result.metadata,
+                },
+            }
+        )
+
+        structured = result.metadata.get("results")
+        if structured:
+            for sr in structured:
+                cit_id, is_new = _find_or_merge_citation(
+                    citations,
+                    seen_urls,
+                    source=result.tool_name,
+                    url=sr.get("url") or None,
+                    title=sr.get("title") or None,
+                    snippet=sr.get("snippet") or None,
+                )
+                status = "SUCCESS" if result.success else "FAILED"
+                recurring = "" if is_new else " (recurring source)"
+                tool_summary_parts.append(
+                    f"[{cit_id}] Tool: {name}\nStatus: {status}{recurring}\n"
+                    f"Title: {sr.get('title', '')}\n"
+                    f"URL: {sr.get('url', '')}\n"
+                    f"Snippet: {sr.get('snippet', '')}"
+                )
+        else:
+            cit_id = next_id("cit", citations)
+            citations.append(
+                Citation(
+                    id=cit_id,
+                    source=result.tool_name,
+                    excerpt=result.output[:500] if result.output else "",
+                )
+            )
+            status = "SUCCESS" if result.success else "FAILED"
+            tool_summary_parts.append(
+                f"[{cit_id}] Tool: {name}\nStatus: {status}\nResult:\n{result.output}"
+            )
+
+        tool_results_log.append(
+            {
+                "tool": result.tool_name,
+                "args": args,
+                "output": result.output[:500] if result.output else "",
+                "duration_ms": result.duration_ms,
+                "success": result.success,
+                "metadata": result.metadata,
+            }
+        )
+
+        if result.success and result.output:
+            for planned in tool_plan:
+                if planned["tool"] == name:
+                    target_ids = planned.get("target_fact_ids", [])
+                    for fact in facts:
+                        if fact["id"] in target_ids and fact["status"] == "unknown":
+                            fact["status"] = "unverified"
+
+        call_counts[name] = call_counts.get(name, 0) + 1
+        per_call_cost = tool_costs.get(name, 1.0)
+        new_budget -= per_call_cost
+        total_tool_cost += per_call_cost
+
+    return tool_summary_parts, new_budget, total_tool_cost
 
 
 def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
@@ -438,148 +588,195 @@ async def _extract_facts_from_results(
     return resolved_list
 
 
-async def research(state: ResearchState, config: RunnableConfig) -> dict:
-    """Model-driven multi-round tool calling for fact discovery.
+@dataclass
+class _LoopResult:
+    """State returned by a tool-loop function for the post-loop code."""
 
-    The model decides which tools to call from the candidate set, sees
-    results, and can request additional rounds. The tool_call_plan from
-    planning is provided as guidance, but the model drives execution.
+    last_response: ChatResponse | None
+    last_thinking: str
+    total_call_count: int
+    exhausted_rounds: bool
+    rounds: int
+    had_valid_calls: bool
+    new_budget: float
+    total_tool_cost: float
+
+
+async def _run_native_tool_loop(
+    resolved: ResolvedModel,
+    messages: list[dict],
+    candidate_tools: list[ToolDefinition],
+    allowed_names: set[str],
+    required_params: dict[str, set[str]],
+    call_limits: dict[str, int],
+    call_counts: dict[str, int],
+    tool_costs: dict[str, float],
+    executor: ToolExecutor,
+    writer: Callable[[dict[str, Any]], None],
+    facts: list[Fact],
+    citations: list[Citation],
+    seen_urls: dict[str, str],
+    tool_plan: list,
+    tool_results_log: list[dict],
+    new_budget: float,
+    total_tool_cost: float,
+) -> _LoopResult:
+    """Run the native tool-calling loop.
+
+    Uses the server's tool-calling API (``tools`` parameter) instead of
+    text-based JSON parsing. Tool calls come back in ``response.tool_calls``;
+    ``discovered_facts`` and ``sources`` are still parsed from ``content``
+    (hybrid approach).
     """
-    _check_stop(NODE_NAME, config)
-    writer = get_stream_writer()
-    writer({"event": "node_start", "payload": {"node": NODE_NAME, "timestamp": _now()}})
-
-    es = state["execution_state"]
-    knowledge = state["knowledge"]
-    if not can_execute(es["step_costs"], NODE_NAME, es["budget_remaining"]):
-        writer(
-            {
-                "event": "node_end",
-                "payload": {
-                    "node": NODE_NAME,
-                    "budget_remaining": es["budget_remaining"],
-                },
-            }
-        )
-        return {
-            "execution_state": {
-                **es,
-                "error": f"Insufficient budget for {NODE_NAME}",
-            },
-        }
-
-    new_budget = deduct_cost(es["step_costs"], NODE_NAME, es["budget_remaining"])
-    call_counts = dict(es.get("tool_call_counts", {}))
-    total_tool_cost = es.get("total_tool_cost_consumed", 0.0)
-    tool_costs = es.get("tool_costs", {})
-
-    facts = list(knowledge["facts"])
-    citations = list(knowledge["citations"])
-
-    # Build URL → citation_id index for deduplication.  When multiple
-    # searches return the same URL, the snippet is merged into the
-    # existing citation rather than creating a duplicate.
-    _seen_urls: dict[str, str] = {c["url"]: c["id"] for c in citations if c.get("url")}
-
-    candidate_tools = es.get("candidate_tools", [])
-    tool_plan = es.get("tool_call_plan", [])
-
-    # Get tool executor
-    from moira.service_setup import service_provider
-
-    try:
-        executor = service_provider("tool_executor")
-    except RuntimeError:
-        executor = None
-
-    if not candidate_tools or executor is None:
-        logger.warning(
-            "RESEARCH: no tools available (candidates=%d, executor=%s)",
-            len(candidate_tools),
-            "yes" if executor else "none",
-        )
-        detail = {
-            "tool_results": [],
-            "facts_resolved": [],
-            "facts_newly_unknown": [f["id"] for f in facts if f["status"] == "unknown"],
-            "tool_plan_size": len(tool_plan),
-            "executor_available": executor is not None,
-            "rounds": 0,
-        }
-        writer(
-            {
-                "event": "node_end",
-                "payload": {
-                    "node": NODE_NAME,
-                    "budget_remaining": new_budget,
-                    "detail": detail,
-                    "purpose": NODE_NAME,
-                    "model": "",
-                    "call_count": 0,
-                    "tool_call_count": 0,
-                },
-            }
-        )
-        return {
-            "knowledge": {
-                "facts": facts,
-                "citations": citations,
-            },
-            "execution_state": {
-                **es,
-                "budget_remaining": new_budget,
-                "tool_call_counts": call_counts,
-                "total_tool_cost_consumed": total_tool_cost,
-            },
-        }
-
-    allowed_names = {t.name for t in candidate_tools}
-
-    # Build initial messages using real prompts
-    system_prompt = get_prompt("research.system").format(
-        max_extra_rounds=DEFAULT_MAX_ROUNDS,
-    )
-
-    # When re-entered from research_review retry, add feedback about gaps
-    review_count = es.get("review_count", 0)
-    review_history = knowledge.get("review_history", [])
-    if review_count > 0 and bool(review_history) and review_history[-1].get("route") == "retry":
-        last_review = review_history[-1]
-        system_prompt += "\n\n" + get_prompt("research.system_retry_review").format(
-            coverage_assessment=last_review.get("coverage_assessment", ""),
-            missing_areas="\n".join(f"- {area}" for area in last_review.get("missing_areas", [])),
-        )
-
-    user_prompt = get_prompt("research.user").format(
-        user_goal=knowledge.get("user_goal", knowledge["question"]),
-        unknown_facts=_format_unknown_facts(facts),
-        tool_call_plan=_format_tool_call_plan(tool_plan),
-        tool_descriptions=_format_tool_descriptions(candidate_tools),
-    )
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
-
-    # Build required-params lookup from candidate tools for arg validation
-    _required_params: dict[str, set[str]] = {}
-    for t in candidate_tools:
-        schema = t.argument_schema
-        if schema and "required" in schema:
-            _required_params[t.name] = set(schema["required"])
-
-    # --- Multi-round tool loop ---
-    tool_results_log: list[dict] = []
     total_call_count = 0
     last_response = None
     last_thinking = ""
-    last_model_id = ""
     exhausted_rounds = False
+    had_valid_calls = False
+    adapter = get_adapter(resolved.provider_type)
 
-    registry = _get_model(config)
-    resolved = await registry.resolve("intelligence")
-    last_model_id = resolved.model_id
+    round_num = 0
+    for round_num in range(DEFAULT_MAX_ROUNDS):
+        logger.info("RESEARCH (native) round %d/%d", round_num + 1, DEFAULT_MAX_ROUNDS)
 
+        response = await resolved.client.chat_completion(
+            messages=messages,
+            model=resolved.model_id,
+            temperature=DEFAULT_TEMPERATURE,
+            tools=candidate_tools,
+        )
+        total_call_count += 1
+        last_response = response
+        last_thinking = getattr(response, "thinking", "") or ""
+
+        # Hybrid: parse content for facts/sources alongside tool calls
+        content = response.content or ""
+        if content.strip():
+            parsed = _parse_json_object(content)
+            _apply_discovered_facts(parsed, facts)
+            _apply_sources(parsed, citations, seen_urls)
+
+        parsed_calls = response.tool_calls
+
+        valid_calls, rejected_names = _validate_and_filter_calls(
+            parsed_calls,
+            allowed_names,
+            call_limits,
+            call_counts,
+            required_params,
+        )
+        if rejected_names:
+            logger.warning("Model requested disallowed tools: %s", rejected_names)
+
+        if not valid_calls:
+            logger.info(
+                "RESEARCH (native): model signaled completion (round %d)",
+                round_num + 1,
+            )
+            exhausted_rounds = False
+            had_valid_calls = False
+            break
+
+        had_valid_calls = True
+
+        try:
+            results = await executor.execute_batch(valid_calls)
+        except Exception as e:
+            logger.error("Tool execution batch error: %s", e, exc_info=True)
+            exhausted_rounds = False
+            break
+
+        tool_summary_parts, new_budget, total_tool_cost = _process_execution_results(
+            results,
+            valid_calls,
+            writer,
+            citations,
+            seen_urls,
+            facts,
+            tool_plan,
+            tool_results_log,
+            call_counts,
+            tool_costs,
+            new_budget,
+            total_tool_cost,
+        )
+
+        # Feed results back using adapter message format so the model
+        # sees its own tool calls and the corresponding results.
+        if adapter is not None:
+            messages.append(adapter.format_assistant_message(content, valid_calls))
+            for summary, call in zip(tool_summary_parts, valid_calls):
+                messages.append(adapter.format_tool_result(call.id, summary))
+        else:
+            tool_summary = "\n\n---\n\n".join(tool_summary_parts)
+            messages.append({"role": "assistant", "content": content})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": get_prompt("research.tool_feedback").format(
+                        tool_results=tool_summary,
+                    ),
+                }
+            )
+
+        logger.info(
+            "RESEARCH (native) round %d: %d tool calls executed",
+            round_num + 1,
+            len(results),
+        )
+        exhausted_rounds = True
+
+    return _LoopResult(
+        last_response=last_response,
+        last_thinking=last_thinking,
+        total_call_count=total_call_count,
+        exhausted_rounds=exhausted_rounds,
+        rounds=round_num + 1,
+        had_valid_calls=had_valid_calls,
+        new_budget=new_budget,
+        total_tool_cost=total_tool_cost,
+    )
+
+
+async def _run_text_tool_loop(
+    resolved: ResolvedModel,
+    messages: list[dict],
+    _candidate_tools: list[ToolDefinition],
+    allowed_names: set[str],
+    required_params: dict[str, set[str]],
+    call_limits: dict[str, int],
+    call_counts: dict[str, int],
+    tool_costs: dict[str, float],
+    executor: ToolExecutor,
+    writer: Callable[[dict[str, Any]], None],
+    facts: list[Fact],
+    citations: list[Citation],
+    seen_urls: dict[str, str],
+    tool_plan: list,
+    tool_results_log: list[dict],
+    new_budget: float,
+    total_tool_cost: float,
+) -> _LoopResult:
+    """Run the text-based tool-calling loop.
+
+    The model emits a JSON object containing ``tool_calls``,
+    ``discovered_facts``, and ``sources`` as text. Tool calls are parsed
+    from the text, with defensive parsing and retry logic for malformed
+    JSON. This is the legacy path used when ``native_tool_calling`` is
+
+    ``_candidate_tools`` is accepted for parameter symmetry with
+    :func:`_run_native_tool_loop` but is intentionally unused — tool
+    descriptions are already baked into the system prompt before the
+    loop begins.
+    disabled.
+    """
+    total_call_count = 0
+    last_response = None
+    last_thinking = ""
+    exhausted_rounds = False
+    had_valid_calls = False
+
+    round_num = 0
     for round_num in range(DEFAULT_MAX_ROUNDS):
         logger.info("RESEARCH round %d/%d", round_num + 1, DEFAULT_MAX_ROUNDS)
 
@@ -629,7 +826,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
 
         # Apply discovered facts and sources each round
         _apply_discovered_facts(parsed, facts)
-        _apply_sources(parsed, citations, _seen_urls)
+        _apply_sources(parsed, citations, seen_urls)
 
         # Extract tool calls from the parsed object
         parsed_calls = _extract_tool_calls(parsed)
@@ -676,7 +873,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
 
                 parsed = _parse_json_object(raw)
                 _apply_discovered_facts(parsed, facts)
-                _apply_sources(parsed, citations, _seen_urls)
+                _apply_sources(parsed, citations, seen_urls)
                 parsed_calls = _extract_tool_calls(parsed)
                 if not parsed_calls and "tool_calls" not in parsed:
                     parsed_calls = _parse_tool_calls(raw)
@@ -684,50 +881,24 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
                     break
 
         # Filter to allowed tools, enforce call limits, validate required args
-        call_limits = es.get("tool_call_limits", {})
-        valid_calls: list[ToolCall] = []
-        rejected: list[ToolCall] = []
-        for call in parsed_calls:
-            if call.name not in allowed_names:
-                rejected.append(call)
-                continue
-            limit = call_limits.get(call.name, 0)
-            used = call_counts.get(call.name, 0)
-            if limit > 0 and used >= limit:
-                logger.warning(
-                    "Tool %s hit call limit (%d/%d), skipping",
-                    call.name,
-                    used,
-                    limit,
-                )
-                continue
-            required = _required_params.get(call.name)
-            if required:
-                missing = [
-                    p
-                    for p in required
-                    if p not in call.arguments or not str(call.arguments[p]).strip()
-                ]
-                if missing:
-                    logger.warning(
-                        "Tool %s missing required params: %s, skipping",
-                        call.name,
-                        missing,
-                    )
-                    continue
-            valid_calls.append(call)
-        rejected_names = [c.name for c in rejected]
+        valid_calls, rejected_names = _validate_and_filter_calls(
+            parsed_calls,
+            allowed_names,
+            call_limits,
+            call_counts,
+            required_params,
+        )
         if rejected_names:
-            logger.warning(
-                "Model requested disallowed tools: %s",
-                rejected_names,
-            )
+            logger.warning("Model requested disallowed tools: %s", rejected_names)
 
         # No tool calls means model is done
         if not valid_calls:
             logger.info("RESEARCH: model signaled completion (round %d)", round_num + 1)
             exhausted_rounds = False
+            had_valid_calls = False
             break
+
+        had_valid_calls = True
 
         # Execute tool calls
         try:
@@ -737,92 +908,21 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             exhausted_rounds = False
             break
 
-        # Process results and build summary for next round
-        tool_summary_parts = []
-        for result, call in zip(results, valid_calls):
-            name = call.name
-            args = call.arguments
-            writer(
-                {
-                    "event": "tool_result",
-                    "payload": {
-                        "tool": result.tool_name,
-                        "args": args,
-                        "output": _truncate_for_display(result.output),
-                        "duration_ms": result.duration_ms,
-                        "success": result.success,
-                        "node": NODE_NAME,
-                        "metadata": result.metadata,
-                    },
-                }
-            )
-
-            structured = result.metadata.get("results")
-            if structured:
-                # Create or merge one citation per structured result
-                # (e.g., each web_search hit).  When a URL was already
-                # seen in a previous search, the snippet is merged into
-                # the existing citation instead of creating a duplicate.
-                for sr in structured:
-                    cit_id, is_new = _find_or_merge_citation(
-                        citations,
-                        _seen_urls,
-                        source=result.tool_name,
-                        url=sr.get("url") or None,
-                        title=sr.get("title") or None,
-                        snippet=sr.get("snippet") or None,
-                    )
-                    status = "SUCCESS" if result.success else "FAILED"
-                    recurring = "" if is_new else " (recurring source)"
-                    tool_summary_parts.append(
-                        f"[{cit_id}] Tool: {name}\nStatus: {status}{recurring}\n"
-                        f"Title: {sr.get('title', '')}\n"
-                        f"URL: {sr.get('url', '')}\n"
-                        f"Snippet: {sr.get('snippet', '')}"
-                    )
-            else:
-                # No structured metadata — create a single citation from
-                # the tool's text output (e.g., url_content, calculator).
-                cit_id = next_id("cit", citations)
-                citations.append(
-                    Citation(
-                        id=cit_id,
-                        source=result.tool_name,
-                        excerpt=result.output[:500] if result.output else "",
-                    )
-                )
-                status = "SUCCESS" if result.success else "FAILED"
-                tool_summary_parts.append(
-                    f"[{cit_id}] Tool: {name}\nStatus: {status}\nResult:\n{result.output}"
-                )
-
-            tool_results_log.append(
-                {
-                    "tool": result.tool_name,
-                    "args": args,
-                    "output": result.output[:500] if result.output else "",
-                    "duration_ms": result.duration_ms,
-                    "success": result.success,
-                    "metadata": result.metadata,
-                }
-            )
-
-            # Mark target facts as having evidence if the tool succeeded.
-            # Citation linking is handled by the model's discovered_facts
-            # (which include citation_ids referencing the source labels).
-            if result.success and result.output:
-                for planned in tool_plan:
-                    if planned["tool"] == name:
-                        target_ids = planned.get("target_fact_ids", [])
-                        for fact in facts:
-                            if fact["id"] in target_ids and fact["status"] == "unknown":
-                                fact["status"] = "unverified"
-
-            # Track call counts and per-call tool cost
-            call_counts[name] = call_counts.get(name, 0) + 1
-            per_call_cost = tool_costs.get(name, 1.0)
-            new_budget -= per_call_cost
-            total_tool_cost += per_call_cost
+        # Process results (shared helper — builds citations, tracks costs)
+        tool_summary_parts, new_budget, total_tool_cost = _process_execution_results(
+            results,
+            valid_calls,
+            writer,
+            citations,
+            seen_urls,
+            facts,
+            tool_plan,
+            tool_results_log,
+            call_counts,
+            tool_costs,
+            new_budget,
+            total_tool_cost,
+        )
 
         # Feed results back to model for next round
         tool_summary = "\n\n---\n\n".join(tool_summary_parts)
@@ -846,6 +946,221 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
         # mark as exhausted so we do a final summary round.
         exhausted_rounds = True
 
+    return _LoopResult(
+        last_response=last_response,
+        last_thinking=last_thinking,
+        total_call_count=total_call_count,
+        exhausted_rounds=exhausted_rounds,
+        rounds=round_num + 1,
+        had_valid_calls=had_valid_calls,
+        new_budget=new_budget,
+        total_tool_cost=total_tool_cost,
+    )
+
+
+async def research(state: ResearchState, config: RunnableConfig) -> dict:
+    """Model-driven multi-round tool calling for fact discovery.
+
+    The model decides which tools to call from the candidate set, sees
+    results, and can request additional rounds. The tool_call_plan from
+    planning is provided as guidance, but the model drives execution.
+    """
+    _check_stop(NODE_NAME, config)
+    writer = get_stream_writer()
+    writer({"event": "node_start", "payload": {"node": NODE_NAME, "timestamp": _now()}})
+
+    es = state["execution_state"]
+    knowledge = state["knowledge"]
+    if not can_execute(es["step_costs"], NODE_NAME, es["budget_remaining"]):
+        writer(
+            {
+                "event": "node_end",
+                "payload": {
+                    "node": NODE_NAME,
+                    "budget_remaining": es["budget_remaining"],
+                },
+            }
+        )
+        return {
+            "execution_state": {
+                **es,
+                "error": f"Insufficient budget for {NODE_NAME}",
+            },
+        }
+
+    new_budget = deduct_cost(es["step_costs"], NODE_NAME, es["budget_remaining"])
+    call_counts = dict(es.get("tool_call_counts", {}))
+    total_tool_cost = es.get("total_tool_cost_consumed", 0.0)
+    tool_costs = es.get("tool_costs", {})
+
+    facts = list(knowledge["facts"])
+    citations = cast(list[Citation], list(knowledge["citations"]))
+
+    # Build URL → citation_id index for deduplication.  When multiple
+    # searches return the same URL, the snippet is merged into the
+    # existing citation rather than creating a duplicate.
+    _seen_urls: dict[str, str] = {url: c["id"] for c in citations if (url := c.get("url"))}
+
+    candidate_tools = es.get("candidate_tools", [])
+    tool_plan = es.get("tool_call_plan", [])
+
+    # Get tool executor
+    from moira.service_setup import service_provider
+
+    try:
+        executor = cast(ToolExecutor, service_provider("tool_executor"))
+    except RuntimeError:
+        executor = None
+
+    if not candidate_tools or executor is None:
+        logger.warning(
+            "RESEARCH: no tools available (candidates=%d, executor=%s)",
+            len(candidate_tools),
+            "yes" if executor else "none",
+        )
+        detail = {
+            "tool_results": [],
+            "facts_resolved": [],
+            "facts_newly_unknown": [f["id"] for f in facts if f["status"] == "unknown"],
+            "tool_plan_size": len(tool_plan),
+            "executor_available": executor is not None,
+            "rounds": 0,
+        }
+        writer(
+            {
+                "event": "node_end",
+                "payload": {
+                    "node": NODE_NAME,
+                    "budget_remaining": new_budget,
+                    "detail": detail,
+                    "purpose": NODE_NAME,
+                    "model": "",
+                    "call_count": 0,
+                    "tool_call_count": 0,
+                },
+            }
+        )
+        return {
+            "knowledge": {
+                "facts": facts,
+                "citations": citations,
+            },
+            "execution_state": {
+                **es,
+                "budget_remaining": new_budget,
+                "tool_call_counts": call_counts,
+                "total_tool_cost_consumed": total_tool_cost,
+            },
+        }
+
+    allowed_names = {t.name for t in candidate_tools}
+
+    # Build required-params lookup from candidate tools for arg validation
+    _required_params: dict[str, set[str]] = {}
+    for t in candidate_tools:
+        schema = t.argument_schema
+        if schema and "required" in schema:
+            _required_params[t.name] = set(schema["required"])
+
+    # --- Multi-round tool loop ---
+    tool_results_log: list[dict] = []
+    total_call_count = 0
+    last_response = None
+    last_thinking = ""
+    last_model_id = ""
+    exhausted_rounds = False
+
+    registry = _get_model(config)
+    resolved = await registry.resolve("intelligence")
+    last_model_id = resolved.model_id
+
+    # Select prompts based on tool-calling mode
+    if resolved.native_tool_calling:
+        system_prompt = get_prompt("research.system_native_tools").format(
+            max_extra_rounds=DEFAULT_MAX_ROUNDS,
+        )
+        user_prompt = get_prompt("research.user_native").format(
+            user_goal=knowledge.get("user_goal", knowledge["question"]),
+            unknown_facts=_format_unknown_facts(facts),
+        )
+    else:
+        system_prompt = get_prompt("research.system").format(
+            max_extra_rounds=DEFAULT_MAX_ROUNDS,
+        )
+        user_prompt = get_prompt("research.user").format(
+            user_goal=knowledge.get("user_goal", knowledge["question"]),
+            unknown_facts=_format_unknown_facts(facts),
+            tool_call_plan=_format_tool_call_plan(tool_plan),
+            tool_descriptions=_format_tool_descriptions(candidate_tools),
+        )
+
+    # When re-entered from research_review retry, add feedback about gaps
+    review_count = es.get("review_count", 0)
+    review_history = knowledge.get("review_history", [])
+    if review_count > 0 and bool(review_history) and review_history[-1].get("route") == "retry":
+        last_review = review_history[-1]
+        system_prompt += "\n\n" + get_prompt("research.system_retry_review").format(
+            coverage_assessment=last_review.get("coverage_assessment", ""),
+            missing_areas="\n".join(f"- {area}" for area in last_review.get("missing_areas", [])),
+        )
+
+    messages: list[dict] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    call_limits = es.get("tool_call_limits", {})
+    tool_costs = es.get("tool_costs", {})
+
+    if resolved.native_tool_calling:
+        loop_result = await _run_native_tool_loop(
+            resolved=resolved,
+            messages=messages,
+            candidate_tools=candidate_tools,
+            allowed_names=allowed_names,
+            required_params=_required_params,
+            call_limits=call_limits,
+            call_counts=call_counts,
+            tool_costs=tool_costs,
+            executor=executor,
+            writer=writer,
+            facts=facts,
+            citations=citations,
+            seen_urls=_seen_urls,
+            tool_plan=tool_plan,
+            tool_results_log=tool_results_log,
+            new_budget=new_budget,
+            total_tool_cost=total_tool_cost,
+        )
+    else:
+        loop_result = await _run_text_tool_loop(
+            resolved=resolved,
+            messages=messages,
+            _candidate_tools=candidate_tools,
+            allowed_names=allowed_names,
+            required_params=_required_params,
+            call_limits=call_limits,
+            call_counts=call_counts,
+            tool_costs=tool_costs,
+            executor=executor,
+            writer=writer,
+            facts=facts,
+            citations=citations,
+            seen_urls=_seen_urls,
+            tool_plan=tool_plan,
+            tool_results_log=tool_results_log,
+            new_budget=new_budget,
+            total_tool_cost=total_tool_cost,
+        )
+
+    total_call_count = loop_result.total_call_count
+    last_response = loop_result.last_response
+    last_thinking = loop_result.last_thinking
+    exhausted_rounds = loop_result.exhausted_rounds
+    new_budget = loop_result.new_budget
+    total_tool_cost = loop_result.total_tool_cost
+    round_num = loop_result.rounds - 1
+
     # --- Final summary round if loop exhausted max rounds ---
     # If the loop ended because we ran out of rounds (not because the model
     # signaled completion), do one more model call asking it to summarize
@@ -854,7 +1169,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
         logger.info("RESEARCH: max rounds exhausted, requesting final summary")
         messages.append({"role": "user", "content": get_prompt("research.summary")})
         try:
-            summary_response = await resolved.client.chat_completion(
+            summary_response: ChatResponse = await resolved.client.chat_completion(
                 messages=messages,
                 model=resolved.model_id,
                 temperature=DEFAULT_TEMPERATURE,
@@ -890,7 +1205,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
 
         if resolved_facts:
             fact_text = "\n".join(f"- {f['id']}: {f.get('claim', '')}" for f in resolved_facts)
-            last_response = type("ChatResponse", (), {"content": fact_text, "thinking": ""})()
+            last_response = ChatResponse(content=fact_text)
             last_thinking = ""
 
     # --- Build detail and emit ---
@@ -902,7 +1217,8 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
         "facts_newly_unknown": [f["id"] for f in facts if f["status"] == "unknown"],
         "tool_plan_size": len(tool_plan),
         "executor_available": executor is not None,
-        "rounds": round_num + 1 if valid_calls else round_num,
+        "rounds": round_num + 1 if loop_result.had_valid_calls else round_num,
+        "tool_calling_mode": "native" if resolved.native_tool_calling else "emulated",
         "prompt": user_prompt,
         "model": last_model_id,
     }

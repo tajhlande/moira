@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 class ResolvedModel:
     model_id: str
     client: InferenceClient
+    native_tool_calling: bool = False
+    provider_type: str = "completions"
 
 
 class ModelRegistry:
@@ -84,7 +86,22 @@ class ModelRegistry:
         # Verify the model actually exists on the endpoint.
         for m in self._available_models:
             if m.id == model_id and m.source_endpoint == endpoint_name:
-                return ResolvedModel(model_id=model_id, client=client)
+                # Look up per-model capabilities from the provider config.
+                native_tool_calling = False
+                provider_type = "completions"
+                for ep in self._config.providers:
+                    if ep.name == endpoint_name:
+                        provider_type = ep.provider_type
+                        for mc in ep.models:
+                            if mc.id == model_id:
+                                native_tool_calling = mc.native_tool_calling
+                        break
+                return ResolvedModel(
+                    model_id=model_id,
+                    client=client,
+                    native_tool_calling=native_tool_calling,
+                    provider_type=provider_type,
+                )
 
         raise ValueError(f"Model '{model_id}' not found on endpoint '{endpoint_name}'")
 

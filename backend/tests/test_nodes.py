@@ -214,6 +214,21 @@ REPORT_RESPONSE = json.dumps(
     }
 )
 
+REPORT_RESPONSE_NO_CITATIONS = json.dumps(
+    {
+        "answer": "Entity1 is confirmed based on research.",
+        "citations": [],
+        "verified_facts": [],
+        "verified_conclusions": [],
+        "contradicted": [],
+        "unknown_facts": [],
+        "critiques": [],
+        "total_cost": 0,
+        "tool_call_total_cost": 0,
+        "generation_reason": "verified",
+    }
+)
+
 
 # ===========================================================================
 # DECOMPOSITION
@@ -2534,6 +2549,114 @@ class TestReportGeneration:
         assert "line2" in report["answer"]
         assert report["critiques"] == ["c1"]
 
+    @pytest.mark.asyncio
+    async def test_citation_retry_succeeds(self, config, mock_writer, mock_model):
+        """When the model omits inline [n] markers, a retry should be
+        attempted. If the retry includes markers, citations are linked."""
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(content=REPORT_RESPONSE_NO_CITATIONS),
+            ChatResponse(content=REPORT_RESPONSE),
+        ]
+
+        from moira.workflow.nodes.report_generation import report_generation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", claim="z", status="verified"),
+        ]
+        state["knowledge"]["conclusions"] = [
+            Conclusion(
+                id="c001", conclusion="Confirmed", supporting_fact_ids=["f001"], status="verified"
+            ),
+        ]
+        state["knowledge"]["citations"] = [
+            {
+                "id": "cit001",
+                "source": "web_search",
+                "url": "https://example.com/result1",
+                "title": "First Result",
+                "excerpt": "snippet A",
+            },
+        ]
+        state["knowledge"]["evaluation_history"] = [
+            {"goal_met": True, "route": "accept"},
+        ]
+
+        result = await report_generation(state, _make_run_config(config))
+
+        report = result["knowledge"]["report"]
+        assert "[1]" in report["answer"]
+        assert len(report["citations"]) == 1
+        assert report["uncited_sources"] == []
+
+    @pytest.mark.asyncio
+    async def test_citation_retry_exhausted_accepts_with_warning(
+        self, config, mock_writer, mock_model
+    ):
+        """When retries are exhausted with no citations, the report is
+        still produced with a warning critique appended."""
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=REPORT_RESPONSE_NO_CITATIONS
+        )
+
+        from moira.workflow.nodes.report_generation import report_generation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", claim="z", status="verified"),
+        ]
+        state["knowledge"]["conclusions"] = [
+            Conclusion(
+                id="c001", conclusion="Confirmed", supporting_fact_ids=["f001"], status="verified"
+            ),
+        ]
+        state["knowledge"]["citations"] = [
+            {
+                "id": "cit001",
+                "source": "web_search",
+                "url": "https://example.com/result1",
+                "title": "First Result",
+                "excerpt": "snippet A",
+            },
+        ]
+        state["knowledge"]["evaluation_history"] = [
+            {"goal_met": True, "route": "accept"},
+        ]
+
+        result = await report_generation(state, _make_run_config(config))
+
+        report = result["knowledge"]["report"]
+        assert report is not None
+        assert report["citations"] == []
+        assert len(report["uncited_sources"]) == 1
+        assert any("without inline citations" in c for c in report["critiques"])
+
+    @pytest.mark.asyncio
+    async def test_no_retry_when_no_citations_available(
+        self, config, mock_writer, mock_model
+    ):
+        """When the knowledge state has zero citations, no retry should
+        be attempted even if the answer lacks [n] markers."""
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=REPORT_RESPONSE_NO_CITATIONS
+        )
+
+        from moira.workflow.nodes.report_generation import report_generation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["citations"] = []
+
+        result = await report_generation(state, _make_run_config(config))
+
+        report = result["knowledge"]["report"]
+        assert report is not None
+        assert mock_model["client"].chat_completion.call_count == 1
+
 
 # ---------------------------------------------------------------------------
 # _fix_json_control_chars unit tests
@@ -3530,3 +3653,300 @@ class TestExtractToolCalls:
         calls = _extract_tool_calls(parsed)
         assert len(calls) == 1
         assert calls[0].name == "ok"
+
+
+# ===========================================================================
+# Native tool calling mode tests
+# ===========================================================================
+
+
+class TestResearchNativeMode:
+    """Tests for the research node when native_tool_calling is enabled."""
+
+    @pytest.mark.asyncio
+    async def test_native_happy_path(self, config, mock_writer, mock_model):
+        """Model emits tool_calls, results fed back, then model emits
+        discovered_facts and signals completion."""
+        _inject_services(config, mock_model)
+
+        # Override resolved model with native_tool_calling enabled
+        native_resolved = ResolvedModel(
+            model_id="test-model",
+            client=mock_model["client"],
+            native_tool_calling=True,
+            provider_type="completions",
+        )
+        mock_model["registry"].resolve = AsyncMock(return_value=native_resolved)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search",
+                    output="Found it",
+                    success=True,
+                    duration_ms=100,
+                    metadata={
+                        "results": [
+                            {
+                                "title": "Source",
+                                "url": "https://example.com",
+                                "snippet": "The answer is 42",
+                            }
+                        ]
+                    },
+                ),
+            ]
+        )
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.side_effect = [
+            # Round 1: model calls a tool
+            ChatResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(id="call_1", name="web_search", arguments={"query": "test"}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            # Round 2: model is done, emits facts
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "discovered_facts": [
+                            {
+                                "fact_id": "f001",
+                                "claim": "The answer is 42",
+                                "citation_ids": ["cit001"],
+                            }
+                        ],
+                        "sources": [],
+                    }
+                ),
+                tool_calls=[],
+                finish_reason="stop",
+            ),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "What is the answer?")
+        state["knowledge"]["user_goal"] = "Find the answer"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="answer", fact_needed="what is it", status="unknown"),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(
+                tool="web_search", args={"query": "test"}, target_fact_ids=["f001"], cost=1.0
+            ),
+        ]
+
+        result = await research(state, _make_run_config(config))
+
+        assert result["knowledge"]["facts"][0]["status"] == "unverified"
+        assert "42" in result["knowledge"]["facts"][0].get("claim", "")
+        assert len(result["knowledge"]["citations"]) >= 1
+        assert result["execution_state"]["tool_call_counts"]["web_search"] == 1
+
+    @pytest.mark.asyncio
+    async def test_native_completion_immediately(self, config, mock_writer, mock_model):
+        """When the model returns no tool_calls on the first round, the
+        loop exits immediately."""
+        _inject_services(config, mock_model)
+
+        native_resolved = ResolvedModel(
+            model_id="test-model",
+            client=mock_model["client"],
+            native_tool_calling=True,
+        )
+        mock_model["registry"].resolve = AsyncMock(return_value=native_resolved)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[])
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps({"discovered_facts": [], "sources": []}),
+            tool_calls=[],
+            finish_reason="stop",
+        )
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "test")
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+
+        await research(state, _make_run_config(config))
+
+        mock_executor.execute_batch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_native_filters_disallowed_tools(self, config, mock_writer, mock_model):
+        """Tools not in the candidate set should be filtered out."""
+        _inject_services(config, mock_model)
+
+        native_resolved = ResolvedModel(
+            model_id="test-model",
+            client=mock_model["client"],
+            native_tool_calling=True,
+        )
+        mock_model["registry"].resolve = AsyncMock(return_value=native_resolved)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(tool_name="web_search", output="ok", success=True, duration_ms=10),
+            ]
+        )
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(id="c1", name="disallowed_tool", arguments={}),
+                    ToolCall(id="c2", name="web_search", arguments={"query": "x"}),
+                ],
+            ),
+            ChatResponse(
+                content=json.dumps({"discovered_facts": [], "sources": []}),
+                tool_calls=[],
+            ),
+            # Post-loop fact extraction (if triggered)
+            ChatResponse(
+                content=json.dumps({"discovered_facts": [], "sources": []}),
+            ),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "test")
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+
+        await research(state, _make_run_config(config))
+
+        executed = mock_executor.execute_batch.call_args[0][0]
+        assert len(executed) == 1
+        assert executed[0].name == "web_search"
+
+    @pytest.mark.asyncio
+    async def test_native_hybrid_fact_extraction(self, config, mock_writer, mock_model):
+        """Facts are parsed from content alongside tool calls (hybrid mode)."""
+        _inject_services(config, mock_model)
+
+        native_resolved = ResolvedModel(
+            model_id="test-model",
+            client=mock_model["client"],
+            native_tool_calling=True,
+        )
+        mock_model["registry"].resolve = AsyncMock(return_value=native_resolved)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search",
+                    output="data",
+                    success=True,
+                    duration_ms=50,
+                    metadata={
+                        "results": [{"url": "https://ex.com", "snippet": "info", "title": "T"}]
+                    },
+                ),
+            ]
+        )
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.side_effect = [
+            # Round 1: tool call + early fact discovery
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "discovered_facts": [
+                            {
+                                "fact_id": "f001",
+                                "claim": "partial result",
+                                "citation_ids": ["cit001"],
+                            }
+                        ],
+                        "sources": [],
+                    }
+                ),
+                tool_calls=[
+                    ToolCall(id="c1", name="web_search", arguments={"query": "more"}),
+                ],
+            ),
+            # Round 2: done
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "discovered_facts": [
+                            {
+                                "fact_id": "f001",
+                                "claim": "final result",
+                                "citation_ids": ["cit001"],
+                            }
+                        ],
+                        "sources": [],
+                    }
+                ),
+                tool_calls=[],
+            ),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "test")
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+
+        result = await research(state, _make_run_config(config))
+
+        # The fact should be updated (last write wins)
+        assert result["knowledge"]["facts"][0]["status"] == "unverified"
+        assert result["knowledge"]["facts"][0]["claim"] == "final result"
+
+    @pytest.mark.asyncio
+    async def test_native_passes_tools_to_chat_completion(self, config, mock_writer, mock_model):
+        """The chat_completion call should receive the candidate tools."""
+        _inject_services(config, mock_model)
+
+        native_resolved = ResolvedModel(
+            model_id="test-model",
+            client=mock_model["client"],
+            native_tool_calling=True,
+        )
+        mock_model["registry"].resolve = AsyncMock(return_value=native_resolved)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[])
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content="",
+            tool_calls=[],
+        )
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "test")
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search the web"),
+        ]
+
+        await research(state, _make_run_config(config))
+
+        call_kwargs = mock_model["client"].chat_completion.call_args[1]
+        assert "tools" in call_kwargs
+        assert len(call_kwargs["tools"]) == 1
