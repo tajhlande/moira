@@ -1,0 +1,296 @@
+"""Unit tests for research node internal helper functions and parsers."""
+
+import json
+
+from moira.models.knowledge import Fact
+from moira.tools.base import ToolCall
+
+
+class TestResearchHelpers:
+    def test_apply_discovered_facts_preserves_existing_claim(self):
+        """An empty claim in a later _apply_discovered_facts call must not
+        overwrite a non-empty claim set by an earlier call.
+
+        Regression test: when research is retried after review, the model
+        sometimes emits discovered_facts with empty claims for facts it
+        already covered. The earlier claim should be preserved.
+        """
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts = [
+            Fact(
+                id="f001",
+                subject="test",
+                fact_needed="something",
+                claim="Original claim from round 1",
+                status="unverified",
+            ),
+        ]
+
+        # Simulate a later round where the model emits an empty claim
+        _apply_discovered_facts(
+            {"discovered_facts": [{"fact_id": "f001", "claim": ""}]},
+            facts,
+        )
+
+        assert facts[0]["claim"] == "Original claim from round 1", (
+            f"Empty claim should not overwrite existing claim. Got: '{facts[0]['claim']}'"
+        )
+
+    def test_try_merge_snippets_suffix_prefix(self):
+        """A's suffix overlaps B's prefix → merged into one string."""
+        from moira.workflow.nodes.research import _try_merge_snippets
+
+        a = "The recipe uses cherries and sugar for maceration"
+        b = "cherries and sugar for maceration over one month"
+        result = _try_merge_snippets(a, b)
+        assert result == "The recipe uses cherries and sugar for maceration over one month"
+
+    def test_try_merge_snippets_reverse_direction(self):
+        """B's suffix overlaps A's prefix → merged (reverse direction)."""
+        from moira.workflow.nodes.research import _try_merge_snippets
+
+        a = "cherries and sugar for maceration over one month"
+        b = "The recipe uses cherries and sugar for maceration"
+        result = _try_merge_snippets(a, b)
+        assert result == "The recipe uses cherries and sugar for maceration over one month"
+
+    def test_try_merge_snippets_no_overlap(self):
+        """No meaningful overlap → None."""
+        from moira.workflow.nodes.research import _try_merge_snippets
+
+        result = _try_merge_snippets(
+            "Cherries are harvested in June",
+            "Bottling happens in December",
+        )
+        assert result is None
+
+    def test_try_merge_snippets_substring_is_handled(self):
+        """When one is a token-level substring of the other, overlap merge
+        finds the full overlap and produces the longer string."""
+        from moira.workflow.nodes.research import _try_merge_snippets
+
+        a = "Need cherries sugar brandy"
+        b = "Need cherries sugar brandy cinnamon cloves"
+        result = _try_merge_snippets(a, b)
+        assert result == "Need cherries sugar brandy cinnamon cloves"
+
+    def test_try_merge_snippets_case_insensitive(self):
+        """Overlap detection should be case-insensitive."""
+        from moira.workflow.nodes.research import _try_merge_snippets
+
+        a = "Add the Sugar and stir well"
+        b = "and stir well until dissolved"
+        result = _try_merge_snippets(a, b)
+        assert result is not None
+        assert "dissolved" in result
+
+    def test_try_merge_snippets_min_words_threshold(self):
+        """Overlap below min_words threshold should not merge."""
+        from moira.workflow.nodes.research import _try_merge_snippets
+
+        # Only 2 words overlap, default min is 3
+        result = _try_merge_snippets(
+            "the end",
+            "the beginning",
+            min_words=3,
+        )
+        assert result is None
+
+    def test_dedup_substring_keeps_longer(self):
+        """When new snippet is substring of existing, existing is kept."""
+        from moira.workflow.nodes.research import _find_or_merge_citation
+
+        citations: list = []
+        seen_urls: dict[str, str] = {}
+
+        # First: long snippet
+        _find_or_merge_citation(
+            citations,
+            seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="Need cherries sugar brandy cinnamon cloves",
+        )
+        # Second: shorter version of same content
+        cit_id, is_new = _find_or_merge_citation(
+            citations,
+            seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="Need cherries sugar",
+        )
+        assert is_new is False
+        assert len(citations) == 1
+        assert len(citations[0]["snippets"]) == 1
+        assert citations[0]["snippets"][0] == "Need cherries sugar brandy cinnamon cloves"
+
+    def test_dedup_existing_substring_replaced_by_longer(self):
+        """When existing snippet is substring of new, existing is replaced."""
+        from moira.workflow.nodes.research import _find_or_merge_citation
+
+        citations: list = []
+        seen_urls: dict[str, str] = {}
+
+        # First: short snippet
+        _find_or_merge_citation(
+            citations,
+            seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="Need cherries sugar",
+        )
+        # Second: longer version
+        _find_or_merge_citation(
+            citations,
+            seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="Need cherries sugar brandy cinnamon cloves",
+        )
+        assert len(citations) == 1
+        assert len(citations[0]["snippets"]) == 1
+        assert citations[0]["snippets"][0] == "Need cherries sugar brandy cinnamon cloves"
+
+    def test_dedup_overlap_merges_two_snippets(self):
+        """Suffix-prefix overlap → two snippets merged into one."""
+        from moira.workflow.nodes.research import _find_or_merge_citation
+
+        citations: list = []
+        seen_urls: dict[str, str] = {}
+
+        _find_or_merge_citation(
+            citations,
+            seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="The recipe uses cherries and sugar for maceration",
+        )
+        _find_or_merge_citation(
+            citations,
+            seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="cherries and sugar for maceration over one month",
+        )
+        assert len(citations) == 1
+        assert len(citations[0]["snippets"]) == 1
+        assert citations[0]["snippets"][0] == (
+            "The recipe uses cherries and sugar for maceration over one month"
+        )
+
+    def test_dedup_no_overlap_keeps_both(self):
+        """Genuinely different snippets for same URL → both kept."""
+        from moira.workflow.nodes.research import _find_or_merge_citation
+
+        citations: list = []
+        seen_urls: dict[str, str] = {}
+
+        _find_or_merge_citation(
+            citations,
+            seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="Cherries are harvested in June",
+        )
+        _find_or_merge_citation(
+            citations,
+            seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="Bottling happens in December",
+        )
+        assert len(citations) == 1
+        assert len(citations[0]["snippets"]) == 2
+
+
+class TestParseToolCalls:
+    """Unit tests for _parse_tool_calls — verifies text-based parsing
+    returns ToolCall objects with generated IDs."""
+
+    def test_json_array(self):
+        from moira.workflow.nodes.research import _parse_tool_calls
+
+        text = json.dumps([{"tool": "web_search", "args": {"query": "x"}}])
+        calls = _parse_tool_calls(text)
+        assert len(calls) == 1
+        assert isinstance(calls[0], ToolCall)
+        assert calls[0].name == "web_search"
+        assert calls[0].arguments == {"query": "x"}
+        assert calls[0].id  # non-empty
+
+    def test_line_delimited_json(self):
+        from moira.workflow.nodes.research import _parse_tool_calls
+
+        text = '{"tool": "calc", "args": {"expr": "1+1"}}\n{"tool": "search", "args": {"q": "x"}}'
+        calls = _parse_tool_calls(text)
+        assert len(calls) == 2
+        assert calls[0].name == "calc"
+        assert calls[1].name == "search"
+
+    def test_markdown_fenced(self):
+        from moira.workflow.nodes.research import _parse_tool_calls
+
+        text = '```json\n[{"tool": "calc", "args": {}}]\n```'
+        calls = _parse_tool_calls(text)
+        assert len(calls) == 1
+        assert calls[0].name == "calc"
+
+    def test_empty_text(self):
+        from moira.workflow.nodes.research import _parse_tool_calls
+
+        assert _parse_tool_calls("") == []
+        assert _parse_tool_calls("no json here") == []
+
+    def test_generated_ids_unique(self):
+        from moira.workflow.nodes.research import _parse_tool_calls
+
+        text = json.dumps(
+            [
+                {"tool": "a", "args": {}},
+                {"tool": "b", "args": {}},
+            ]
+        )
+        calls = _parse_tool_calls(text)
+        ids = {c.id for c in calls}
+        assert len(ids) == 2  # unique
+
+
+class TestExtractToolCalls:
+    """Unit tests for _extract_tool_calls — verifies structured JSON
+    object parsing returns ToolCall objects with generated IDs."""
+
+    def test_happy_path(self):
+        from moira.workflow.nodes.research import _extract_tool_calls
+
+        parsed = {
+            "tool_calls": [
+                {"tool": "web_search", "args": {"query": "x"}},
+                {"tool": "calc", "args": {"expr": "2+2"}},
+            ],
+        }
+        calls = _extract_tool_calls(parsed)
+        assert len(calls) == 2
+        assert all(isinstance(c, ToolCall) for c in calls)
+        assert calls[0].name == "web_search"
+        assert calls[1].name == "calc"
+        assert all(c.id for c in calls)
+
+    def test_empty_tool_calls(self):
+        from moira.workflow.nodes.research import _extract_tool_calls
+
+        assert _extract_tool_calls({"tool_calls": []}) == []
+        assert _extract_tool_calls({}) == []
+
+    def test_tool_calls_not_list(self):
+        from moira.workflow.nodes.research import _extract_tool_calls
+
+        assert _extract_tool_calls({"tool_calls": "not a list"}) == []
+
+    def test_skips_missing_name(self):
+        from moira.workflow.nodes.research import _extract_tool_calls
+
+        parsed = {"tool_calls": [{"args": {"x": 1}}, {"tool": "ok", "args": {}}]}
+        calls = _extract_tool_calls(parsed)
+        assert len(calls) == 1
+        assert calls[0].name == "ok"

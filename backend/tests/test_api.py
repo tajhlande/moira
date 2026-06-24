@@ -396,8 +396,6 @@ class WorkflowRunAwareRepo(FakeConversationRepo):
         return [r for r in self._runs.values() if r.conversation_id == conversation_id]
 
 
-
-
 def test_knowledge_endpoint_no_knowledge(app_client_with_runs):
     client, repo = app_client_with_runs
     run = WorkflowRun(

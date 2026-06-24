@@ -86,5 +86,4 @@ These are roughly organized by area and not in a plan order.
 
 # Cleanup
 
-- Decompose Python files over 1000 lines
 - Set proper user agent headers for tool calls and inference
