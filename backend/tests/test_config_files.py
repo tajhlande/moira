@@ -136,6 +136,7 @@ class TestPromptsFile:
                 "question",
                 "facts_with_statuses",
                 "conclusions_with_supporting_facts",
+                "source_content",
             },
             "report_generation.system": {"path_instruction"},
             "report_generation.reason_error": {"error"},

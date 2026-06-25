@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 
 NODE_NAME = "evaluation"
 
+_PER_CITATION_CONTENT_CAP = 2000
+_TOTAL_CITATION_CONTENT_CAP = 32000
+
 
 def _format_facts_for_evaluation(facts: list) -> str:
     lines = []
@@ -51,6 +54,53 @@ def _format_conclusions_for_evaluation(conclusions: list) -> str:
             f"{c.get('reasoning', '')} | {c['status']}"
         )
     return "\n".join(lines)
+
+
+def _format_citation_content(
+    citations: list, conclusions: list, facts: list
+) -> str:
+    """Format citation source content for cross-referencing in the prompt.
+
+    Applies a per-citation cap and a total budget.  Citations referenced by
+    the conclusions under evaluation (traced via conclusion → fact → citation)
+    are prioritized; unreferenced citations are included only when budget
+    remains.  Citations without ``content`` are skipped silently.
+    """
+    # Trace conclusion → supporting_fact_ids → fact → citation_ids to find
+    # which citations are directly relevant to the conclusions being judged.
+    fact_by_id = {f["id"]: f for f in facts}
+    referenced_cit_ids: set[str] = set()
+    for c in conclusions:
+        for fid in c.get("supporting_fact_ids", []):
+            fact = fact_by_id.get(fid)
+            if fact:
+                referenced_cit_ids.update(fact.get("citation_ids", []))
+
+    # Partition into referenced-first, preserving citation list order.
+    prioritized: list = []
+    for cit in citations:
+        if cit["id"] in referenced_cit_ids and cit.get("content"):
+            prioritized.append(cit)
+    for cit in citations:
+        if cit["id"] not in referenced_cit_ids and cit.get("content"):
+            prioritized.append(cit)
+
+    lines: list[str] = []
+    total = 0
+    for cit in prioritized:
+        if total >= _TOTAL_CITATION_CONTENT_CAP:
+            break
+        content = cit["content"][:_PER_CITATION_CONTENT_CAP]
+        budget_left = _TOTAL_CITATION_CONTENT_CAP - total
+        if len(content) > budget_left:
+            content = content[:budget_left]
+        lines.append(
+            f"[{cit['id']}] {cit['source']} | {cit.get('url') or ''} | "
+            f"{cit.get('title') or ''}\n{content}"
+        )
+        total += len(content)
+
+    return "\n\n".join(lines)
 
 
 async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
@@ -92,6 +142,9 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
         question=knowledge["question"],
         facts_with_statuses=_format_facts_for_evaluation(facts),
         conclusions_with_supporting_facts=_format_conclusions_for_evaluation(conclusions),
+        source_content=_format_citation_content(
+            knowledge.get("citations", []), conclusions, facts
+        ),
     )
 
     registry = _get_model(config)

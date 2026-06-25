@@ -4,7 +4,11 @@ Imported explicitly by individual test files as needed.
 """
 
 import json
+from typing import cast
 
+from langgraph.graph.state import RunnableConfig
+
+from backend.moira.models.knowledge import ResearchState
 from moira.service_setup import _services
 
 
@@ -15,12 +19,12 @@ def _inject_services(config, mock_model):
     _services["model_registry"] = mock_model["registry"]
 
 
-def _make_run_config(config):
+def _make_run_config(config) -> RunnableConfig:
     """Wrap config into the LangGraph runnable-config dict."""
     return {"configurable": {"moira_config": config}}
 
 
-def _build_state(config, question="Test question", facts=None, conclusions=None):
+def _build_state(config, question="Test question", facts=None, conclusions=None) -> ResearchState:
     """Build the canonical research-loop state dict used by every node test."""
     cw = config.budget.cost_weights
     step_costs = {
@@ -33,7 +37,7 @@ def _build_state(config, question="Test question", facts=None, conclusions=None)
         "evaluation": cw.evaluation,
         "report_generation": cw.report_generation,
     }
-    return {
+    return cast(ResearchState, {
         "knowledge": {
             "question": question,
             "user_goal": "",
@@ -62,7 +66,7 @@ def _build_state(config, question="Test question", facts=None, conclusions=None)
             "evaluation_count": 0,
             "retry_limits": {"max_review": 3, "max_evaluation": 2},
         },
-    }
+    })
 
 
 # ---------------------------------------------------------------------------

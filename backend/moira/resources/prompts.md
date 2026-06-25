@@ -584,6 +584,9 @@ Facts (ID | subject | claim | status | citations):
 Conclusions to evaluate (ID | conclusion | supporting fact IDs | reasoning | status):
 {conclusions_with_supporting_facts}
 
+Source content (from cited sources — use this to cross-reference claims against what sources actually say):
+{source_content}
+
 ---
 
 ## report_generation.system
