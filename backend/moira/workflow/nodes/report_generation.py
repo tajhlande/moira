@@ -248,19 +248,24 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     parsed = _parse_json_object(raw)
 
     if not parsed or "answer" not in parsed:
-        logger.error(
-            "REPORT GENERATION: JSON parse failed (parsed=%d keys, response=%d chars)",
-            len(parsed),
-            len(raw),
-        )
+        if parsed:
+            err_msg = (
+                f"Report generation JSON missing 'answer' key "
+                f"(parsed {len(parsed)} keys: {sorted(parsed.keys())}, "
+                f"response={len(raw)} chars)"
+            )
+        else:
+            err_msg = (
+                f"Report generation JSON could not be parsed "
+                f"(response={len(raw)} chars)"
+            )
+        logger.error("REPORT GENERATION: %s", err_msg)
+        detail["raw_response"] = raw[:4000]
         writer(
             {
                 "event": "run_error",
                 "payload": {
-                    "error": (
-                        "Report generation model returned unparseable JSON "
-                        f"(response={len(raw)} chars, parsed={len(parsed)} keys)"
-                    ),
+                    "error": err_msg,
                     "budget_remaining": new_budget,
                     "detail": detail,
                     "purpose": NODE_NAME,
@@ -269,10 +274,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
                 },
             }
         )
-        raise RuntimeError(
-            "Report generation model returned unparseable JSON "
-            f"(response={len(raw)} chars, parsed={len(parsed)} keys)"
-        )
+        raise RuntimeError(err_msg)
 
     raw_answer = parsed.get("answer", "")
     cited_answer, cited_citations, uncited_citations = _prune_and_renumber_citations(

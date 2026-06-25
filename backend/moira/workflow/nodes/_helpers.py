@@ -48,14 +48,14 @@ def _get_model(config: RunnableConfig):
 def _fix_json_control_chars(text: str) -> str:
     """Escape literal control characters inside JSON string values.
 
-    Quantized local models sometimes emit raw newline, carriage return, or
-    tab bytes *inside* JSON string values instead of the proper ``\\n`` /
-    ``\\r`` / ``\\t`` escape sequences.  Python's ``json.loads`` rejects
-    these as "Invalid control character".
+    Quantized local models sometimes emit raw control bytes *inside* JSON
+    string values instead of the proper escape sequences.  Python's
+    ``json.loads`` rejects any character in the U+0000–U+001F range that
+    appears inside a string (per RFC 8259 § 7).
 
     This function performs a single-pass scan that tracks whether the cursor
     is inside a JSON string (between unescaped double quotes) and replaces
-    any literal control characters found there with their escape-sequence
+    any literal control characters found there with their JSON escape-sequence
     equivalents.
 
     Characters outside strings (structural whitespace between JSON tokens)
@@ -81,12 +81,22 @@ def _fix_json_control_chars(text: str) -> str:
             result.append(ch)
             continue
         if in_string:
-            if ch == "\n":
+            # RFC 8259 requires all control chars (U+0000–U+001F) inside
+            # strings to be escaped. Use named escapes where JSON defines
+            # them; fall back to \uXXXX for the rest.
+            code = ord(ch)
+            if code == 0x0A:  # line feed
                 result.append("\\n")
-            elif ch == "\r":
+            elif code == 0x0D:  # carriage return
                 result.append("\\r")
-            elif ch == "\t":
+            elif code == 0x09:  # tab
                 result.append("\\t")
+            elif code == 0x08:  # backspace
+                result.append("\\b")
+            elif code == 0x0C:  # form feed
+                result.append("\\f")
+            elif code < 0x20:  # other control chars (NUL, VT, etc.)
+                result.append(f"\\u{code:04x}")
             else:
                 result.append(ch)
         else:
