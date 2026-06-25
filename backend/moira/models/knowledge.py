@@ -57,7 +57,7 @@ class Conclusion(TypedDict):
     conclusion: str
     supporting_fact_ids: list[str]
     citation_ids: NotRequired[list[str]]
-    status: str  # "unverified" | "verified" | "contradicted"
+    status: str  # "unverified" | "verified" | "contradicted" | "unsupported"
     reasoning: NotRequired[str]
     verification_note: NotRequired[str]
 

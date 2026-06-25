@@ -374,7 +374,7 @@ class TestReportGeneration:
             },
         ]
 
-        with pytest.raises(RuntimeError, match="unparseable JSON"):
+        with pytest.raises(RuntimeError, match="could not be parsed"):
             await report_generation(state, _make_run_config(config))
 
     @pytest.mark.asyncio

@@ -57,6 +57,33 @@ def _format_conclusions_for_context(conclusions: list) -> str:
     return "\n".join(lines)
 
 
+def _flag_unsupported_conclusions(
+    facts: list[Fact], conclusions: list
+) -> int:
+    """Structural sanity check: flag conclusions that reference non-existent
+    fact IDs as ``"unsupported"``.
+
+    This is a zero-model-cost check — it catches hallucinated fact references
+    before evaluation spends tokens on them.  ``"unsupported"`` is terminal:
+    evaluation will skip these conclusions (see Phase 6) and preserve the
+    structural verdict.
+
+    Returns the count of newly-flagged conclusions (for logging).
+    """
+    known_fact_ids = {f["id"] for f in facts}
+    flagged = 0
+    for conclusion in conclusions:
+        for fid in conclusion.get("supporting_fact_ids", []):
+            if fid not in known_fact_ids:
+                conclusion["status"] = "unsupported"
+                conclusion["verification_note"] = (
+                    f"References non-existent fact ID: {fid}"
+                )
+                flagged += 1
+                break  # one hallucinated reference is sufficient
+    return flagged
+
+
 async def research_review(state: ResearchState, config: RunnableConfig) -> dict:
     """Evaluate whether the research gathered sufficient evidence."""
     _check_stop(NODE_NAME, config)
@@ -183,6 +210,16 @@ async def research_review(state: ResearchState, config: RunnableConfig) -> dict:
                     fact["verification_note"] = evidence
                 break
 
+    # Structural sanity check: flag conclusions with hallucinated fact
+    # references as "unsupported" (terminal — no model call needed).
+    unsupported_count = _flag_unsupported_conclusions(facts, conclusions)
+    if unsupported_count:
+        logger.info(
+            "RESEARCH_REVIEW: %d conclusion(s) marked unsupported "
+            "(non-existent fact references)",
+            unsupported_count,
+        )
+
     outcome = ReviewOutcome(
         fact_results=parsed.get("fact_results", []),
         coverage_assessment=parsed.get("coverage_assessment", ""),
@@ -223,6 +260,7 @@ async def research_review(state: ResearchState, config: RunnableConfig) -> dict:
     return {
         "knowledge": {
             "facts": facts,
+            "conclusions": conclusions,
             "review_history": review_history,
         },
         "execution_state": {
