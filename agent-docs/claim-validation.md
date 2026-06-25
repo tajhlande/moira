@@ -4,7 +4,7 @@
 
 The research loop has two gaps in claim validation:
 
-1. **Review and evaluation models are blind to source content.** They receive claim text and citation ID lists, but never the actual source content behind those citations. The model is asked to "review the claim against its cited evidence" but the evidence isn't in the prompt. Cross-referencing is impossible.
+1. **Review and evaluation workflow steps are blind to source content.** They receive claim text and citation ID lists, but never the actual source content behind those citations. The model is asked to "review the claim against its cited evidence" but the evidence isn't in the prompt. Cross-referencing is impossible.
 
 2. **No overclaim detection.** Synthesis produces conclusions from facts, but nothing programmatically verifies that conclusions stay within the bounds of their supporting facts. The synthesis prompt instructs against overclaiming, but the node passes through whatever the model emits. Two `strict=True` xfail tests in `test_evaluation_fixtures.py` encode this unbuilt contract.
 
@@ -74,11 +74,19 @@ In `_process_execution_results`, when creating or updating citations:
 - **Structured results** (web_search): store the search result snippet as `content` (the substantive source text for that citation).
 - **Unstructured results** (url_content, calculator): store `result.output` capped at 5,000 chars as `content`.
 
-When merging citations across rounds (`_find_or_merge_citation`), preserve the longest `content` seen (don't overwrite with a shorter one).
+When merging citations across rounds (`_find_or_merge_citation`), preserve the longest `content` seen (don't overwrite with a shorter one). Rationale: within a single workflow run we treat URL fetches as idempotent, so the longest body seen is the canonical one; re-fetches are treated as duplicate retrieval rather than distinct content. This differs deliberately from the `snippets` overlap-dedup-then-append logic — `snippets` collects genuinely distinct search fragments across rounds, whereas `content` represents a single coherent source body, and one canonical body is a cleaner input for downstream evaluation.
 
 ### Phase 3: Supporting fact ID sanity check at research_review
 
-**File:** `workflow/nodes/research_review.py`
+**Files:** `workflow/nodes/research_review.py`, `models/knowledge.py`
+
+**Schema change:** Add `"unsupported"` to the `Conclusion.status` documented values in `models/knowledge.py`:
+
+```python
+status: str  # "unverified" | "verified" | "contradicted" | "unsupported"
+```
+
+`"unsupported"` means: the conclusion was checked and found to lack grounding — its support does not exist, or it asserts beyond what the facts establish. This is distinct from `"unverified"` (not yet checked) and `"contradicted"` (actively refuted by conflicting evidence). Note: today both `"unverified"` and any non-bucketed status are silently dropped from the report; `"unsupported"` is introduced specifically to give this class of failure observable, honest handling (see Phase 7).
 
 After applying the model's fact verdicts, programmatically check all conclusions' `supporting_fact_ids`:
 
@@ -87,13 +95,17 @@ known_fact_ids = {f["id"] for f in facts}
 for conclusion in state["knowledge"]["conclusions"]:
     for fid in conclusion.get("supporting_fact_ids", []):
         if fid not in known_fact_ids:
-            conclusion["status"] = "contradicted"
+            conclusion["status"] = "unsupported"
             conclusion["verification_note"] = (
                 f"References non-existent fact ID: {fid}"
             )
 ```
 
-This is a structural check — no model call, no semantic analysis. Conclusions with hallucinated fact references are flagged as `contradicted` before evaluation runs. The `contradicted` status is appropriate because the conclusion's supporting evidence does not exist.
+This is a structural check — no model call, no semantic analysis. Conclusions with hallucinated fact references are flagged `"unsupported"` before evaluation runs. `"unsupported"` (not `"contradicted"`) is the correct status: there is no contradicting evidence, only missing support.
+
+`"unsupported"` is a **terminal** status within a workflow run:
+- **Evaluation skips it** (see Phase 6) — the structural verdict is preserved and no model tokens are spent re-judging a conclusion that structurally cannot be verified.
+- **It does not auto-trigger retries.** Retry is driven by evaluation's holistic `route` decision, not by individual conclusion statuses. Feeding "you hallucinated fact X" back to synthesis is a double-edged sword (see Risks) and is deliberately deferred.
 
 ### Phase 4: Flow source content into evaluation prompt
 
@@ -124,21 +136,43 @@ Same treatment — include citation `content` alongside facts in `_format_facts_
 
 Apply the same citation content budget and prioritization as evaluation.
 
-### Phase 6: Adversarial evaluation prompt
+### Phase 6: Adversarial evaluation and unsupported-status handling
 
-**File:** `resources/prompts.md` — `evaluation.system`
+**Files:** `resources/prompts.md` — `evaluation.system`; `workflow/nodes/evaluation.py`
 
-Rewrite with cross-examination framing:
+**Prompt rewrite** with cross-examination framing. Overclaims and grounding failures are marked **`unsupported`**; `"contradicted"` is reserved for genuine conflict (a fact is actively refuted, or reasoning contains a logical error):
 
-> For each conclusion, trace every assertion back to a specific cited fact. If the conclusion asserts something that the cited facts do not establish — additional domain knowledge, comparative judgments, or causal claims without evidence — mark it **contradicted** and identify what it adds beyond the facts.
+> For each conclusion, trace every assertion back to a specific cited fact. If the conclusion asserts something that the cited facts do not establish — additional domain knowledge, comparative judgments, or causal claims without evidence — mark it **unsupported** and identify what it adds beyond the facts.
 >
-> Cross-reference each fact's claim against its source content. If the claim misrepresents or overstates what the source said, mark it **contradicted**.
+> Cross-reference each fact's claim against its source content. If the claim misrepresents or overstates what the source said, mark the conclusion **unsupported**.
+>
+> Reserve **contradicted** for cases where a supporting fact is actively refuted by other evidence or the reasoning contains a logical error. A lack of grounding is **unsupported**, not **contradicted**.
 >
 > Be precise: a conclusion is an overclaim only if it explicitly goes beyond what the supporting facts establish. Well-supported conclusions should be marked verified.
 
+Update the evaluation prompt's allowed result values (`prompts.md:566`) to include `unsupported`: `"verified" | "unverified" | "contradicted" | "unsupported"`.
+
 The prompt should be calibrated conservatively — flag only clear overclaims where the conclusion explicitly goes beyond the cited facts. The goal is catching genuine grounding failures, not casting doubt on well-supported reasoning.
 
-### Phase 7: Rewrite xfail tests
+**`goal_met` is judged on verified-conclusion sufficiency.** Preserve and sharpen the existing framing in `evaluation.system` (prompts.md:556-558, 568-569): `goal_met` asks whether the **verified** conclusions adequately answer the user's question. Conclusions that are `unverified`, `unsupported`, or `contradicted` do not count toward sufficiency, but their mere presence does not make the goal unmet if the verified conclusions suffice. The evaluator must make this judgment with **all conclusions of all statuses in context** — this is one of the two most cognitively demanding tasks asked of the intelligence model in this agent (the other being sound synthesis itself), so the prompt should present the full conclusion set, clearly labelled by status, and require an explicit sufficiency rationale in `goal_assessment`.
+
+**Show unsupported in context, but don't re-judge them.** In `evaluation.py` (`evaluation.py:176-185`), keep `"unsupported"` conclusions (set structurally in Phase 3) visible in the prompt context so the evaluator can weigh them for the `goal_met` judgment, but do not require or apply a per-conclusion verdict for them — guard the status-application loop to skip them, preserving the structural verdict. Spending no verdict-tokens on conclusions that structurally cannot be verified realizes Phase 3's "no model involvement" promise, while still informing the holistic sufficiency call.
+
+Both detection layers now emit the same status for the same class of problem (lack of grounding): Phase 3 structural (hallucinated fact ID) and Phase 6 semantic (overclaim).
+
+### Phase 7: Report handling of unsupported conclusions
+
+**File:** `workflow/nodes/report_generation.py`
+
+Today the report buckets only `verified` / `contradicted` / `unknown`-facts (`report_generation.py:180-185, 356-366`), and the "fully verified" report reason blocks on `goal_met AND no contradicted conclusion` (`report_generation.py:143-145`). Any other status is silently dropped. The handling below makes non-verified conclusions' treatment deliberate and inspectable, and **removes the report-side guard that overrides evaluation's `goal_met`**:
+
+- **Keep out of answer prose.** Only `verified` conclusions/facts are written from (already the case, `report_generation.py:180-181, 194-195`). Make the exclusion of `unsupported`/`unverified`/`contradicted` from the prose-writing buckets deliberate rather than the accidental fall-through that exists today.
+
+- **Defer the report reason to `goal_met`; drop the contradicted guard.** Change `report_generation.py:143-145` from `goal_met and not any(c status == "contradicted")` to just `goal_met`. The report is "verified" iff evaluation judged the verified conclusions sufficient — regardless of whether some conclusions are `unsupported`, `unverified`, or `contradicted`. This trusts the evaluator's holistic sufficiency call (see Phase 6) over a mechanical status guard, and is consistent with the prompt's existing verified-sufficiency framing. The `retries_exhausted` / `budget_exhausted` / `incomplete` paths are unchanged.
+
+- **Surface existence via side channels.** Keep the existing `contradicted` bucket, and add an `omitted_conclusions` bucket (conclusions with status `"unsupported"`, as full dicts including `verification_note`) to the report metadata/state output, plus a brief count in the user-facing summary (e.g., "N conclusions omitted as unsupported"). This is not just convenience — it is the **audit trail for the evaluator's most consequential judgment**: the user can see everything that was dropped (and why) to form their own view on whether the evaluator correctly decided the verified set sufficed. Including all claims in the output while not furnishing them for report writing is exactly what makes trusting the evaluator legible.
+
+### Phase 8: Rewrite xfail tests
 
 **File:** `tests/test_evaluation_fixtures.py`
 
@@ -146,10 +180,12 @@ Move both tests from `TestSynthesisTrapFixture` to a new `TestEvaluationOverclai
 
 - Mock synthesis to emit the overclaim (unchanged mock setup)
 - Mock evaluation to detect it via the adversarial prompt + source content
-- Assert evaluation marks the conclusion `contradicted` with appropriate reason
+- Assert evaluation marks the conclusion `unsupported` with appropriate reason
 - Remove `@pytest.mark.xfail`
 
-Add a new test for the `supporting_fact_ids` sanity check at research_review: mock a conclusion referencing `f999` (non-existent), verify research_review marks it `contradicted`.
+Add a new test for the `supporting_fact_ids` sanity check at research_review: mock a conclusion referencing `f999` (non-existent), verify research_review marks it `unsupported` (terminal), and verify evaluation does not overwrite it.
+
+Add a test that report_generation omits `"unsupported"` conclusions from the answer prose and surfaces them in the `omitted_conclusions` metadata, while the report reason follows `goal_met` — i.e., a single `unsupported` (or `contradicted`) conclusion does **not** downgrade the reason from `verified` when `goal_met` is true.
 
 ## Risks and Mitigations
 
@@ -159,7 +195,15 @@ Adding adversarial evaluation without improving fact reasoning could make the sy
 
 **Mitigation:** The adversarial prompt is calibrated to flag only clear overclaims (conclusions that explicitly go beyond cited facts). The `max_evaluation: 2` retry limit prevents infinite loops. Monitor retry rates after deployment and tune the prompt's strictness.
 
-**Future work:** Improve fact reasoning quality (better research prompts, smarter tool result processing) alongside tightening evaluation. The claim validation and fact reasoning improvements should evolve together.
+`"unsupported"` is deliberately a **terminal, non-retry** status. Feeding "this conclusion was hallucinated/overclaimed" back to synthesis is double-edged: it could provoke a more reliable response, or merely a different but equally unreliable one. For the structural case (hallucinated fact ID), the genuinely useful signal would be the *valid fact-ID whitelist* (a factual constraint), not the claim text — that is left as a future enhancement. For the semantic overclaim case, per-conclusion feedback is deferred in favor of evaluation's existing holistic `goal_assessment` retry guidance.
+
+**Future work:** Improve fact reasoning quality (better research prompts, smarter tool result processing) alongside tightening evaluation. The claim validation and fact reasoning improvements should evolve together. Consider targeted Phase-3 feedback (valid fact-ID whitelist to synthesis) if hallucinated-reference rates remain high after deployment.
+
+### Risk: The "verified" report reason now rests entirely on the evaluator
+
+Dropping the report-side `contradicted` guard (Phase 7) means the report is labeled "verified" purely on evaluation's `goal_met`. Judging whether verified conclusions suffice — with all claims of all statuses in context — is one of the two most demanding tasks for the intelligence model. A miscalibrated evaluator could label a report "verified" while material conclusions are unsupported or contradicted.
+
+**Mitigation:** The adversarial prompt (Phase 6) is calibrated conservatively and requires an explicit sufficiency rationale in `goal_assessment`. The decisive backstop is inspectability: all non-verified conclusions are surfaced in side channels (the existing `contradicted` bucket plus `omitted_conclusions`), so the user can audit the evaluator's call. Trusting a hard model judgment is made legible by showing everything that was dropped and why. Monitor `goal_met` calibration against user feedback after deployment and tune the prompt's sufficiency guidance.
 
 ### Risk: Context window pressure
 
