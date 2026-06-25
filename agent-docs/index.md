@@ -56,6 +56,7 @@ have not been fully completed yet.
 | **docker-deployment.md** | Plan for single-container Docker deployment — multi-stage build, FastAPI static file serving, volume mounts, deploy script. |
 | **application-deployment-readiness.md** | Assessment of what is needed to deploy this app to family members for testing. |
 | **verification-split.md** | Plan to replace the single verification node with two focused, tool-free steps: research_review (evaluate evidence coverage) and judgment (evaluate conclusion logic). Driven by small-model format mixing problems in the combined verification node. |
+| **claim-validation.md** | Plan for adversarial claim validation — enrich citations with source content, flow evidence into evaluation/review prompts, detect overclaims via LLM cross-examination rather than mechanical pattern matching. Includes structural sanity check for supporting fact IDs at research_review. |
 
 ## Completed (in `completed/`)
 
