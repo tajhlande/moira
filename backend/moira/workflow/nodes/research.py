@@ -48,6 +48,11 @@ DEFAULT_MAX_PARSE_RETRIES = 2
 
 _DISPLAY_OUTPUT_LIMIT = 2000
 
+# Cap for Citation.content — the source text stored for downstream
+# cross-referencing in review/evaluation.  Larger than excerpt (500) because
+# this is the substantive body, but bounded to avoid state-size bloat.
+_CITATION_CONTENT_LIMIT = 5000
+
 
 def _truncate_for_display(text: str | None, limit: int = _DISPLAY_OUTPUT_LIMIT) -> str:
     """Truncate text for the tool_result display event.
@@ -313,6 +318,7 @@ def _process_execution_results(
                     url=sr.get("url") or None,
                     title=sr.get("title") or None,
                     snippet=sr.get("snippet") or None,
+                    content=sr.get("snippet") or None,
                 )
                 status = "SUCCESS" if result.success else "FAILED"
                 recurring = "" if is_new else " (recurring source)"
@@ -329,6 +335,9 @@ def _process_execution_results(
                     id=cit_id,
                     source=result.tool_name,
                     excerpt=result.output[:500] if result.output else "",
+                    content=result.output[:_CITATION_CONTENT_LIMIT]
+                    if result.output
+                    else "",
                 )
             )
             status = "SUCCESS" if result.success else "FAILED"
@@ -440,6 +449,7 @@ def _find_or_merge_citation(
     url: str | None = None,
     title: str | None = None,
     snippet: str | None = None,
+    content: str | None = None,
 ) -> tuple[str, bool]:
     """Find an existing citation by URL, or create a new one.
 
@@ -450,6 +460,14 @@ def _find_or_merge_citation(
     * One is a substring of the other → keep the longer version.
     * Suffix-prefix token overlap (≥ 3 words) → merge into one.
     * Otherwise → append as a genuinely distinct snippet.
+
+    ``content`` (source text) follows **longest-wins**: within a single
+    workflow run, URL fetches are treated as idempotent, so the longest
+    body seen is canonical. This deliberately differs from ``snippets``
+    (overlap-dedup-append) — ``snippets`` collects genuinely distinct
+    search fragments across rounds, whereas ``content`` represents one
+    coherent source body for downstream cross-referencing in review and
+    evaluation.
 
     Returns ``(citation_id, is_new)``.  ``is_new`` is ``False`` when the
     citation was found and merged — callers can use this to annotate the
@@ -487,6 +505,10 @@ def _find_or_merge_citation(
                     if not merged_into:
                         snippets.append(snippet[:500])
                     c["snippets"] = snippets
+                # Content follows longest-wins (see docstring).
+                if content:
+                    if len(content) > len(c.get("content", "")):
+                        c["content"] = content
                 break
         return cit_id, False
 
@@ -500,6 +522,8 @@ def _find_or_merge_citation(
     if snippet:
         citation["excerpt"] = snippet
         citation["snippets"] = [snippet[:500]]
+    if content:
+        citation["content"] = content
     citations.append(citation)
     return cit_id, True
 

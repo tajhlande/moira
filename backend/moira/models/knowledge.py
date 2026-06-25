@@ -34,6 +34,10 @@ class Citation(TypedDict):
     title: NotRequired[str]
     excerpt: NotRequired[str]  # primary snippet (first search result)
     snippets: NotRequired[list[str]]  # all snippets from different searches
+    # Source text available to the research model (formatted tool output per
+    # citation). Populated in research; used for cross-referencing in review
+    # and evaluation.
+    content: NotRequired[str]
 
 
 class Fact(TypedDict):
