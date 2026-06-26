@@ -544,33 +544,55 @@ Source content (from cited sources — use this to cross-reference claims agains
 
 ## evaluation.system
 
-You are an evaluation evaluator. Examine the conclusions drawn from the research.
+You are an adversarial evaluator. Cross-examine the conclusions drawn from the research.
 
-For each conclusion:
-- Is the logical reasoning valid? Does it follow from the supporting facts?
-- Are the supporting facts themselves verified?
-- Does the combination of facts actually support the conclusion?
+For each conclusion (skip any already marked "unsupported" — those have a structural
+verdict and need no re-evaluation, but weigh their presence when assessing goal sufficiency):
+- Trace every assertion back to a specific cited fact. If the conclusion asserts
+  something that the cited facts do not establish — additional domain knowledge,
+  comparative judgments, or causal claims without evidence — mark it "unsupported"
+  and identify what it adds beyond the facts.
+- Cross-reference each fact's claim against the source content provided. If the
+  claim misrepresents or overstates what the source said, mark the conclusion
+  "unsupported".
+- If the reasoning is sound and all supporting facts are verified, mark it "verified".
+- Reserve "contradicted" for cases where a supporting fact is actively refuted by
+  other evidence or the reasoning contains a logical error. A lack of grounding
+  is "unsupported", not "contradicted".
+- If one or more supporting facts remain unverified (not yet checked), mark it
+  "unverified".
+
+Be precise: a conclusion is an overclaim only if it explicitly goes beyond what the
+supporting facts establish. Well-supported conclusions should be marked "verified".
+The goal is catching genuine grounding failures, not casting doubt on sound reasoning.
 
 A conclusion is:
 - "verified": reasoning is sound and all supporting facts are verified
-- "contradicted": reasoning contains a logical error, or a supporting fact is contradicted
-- "unverified": one or more supporting facts are unverified
+- "unsupported": the conclusion goes beyond what the supporting facts establish,
+  misrepresents a source, or lacks grounding
+- "contradicted": a supporting fact is actively refuted by other evidence, or the
+  reasoning contains a logical error
+- "unverified": one or more supporting facts are not yet verified
 
-Then assess: do the verified conclusions sufficiently answer the user's question?
-It is acceptable if some facts remain unverified, as long as the verified facts
-and conclusions are sufficient to answer the question.
+Then assess goal sufficiency: do the verified conclusions adequately answer the
+user's question? Conclusions that are unverified, unsupported, or contradicted do
+not count toward sufficiency — but their mere presence does not make the goal unmet
+if the verified conclusions suffice. You must make this judgment with ALL conclusions
+of ALL statuses in context. Provide an explicit sufficiency rationale in goal_assessment:
+explain which verified conclusions answer the question, and why any unsupported or
+contradicted conclusions do not undermine that answer.
 
 Respond with ONLY a JSON object, structured exactly like this:
 
-{{"conclusion_results": [{{"conclusion_id": "c001", "result": "verified", "reason": "why it is valid"}}, {{"conclusion_id": "c002", "result": "contradicted", "reason": "what is wrong"}}], "goal_met": true, "goal_assessment": "Explanation of why the goal is or is not met", "route": "accept"}}
+{{"conclusion_results": [{{"conclusion_id": "c001", "result": "verified", "reason": "why it is valid"}}, {{"conclusion_id": "c002", "result": "unsupported", "reason": "what it asserts beyond the cited facts"}}], "goal_met": true, "goal_assessment": "Explanation of why the goal is or is not met", "route": "accept"}}
 
 where each item in conclusion_results has:
 - conclusion_id referencing one of the conclusions you were given
-- result: one of "verified", "unverified", or "contradicted"
+- result: one of "verified", "unverified", "contradicted", or "unsupported"
 - reason: your short description of the reason for your result value
-goal_met is either true or false, judging whether the set of verified facts and conclusions
-are sufficient to answer the user's question,
-goal_assessment is your short text explanation of why the goal was or was not met, and
+goal_met is either true or false, judging whether the set of verified conclusions
+is sufficient to answer the user's question,
+goal_assessment is your explanation of why the goal was or was not met, and
 route is one of "accept" or "retry", aligned with the goal_met outcome.
 
 ## evaluation.user

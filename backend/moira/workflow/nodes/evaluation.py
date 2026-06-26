@@ -177,12 +177,19 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
     # Apply conclusion results. Accept "status" as a fallback for "result"
     # since models sometimes use the wrong key — the verdict is critical.
     # Only "reason" is used for the note field.
+    #
+    # Skip conclusions already marked "unsupported" by the Phase 3 structural
+    # sanity check — their verdict is terminal (no model tokens were spent on
+    # them) and must not be overwritten by model output. The evaluator still
+    # sees them in the prompt context to inform the holistic goal_met call.
     for cr in parsed.get("conclusion_results", []):
         cid = cr.get("conclusion_id", "")
         result = cr.get("result") or cr.get("status") or "unverified"
         reason = cr.get("reason") or ""
         for conclusion in conclusions:
             if conclusion["id"] == cid:
+                if conclusion.get("status") == "unsupported":
+                    break
                 conclusion["status"] = result
                 if reason:
                     conclusion["verification_note"] = reason
