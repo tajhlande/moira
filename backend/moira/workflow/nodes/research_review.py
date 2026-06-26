@@ -18,6 +18,7 @@ from moira.prompts import get_prompt
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
     _check_stop,
+    _format_citation_content,
     _get_model,
     _now,
     _parse_json_object,
@@ -117,6 +118,9 @@ async def research_review(state: ResearchState, config: RunnableConfig) -> dict:
         question=knowledge["question"],
         facts_with_claims_and_sources=_format_facts_for_review(facts),
         conclusions_context=_format_conclusions_for_context(conclusions),
+        source_content=_format_citation_content(
+            knowledge.get("citations", []), conclusions, facts
+        ),
     )
 
     registry = _get_model(config)

@@ -537,6 +537,9 @@ Facts to review (ID | subject | fact_needed | claim | status | citations):
 Conclusions drawn from these facts (for context on what needs supporting):
 {conclusions_context}
 
+Source content (from cited sources — use this to cross-reference claims against what sources actually say):
+{source_content}
+
 ---
 
 ## evaluation.system

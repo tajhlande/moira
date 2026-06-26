@@ -8,7 +8,7 @@ from typing import cast
 
 from langgraph.graph.state import RunnableConfig
 
-from backend.moira.models.knowledge import ResearchState
+from moira.models.knowledge import ResearchState
 from moira.service_setup import _services
 
 

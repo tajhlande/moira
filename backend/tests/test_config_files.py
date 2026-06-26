@@ -130,6 +130,7 @@ class TestPromptsFile:
                 "question",
                 "facts_with_claims_and_sources",
                 "conclusions_context",
+                "source_content",
             },
             "evaluation.user": {
                 "user_goal",
