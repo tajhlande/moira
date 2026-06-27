@@ -2,6 +2,7 @@ from moira.config import CostWeights
 from moira.workflow.budget import (
     can_execute,
     deduct_cost,
+    estimated_tool_cost_per_research,
     evaluation_retry_cost,
     full_cycle_cost,
     get_node_cost,
@@ -82,3 +83,15 @@ def test_evaluation_retry_cost():
 
 def test_deduct_cost_with_zero_cost_node():
     assert deduct_cost({}, "unknown_node", 10.0) == 10.0
+
+
+def test_estimated_tool_cost_per_research_zero_when_no_research():
+    assert estimated_tool_cost_per_research(0.0, 0) == 0.0
+    assert estimated_tool_cost_per_research(10.0, 0) == 0.0
+
+
+def test_estimated_tool_cost_per_research_averages():
+    # 2 research cycles, 12 total tool cost → avg 6
+    assert estimated_tool_cost_per_research(12.0, 2) == 6.0
+    # 1 research cycle, 8 total tool cost → avg 8
+    assert estimated_tool_cost_per_research(8.0, 1) == 8.0

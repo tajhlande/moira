@@ -185,12 +185,15 @@ class TestReportGeneration:
         assert result["knowledge"]["generation_reason"] == "budget_exhausted"
 
     @pytest.mark.asyncio
-    async def test_incomplete_reason_with_contradicted_conclusion(
+    async def test_goal_met_verified_even_with_contradicted_conclusion(
         self,
         config,
         mock_writer,
         mock_model,
     ):
+        """goal_met=True yields "verified" even when a conclusion is
+        contradicted.  The evaluator weighs individual conclusion statuses
+        when setting goal_met, so a local guard here would double-count."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(content=REPORT_RESPONSE)
 
@@ -211,7 +214,77 @@ class TestReportGeneration:
 
         result = await report_generation(state, _make_run_config(config))
 
-        assert result["knowledge"]["generation_reason"] == "incomplete"
+        assert result["knowledge"]["generation_reason"] == "verified"
+
+    @pytest.mark.asyncio
+    async def test_omitted_conclusions_collects_non_verified(
+        self,
+        config,
+        mock_writer,
+        mock_model,
+    ):
+        """Conclusions with status unsupported, unverified, or contradicted
+        are collected into omitted_conclusions for inspectability."""
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=REPORT_RESPONSE)
+
+        from moira.workflow.nodes.report_generation import report_generation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["conclusions"] = [
+            Conclusion(id="c001", conclusion="Solid", supporting_fact_ids=[], status="verified"),
+            Conclusion(id="c002", conclusion="Overclaim", supporting_fact_ids=[], status="unsupported"),
+            Conclusion(id="c003", conclusion="Refuted", supporting_fact_ids=[], status="contradicted"),
+            Conclusion(id="c004", conclusion="Pending", supporting_fact_ids=[], status="unverified"),
+        ]
+        state["knowledge"]["evaluation_history"] = [
+            {
+                "conclusion_results": [],
+                "goal_met": True,
+                "goal_assessment": "Done",
+                "route": "accept",
+            },
+        ]
+
+        result = await report_generation(state, _make_run_config(config))
+        report = result["knowledge"]["report"]
+
+        omitted_ids = {c["id"] for c in report["omitted_conclusions"]}
+        assert omitted_ids == {"c002", "c003", "c004"}
+        # Verified conclusion is NOT in omitted
+        assert "c001" not in omitted_ids
+
+    @pytest.mark.asyncio
+    async def test_omitted_conclusions_empty_when_all_verified(
+        self,
+        config,
+        mock_writer,
+        mock_model,
+    ):
+        """When all conclusions are verified, omitted_conclusions is empty."""
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=REPORT_RESPONSE)
+
+        from moira.workflow.nodes.report_generation import report_generation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["conclusions"] = [
+            Conclusion(id="c001", conclusion="A", supporting_fact_ids=[], status="verified"),
+            Conclusion(id="c002", conclusion="B", supporting_fact_ids=[], status="verified"),
+        ]
+        state["knowledge"]["evaluation_history"] = [
+            {
+                "conclusion_results": [],
+                "goal_met": True,
+                "goal_assessment": "Done",
+                "route": "accept",
+            },
+        ]
+
+        result = await report_generation(state, _make_run_config(config))
+        report = result["knowledge"]["report"]
+
+        assert report["omitted_conclusions"] == []
 
     @pytest.mark.asyncio
     async def test_report_includes_tool_cost(self, config, mock_writer, mock_model):

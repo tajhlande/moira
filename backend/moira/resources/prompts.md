@@ -21,6 +21,16 @@ identify what facts would need to be known to answer the user's question.
 Do not assume facts are true merely because they are common, likely, or familiar,
 or in your knowledge.  The research process will uncover the truth of them.
 
+A fact must describe a single observable property or relationship that can be
+directly supported by one or more citations. 
+It must not contain recommendations, evaluations, strategic judgments, or 
+combine multiple independent assertions into one statement.
+
+If you are drafting a compound fact, decompose it into multiple simple facts. 
+Beware conjunctions like "and" in fact staments - they do not belong. 
+Facts should not contain superlatives or words that convey judgment - they must
+be encyclopedic in nature and neutral in tone.
+
 Unknown facts should be phrased as questions to be resolved by research, not statements
 about what the answer is likely to contain.
 Do not include examples, candidate answers, hypotheses, or assumptions in unknown_facts.
@@ -211,6 +221,15 @@ You are a research assistant performing fact discovery. Your job is to call tool
 find the specific facts identified in the research plan, interpret the results, and
 record what you learned.
 
+A fact must describe a single observable property or relationship that can be directly 
+supported by one or more citations. It must not contain recommendations, evaluations, 
+strategic judgments, or combine multiple independent assertions into one statement.
+
+If you are drafting a compound fact, decompose it into multiple simple fact statements. 
+Beware conjunctions like "and" in fact staments - they do not belong. 
+Facts should not contain superlatives or words that convey judgment - they must
+be encyclopedic in nature and neutral in tone.
+
 You will receive a tool call plan and a list of unknown facts with their IDs. Execute
 the plan by calling tools. After each round of results, you may:
 - Record discovered facts (updating claims for target facts)
@@ -313,6 +332,10 @@ as the set of facts needed to answer the user's goal question.
 Therefore, your job is to find the facts needed to answer the user's
 goal question.
 
+A fact must describe a single observable property or relationship that can be directly 
+supported by one or more citations. It must not contain recommendations, evaluations, 
+strategic judgments, or combine multiple independent assertions into one statement.
+
 You may call tools using the tool calling interface provided by the system. After each
 round of tool calling results, you may:
 - Record discovered facts (updating claims for wanted facts)
@@ -375,6 +398,10 @@ fill the missing areas.
 You are a fact extraction assistant. Given tool execution results and a list
 of unknown facts, extract the specific factual claims that were discovered.
 
+A fact must describe a single observable property or relationship that can be directly 
+supported by one or more citations. It must not contain recommendations, evaluations, 
+strategic judgments, or combine multiple independent assertions into one statement.
+
 For each fact that the tool results address, provide:
 - "fact_id": the ID of the fact (e.g., "f001")
 - "subject": what entity or topic this fact is about
@@ -412,6 +439,10 @@ Tool execution results:
 You are a synthesis assistant. Your job is to derive conclusions from a set of
 discovered facts. You must NOT use any world knowledge beyond what is in the facts
 provided to you.
+
+A fact must describe a single observable property or relationship that can be directly 
+supported by one or more citations. It must not contain recommendations, evaluations, 
+strategic judgments, or combine multiple independent assertions into one statement.
 
 Your job is to construct a chain of support.
 Retrieved facts support derived claims.
@@ -489,6 +520,10 @@ provided again for reference.
 
 You are a research reviewer. Your job is to evaluate whether the research
 gathered sufficient evidence to answer the user's question.
+
+A fact must describe a single observable property or relationship that can be directly 
+supported by one or more citations. It must not contain recommendations, evaluations, 
+strategic judgments, or combine multiple independent assertions into one statement.
 
 For each fact that has a claim, review the claim against its cited evidence:
 - "verified": the claim is well-supported by the cited source
@@ -656,6 +691,12 @@ The answer has been verified. Present it with confidence.
 Verification could not be completed for all claims. Some facts and conclusions remain
 unverified. Present the answer with explicit caveats about unverified material.
 Clearly distinguish what is verified from what is uncertain.
+
+## report_generation.reason_eval_insufficient
+
+Evaluation was completed but found the research insufficient. The verified conclusions
+do not fully answer the user's question. Present what was verified with caveats about
+the gaps.
 
 ## report_generation.reason_retries_exhausted
 

@@ -140,9 +140,12 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     elif knowledge.get("evaluation_history"):
         latest_eval = knowledge["evaluation_history"][-1]
         eval_route = latest_eval.get("route", "accept")
-        if latest_eval.get("goal_met") and not any(
-            c["status"] == "contradicted" for c in knowledge.get("conclusions", [])
-        ):
+        # goal_met is the sole arbiter of "verified" status.  The evaluator
+        # already weighs contradicted / unsupported conclusions when setting
+        # goal_met, so a separate local guard would double-count the signal
+        # and prevent a justified "verified" verdict when individual claims
+        # fail but the overall research goal is still met.
+        if latest_eval.get("goal_met"):
             generation_reason = "verified"
             path_instruction = get_prompt("report_generation.reason_verified")
         elif eval_route == "retry":
@@ -157,9 +160,13 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
                     "report_generation.reason_retries_exhausted",
                 )
             else:
+                # Evaluation ran (goal_met was false) and wanted a retry,
+                # but budget wouldn't allow another cycle.  Use a distinct
+                # instruction — verification WAS completed, but the research
+                # itself was found insufficient.
                 generation_reason = "budget_exhausted"
                 path_instruction = get_prompt(
-                    "report_generation.reason_budget_exhausted",
+                    "report_generation.reason_eval_insufficient",
                 )
         else:
             # Evaluation accepted but goal not met — research is incomplete.
@@ -177,12 +184,24 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     all_conclusions = knowledge.get("conclusions", [])
     all_citations = knowledge.get("citations", [])
 
+    # Bucket items by status.  Only "verified" items are fed to the model's
+    # prose-writing prompt — non-verified items are deliberately excluded so
+    # they cannot be presented as established fact in the answer.
     verified_facts = [f for f in all_facts if f.get("status") == "verified"]
     verified_conclusions = [c for c in all_conclusions if c.get("status") == "verified"]
     contradicted_items = [f for f in all_facts if f.get("status") == "contradicted"] + [
         c for c in all_conclusions if c.get("status") == "contradicted"
     ]
     unknown_facts_list = [f for f in all_facts if f.get("status") == "unknown"]
+
+    # Conclusions that were checked but did not pass verification — either
+    # actively contradicted, structurally unsupported (phantom fact IDs), or
+    # left unverified.  These are surfaced in a side channel for inspectability
+    # so the user can see what was dropped and why.
+    omitted_statuses = {"unsupported", "unverified", "contradicted"}
+    omitted_conclusions = [
+        dict(c) for c in all_conclusions if c.get("status") in omitted_statuses
+    ]
 
     # Build the prompt.
     system_prompt = get_prompt("report_generation.system").format(
@@ -371,6 +390,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
         total_cost=es["budget_limit"] - new_budget,
         tool_call_total_cost=es.get("total_tool_cost_consumed", 0.0),
         generation_reason=generation_reason,
+        omitted_conclusions=omitted_conclusions,
     )
 
     writer(

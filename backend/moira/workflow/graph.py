@@ -23,6 +23,7 @@ from moira.config import MoiraConfig
 from moira.models.knowledge import ResearchState
 from moira.workflow.budget import (
     evaluation_retry_cost,
+    estimated_tool_cost_per_research,
     get_node_cost,
     review_retry_cost,
 )
@@ -70,7 +71,14 @@ def make_review_router():
             # so the retry doesn't consume the last of the budget and
             # leave evaluation unable to run.
             eval_cost = get_node_cost(step_costs, "evaluation")
-            threshold = rr_cost + eval_cost
+            # Also reserve an estimate for tool-call costs that research
+            # will incur on top of its base step cost.  Without this, the
+            # router under-counts and may start a cycle that can't finish.
+            tool_cost_estimate = estimated_tool_cost_per_research(
+                es.get("total_tool_cost_consumed", 0.0),
+                es.get("research_count", 0),
+            )
+            threshold = rr_cost + eval_cost + tool_cost_estimate
             max_review = es.get("retry_limits", {}).get("max_review", 3)
 
             if review_count < max_review and budget_remaining >= threshold:
@@ -126,24 +134,32 @@ def make_evaluation_router():
             evaluation_count = es.get("evaluation_count", 0)
             budget_remaining = es.get("budget_remaining", 0.0)
             er_cost = evaluation_retry_cost(step_costs)
+            # Add estimated tool-call costs that research will incur on
+            # top of its base step cost.  Without this, the router may
+            # allow a retry cycle that starves evaluation.
+            tool_cost_estimate = estimated_tool_cost_per_research(
+                es.get("total_tool_cost_consumed", 0.0),
+                es.get("research_count", 0),
+            )
+            threshold = er_cost + tool_cost_estimate
             max_evaluation = es.get("retry_limits", {}).get("max_evaluation", 2)
 
-            if evaluation_count < max_evaluation and budget_remaining >= er_cost:
+            if evaluation_count < max_evaluation and budget_remaining >= threshold:
                 logger.info(
                     "evaluation retry: budget sufficient (%.1f >= %.1f), count=%d/%d",
                     budget_remaining,
-                    er_cost,
+                    threshold,
                     evaluation_count,
                     max_evaluation,
                 )
                 return "tool_identification"
 
             logger.info(
-                "evaluation retry declined (count=%d/%d, budget=%.1f, cost=%.1f)",
+                "evaluation retry declined (count=%d/%d, budget=%.1f, threshold=%.1f)",
                 evaluation_count,
                 max_evaluation,
                 budget_remaining,
-                er_cost,
+                threshold,
             )
             return "report_generation"
 

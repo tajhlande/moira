@@ -51,6 +51,7 @@ def _make_review_router_state(
             "retry_limits": {"max_review": max_review, "max_evaluation": 2},
             "review_count": review_count,
             "research_retry_count": 0,
+            "research_count": 0,
             "evaluation_count": 0,
             "tool_costs": {},
             "tool_call_counts": {},
@@ -243,3 +244,45 @@ def test_review_router_falls_back_to_default_without_retry_limits():
 def test_graph_compiles_successfully(config):
     compiled = compile_graph(config)
     assert compiled is not None
+
+
+def test_review_router_retry_declined_when_tool_cost_exceeds_budget():
+    """Even if step-cost threshold is met, tool-call costs from prior
+    research cycles must be reserved.  Otherwise research tools will
+    eat the evaluation budget.
+
+    Review retry step cost = 18, eval = 5, base threshold = 23.
+    With 1 prior research cycle consuming 10 in tool calls, the
+    effective threshold rises to 33.
+    """
+    router = make_review_router()
+    state = _make_review_router_state(route="retry", budget_remaining=25.0, review_count=1)
+    state["execution_state"]["total_tool_cost_consumed"] = 10.0
+    state["execution_state"]["research_count"] = 1
+    # 25 < 33 → retry declined
+    assert router(state) == "evaluation"
+
+
+def test_evaluation_router_retry_declined_when_tool_cost_exceeds_budget():
+    """Same logic for evaluation retries.
+
+    Evaluation retry step cost = 26.  With 1 prior research cycle
+    consuming 10 in tool calls, threshold rises to 36.
+    """
+    router = make_evaluation_router()
+    state = _make_evaluation_router_state(route="retry", budget_remaining=30.0, evaluation_count=1)
+    state["execution_state"]["total_tool_cost_consumed"] = 10.0
+    state["execution_state"]["research_count"] = 1
+    # 30 < 36 → retry declined
+    assert router(state) == "report_generation"
+
+
+def test_evaluation_router_retry_allowed_with_tool_estimate():
+    """With enough budget to cover both step costs and estimated tool
+    costs, the retry should proceed."""
+    router = make_evaluation_router()
+    state = _make_evaluation_router_state(route="retry", budget_remaining=40.0, evaluation_count=1)
+    state["execution_state"]["total_tool_cost_consumed"] = 10.0
+    state["execution_state"]["research_count"] = 1
+    # 40 >= 36 → retry allowed
+    assert router(state) == "tool_identification"

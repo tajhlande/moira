@@ -125,6 +125,7 @@ class ExecutionState(TypedDict):
     total_tool_cost_consumed: float
     error: str
     research_retry_count: int
+    research_count: int
     review_count: int
     evaluation_count: int
     retry_limits: dict[str, int]
@@ -157,6 +158,7 @@ class ResearchReport(TypedDict):
     total_cost: float
     tool_call_total_cost: float
     generation_reason: str
+    omitted_conclusions: list[dict]
 
 
 # ---------------------------------------------------------------------------

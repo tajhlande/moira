@@ -184,6 +184,7 @@ def _build_state(config, budget=None):
             "total_tool_cost_consumed": 0.0,
             "error": "",
             "research_retry_count": 0,
+            "research_count": 0,
             "review_count": 0,
             "evaluation_count": 0,
         },

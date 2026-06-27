@@ -1285,5 +1285,6 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             "budget_remaining": new_budget,
             "tool_call_counts": call_counts,
             "total_tool_cost_consumed": total_tool_cost,
+            "research_count": es.get("research_count", 0) + 1,
         },
     }

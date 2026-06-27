@@ -88,3 +88,22 @@ def review_retry_cost(step_costs: dict[str, float]) -> float:
 def evaluation_retry_cost(step_costs: dict[str, float]) -> float:
     """Step cost of an evaluation retry (tool_identification through evaluation)."""
     return sum(get_node_cost(step_costs, n) for n in _EVALUATION_RETRY_NODES)
+
+
+def estimated_tool_cost_per_research(
+    total_tool_cost: float,
+    research_count: int,
+) -> float:
+    """Estimate the tool-call budget a single research cycle will consume.
+
+    Research deducts ``step_costs['research']`` as a base, then additionally
+    deducts per-tool-call costs that vary by how many tools are invoked.
+    The retry routers use this to avoid starting a cycle that will starve
+    evaluation.
+
+    Returns the average tool cost across prior research cycles, or 0 if no
+    research has run yet.
+    """
+    if research_count <= 0:
+        return 0.0
+    return total_tool_cost / research_count
