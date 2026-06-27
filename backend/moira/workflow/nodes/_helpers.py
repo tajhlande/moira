@@ -179,9 +179,7 @@ _PER_CITATION_CONTENT_CAP = 2000
 _TOTAL_CITATION_CONTENT_CAP = 32000
 
 
-def _format_citation_content(
-    citations: list, conclusions: list, facts: list
-) -> str:
+def _format_citation_content(citations: list, conclusions: list, facts: list) -> str:
     """Format citation source content for cross-referencing in prompts.
 
     Applies a per-citation cap and a total budget.  Citations referenced by

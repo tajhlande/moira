@@ -37,37 +37,40 @@ def _build_state(config, question="Test question", facts=None, conclusions=None)
         "evaluation": cw.evaluation,
         "report_generation": cw.report_generation,
     }
-    return cast(ResearchState, {
-        "knowledge": {
-            "question": question,
-            "user_goal": "",
-            "topic": "",
-            "entities": [],
-            "concepts": [],
-            "facts": facts or [],
-            "conclusions": conclusions or [],
-            "citations": [],
-            "review_history": [],
-            "evaluation_history": [],
+    return cast(
+        ResearchState,
+        {
+            "knowledge": {
+                "question": question,
+                "user_goal": "",
+                "topic": "",
+                "entities": [],
+                "concepts": [],
+                "facts": facts or [],
+                "conclusions": conclusions or [],
+                "citations": [],
+                "review_history": [],
+                "evaluation_history": [],
+            },
+            "execution_state": {
+                "candidate_tools": [],
+                "tool_call_plan": [],
+                "budget_remaining": float(config.budget.default_limit),
+                "budget_limit": float(config.budget.default_limit),
+                "step_costs": step_costs,
+                "tool_costs": {},
+                "tool_call_limits": {},
+                "tool_call_counts": {},
+                "total_tool_cost_consumed": 0.0,
+                "error": "",
+                "research_retry_count": 0,
+                "research_count": 0,
+                "review_count": 0,
+                "evaluation_count": 0,
+                "retry_limits": {"max_review": 3, "max_evaluation": 2},
+            },
         },
-        "execution_state": {
-            "candidate_tools": [],
-            "tool_call_plan": [],
-            "budget_remaining": float(config.budget.default_limit),
-            "budget_limit": float(config.budget.default_limit),
-            "step_costs": step_costs,
-            "tool_costs": {},
-            "tool_call_limits": {},
-            "tool_call_counts": {},
-            "total_tool_cost_consumed": 0.0,
-            "error": "",
-            "research_retry_count": 0,
-            "research_count": 0,
-            "review_count": 0,
-            "evaluation_count": 0,
-            "retry_limits": {"max_review": 3, "max_evaluation": 2},
-        },
-    })
+    )
 
 
 # ---------------------------------------------------------------------------

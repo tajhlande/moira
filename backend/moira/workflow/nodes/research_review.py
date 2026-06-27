@@ -58,9 +58,7 @@ def _format_conclusions_for_context(conclusions: list) -> str:
     return "\n".join(lines)
 
 
-def _flag_unsupported_conclusions(
-    facts: list[Fact], conclusions: list
-) -> int:
+def _flag_unsupported_conclusions(facts: list[Fact], conclusions: list) -> int:
     """Structural sanity check: flag conclusions that reference non-existent
     fact IDs as ``"unsupported"``.
 
@@ -77,9 +75,7 @@ def _flag_unsupported_conclusions(
         for fid in conclusion.get("supporting_fact_ids", []):
             if fid not in known_fact_ids:
                 conclusion["status"] = "unsupported"
-                conclusion["verification_note"] = (
-                    f"References non-existent fact ID: {fid}"
-                )
+                conclusion["verification_note"] = f"References non-existent fact ID: {fid}"
                 flagged += 1
                 break  # one hallucinated reference is sufficient
     return flagged
@@ -219,8 +215,7 @@ async def research_review(state: ResearchState, config: RunnableConfig) -> dict:
     unsupported_count = _flag_unsupported_conclusions(facts, conclusions)
     if unsupported_count:
         logger.info(
-            "RESEARCH_REVIEW: %d conclusion(s) marked unsupported "
-            "(non-existent fact references)",
+            "RESEARCH_REVIEW: %d conclusion(s) marked unsupported (non-existent fact references)",
             unsupported_count,
         )
 

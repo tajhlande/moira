@@ -233,9 +233,15 @@ class TestReportGeneration:
         state = _build_state(config, "Test question")
         state["knowledge"]["conclusions"] = [
             Conclusion(id="c001", conclusion="Solid", supporting_fact_ids=[], status="verified"),
-            Conclusion(id="c002", conclusion="Overclaim", supporting_fact_ids=[], status="unsupported"),
-            Conclusion(id="c003", conclusion="Refuted", supporting_fact_ids=[], status="contradicted"),
-            Conclusion(id="c004", conclusion="Pending", supporting_fact_ids=[], status="unverified"),
+            Conclusion(
+                id="c002", conclusion="Overclaim", supporting_fact_ids=[], status="unsupported"
+            ),
+            Conclusion(
+                id="c003", conclusion="Refuted", supporting_fact_ids=[], status="contradicted"
+            ),
+            Conclusion(
+                id="c004", conclusion="Pending", supporting_fact_ids=[], status="unverified"
+            ),
         ]
         state["knowledge"]["evaluation_history"] = [
             {
@@ -304,7 +310,9 @@ class TestReportGeneration:
         state = _build_state(config, "Test question")
         state["knowledge"]["conclusions"] = [
             Conclusion(id="c001", conclusion="Solid", supporting_fact_ids=[], status="verified"),
-            Conclusion(id="c002", conclusion="Overclaim", supporting_fact_ids=[], status="unsupported"),
+            Conclusion(
+                id="c002", conclusion="Overclaim", supporting_fact_ids=[], status="unsupported"
+            ),
         ]
         state["knowledge"]["evaluation_history"] = [
             {

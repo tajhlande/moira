@@ -806,8 +806,7 @@ class TestEvaluationOverclaimFixture:
         overclaim_state["knowledge"]["conclusions"] = [
             Conclusion(
                 id="c001",
-                conclusion="Corviknight resists all of Tyranitar's weaknesses "
-                "including Fighting",
+                conclusion="Corviknight resists all of Tyranitar's weaknesses including Fighting",
                 supporting_fact_ids=["f004", "f005"],
                 reasoning="Steel resists Fairy and Fighting",
                 status="unverified",

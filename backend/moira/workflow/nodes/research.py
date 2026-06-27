@@ -335,9 +335,7 @@ def _process_execution_results(
                     id=cit_id,
                     source=result.tool_name,
                     excerpt=result.output[:500] if result.output else "",
-                    content=result.output[:_CITATION_CONTENT_LIMIT]
-                    if result.output
-                    else "",
+                    content=result.output[:_CITATION_CONTENT_LIMIT] if result.output else "",
                 )
             )
             status = "SUCCESS" if result.success else "FAILED"

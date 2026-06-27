@@ -199,9 +199,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     # left unverified.  These are surfaced in a side channel for inspectability
     # so the user can see what was dropped and why.
     omitted_statuses = {"unsupported", "unverified", "contradicted"}
-    omitted_conclusions = [
-        dict(c) for c in all_conclusions if c.get("status") in omitted_statuses
-    ]
+    omitted_conclusions = [dict(c) for c in all_conclusions if c.get("status") in omitted_statuses]
 
     # Build the prompt.
     system_prompt = get_prompt("report_generation.system").format(
@@ -274,10 +272,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
                 f"response={len(raw)} chars)"
             )
         else:
-            err_msg = (
-                f"Report generation JSON could not be parsed "
-                f"(response={len(raw)} chars)"
-            )
+            err_msg = f"Report generation JSON could not be parsed (response={len(raw)} chars)"
         logger.error("REPORT GENERATION: %s", err_msg)
         detail["raw_response"] = raw[:4000]
         writer(
