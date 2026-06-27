@@ -237,7 +237,12 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
 
     raw = response.content or ""
     thinking = getattr(response, "thinking", "") or ""
-    detail: dict = {}
+    detail: dict = {
+        "prompt": user_prompt,
+        "response": raw,
+        "model": resolved.model_id,
+        "generation_reason": generation_reason,
+    }
     if thinking:
         detail["thinking"] = thinking[:2000]
 
@@ -407,13 +412,10 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
             "payload": {
                 "node": NODE_NAME,
                 "budget_remaining": new_budget,
+                "detail": detail,
                 "purpose": NODE_NAME,
                 "model": resolved.model_id,
                 "call_count": call_count,
-                "detail": {
-                    "generation_reason": generation_reason,
-                    "call_count": call_count,
-                },
                 **_response_meta(response),
             },
         }
