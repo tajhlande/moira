@@ -11,7 +11,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
 from moira.inference.defaults import DEFAULT_TEMPERATURE
-from moira.models.knowledge import ResearchReport, ResearchState, knowledge_summary
+from moira.models.knowledge import Citation, ResearchReport, ResearchState, knowledge_summary
 from moira.prompts import render_prompt
 from moira.workflow.budget import deduct_cost
 from moira.workflow.nodes._helpers import (
@@ -58,6 +58,8 @@ def _format_citations(citations: list) -> str:
 
     When a citation has multiple snippets (from recurring searches), all
     snippets are listed so the model sees the full context per source.
+    Snippets are presented at the same length they are stored (500 chars)
+    to match what other nodes see.
     """
     lines = []
     for i, c in enumerate(citations, 1):
@@ -65,10 +67,10 @@ def _format_citations(citations: list) -> str:
         if snippets:
             snippet_parts = []
             for j, s in enumerate(snippets, 1):
-                snippet_parts.append(f"Snippet {j}: {(s or '')[:100]}")
+                snippet_parts.append(f"Snippet {j}: {(s or '')[:500]}")
             snippet_str = "; ".join(snippet_parts)
         else:
-            snippet_str = (c.get("excerpt") or "")[:100]
+            snippet_str = (c.get("excerpt") or "")[:500]
         lines.append(
             f"[{i}] {c['id']} | {c['source']} | {c.get('url') or ''} | "
             f"{c.get('title') or ''} | {snippet_str}"
@@ -78,7 +80,7 @@ def _format_citations(citations: list) -> str:
 
 def _prune_and_renumber_citations(
     answer: str,
-    all_citations: list[dict],
+    all_citations: list[Citation],
 ) -> tuple[str, list[dict], list[dict]]:
     """Split citations into cited and uncited, renumber inline markers.
 

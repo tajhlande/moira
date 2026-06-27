@@ -323,6 +323,7 @@ def _response_meta(response) -> dict:
 
 # --- Citation content formatting (shared by evaluation and research_review) ---
 
+_SNIPPET_MAX_LENGTH = 500
 _PER_CITATION_CONTENT_CAP = 2000
 _TOTAL_CITATION_CONTENT_CAP = 32000
 

@@ -32,6 +32,7 @@ from moira.tools.base import ToolCall, ToolDefinition
 from moira.tools.executor import ToolExecutor
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
+    _SNIPPET_MAX_LENGTH,
     _check_stop,
     _get_model,
     _now,
@@ -334,7 +335,7 @@ def _process_execution_results(
                 Citation(
                     id=cit_id,
                     source=result.tool_name,
-                    excerpt=result.output[:500] if result.output else "",
+                    excerpt=result.output[:_SNIPPET_MAX_LENGTH ] if result.output else "",
                     content=result.output[:_CITATION_CONTENT_LIMIT] if result.output else "",
                 )
             )
@@ -347,7 +348,7 @@ def _process_execution_results(
             {
                 "tool": result.tool_name,
                 "args": args,
-                "output": result.output[:500] if result.output else "",
+                "output": result.output[:_SNIPPET_MAX_LENGTH ] if result.output else "",
                 "duration_ms": result.duration_ms,
                 "success": result.success,
                 "metadata": result.metadata,
@@ -536,17 +537,17 @@ def _find_or_merge_citation(
                             break
                         # Existing is substring of new → replace with longer
                         if existing_norm in snippet_norm:
-                            snippets[i] = snippet[:500]
+                            snippets[i] = snippet[:_SNIPPET_MAX_LENGTH ]
                             merged_into = True
                             break
                         # Suffix-prefix overlap → merge into one
                         merged = _try_merge_snippets(existing, snippet)
                         if merged:
-                            snippets[i] = merged[:500]
+                            snippets[i] = merged[:_SNIPPET_MAX_LENGTH ]
                             merged_into = True
                             break
                     if not merged_into:
-                        snippets.append(snippet[:500])
+                        snippets.append(snippet[:_SNIPPET_MAX_LENGTH ])
                     c["snippets"] = snippets
                 # Content follows longest-wins (see docstring).
                 if content:
@@ -564,7 +565,7 @@ def _find_or_merge_citation(
         citation["title"] = title
     if snippet:
         citation["excerpt"] = snippet
-        citation["snippets"] = [snippet[:500]]
+        citation["snippets"] = [snippet[:_SNIPPET_MAX_LENGTH ]]
     if content:
         citation["content"] = content
     citations.append(citation)
