@@ -28,9 +28,11 @@ _FULL_CYCLE_NODES = (
     "evaluation",
 )
 
-# Nodes in a research_review retry (research through research_review).
-# research_review → retry → research (light retry with existing tools).
+# Nodes in a research_review retry (planning through research_review).
+# research_review → retry → planning → research (re-plans for remaining
+# unknown facts, including model-created ones, then re-researches).
 _REVIEW_RETRY_NODES = (
+    "planning",
     "research",
     "synthesis",
     "research_review",

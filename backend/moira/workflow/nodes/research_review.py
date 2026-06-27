@@ -211,6 +211,20 @@ async def research_review(state: ResearchState, config: RunnableConfig) -> dict:
                     fact["verification_note"] = evidence
                 break
 
+    # Guard: the reviewer sometimes marks empty-claim facts as "verified"
+    # or "unverified" — there is nothing to verify without a claim.  Revert
+    # these to "unknown" so planning and research can re-attempt them.
+    for fact in facts:
+        claim = (fact.get("claim") or "").strip()
+        if not claim and fact.get("status") in ("verified", "unverified"):
+            logger.warning(
+                "RESEARCH_REVIEW: %s has no claim but reviewer marked it "
+                "'%s' — reverting to 'unknown'",
+                fact["id"],
+                fact["status"],
+            )
+            fact["status"] = "unknown"
+
     # Structural sanity check: flag conclusions with hallucinated fact
     # references as "unsupported" (terminal — no model call needed).
     unsupported_count = _flag_unsupported_conclusions(facts, conclusions)

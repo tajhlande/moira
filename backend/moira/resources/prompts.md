@@ -159,7 +159,7 @@ Topic: {topic}
 Entities: {entities}
 Concepts: {concepts}
 
-Unknown facts to resolve (ID | subject | fact_needed):
+Facts to resolve (ID | subject | fact_needed):
 {unknown_facts}
 
 Available tools (name | description | cost per call | calls remaining):
@@ -183,6 +183,23 @@ Failed conclusions (ID | result | reason):
 Produce a revised plan that takes a different approach to the research.
 Consider using different tools, different queries, or investigating the
 facts from a different angle.
+
+## planning.system_retry_review
+
+Previous research was insufficient. The research reviewer identified gaps.
+
+Coverage assessment:
+{coverage_assessment}
+
+Missing areas:
+{missing_areas}
+
+Produce a revised plan that addresses the gaps above. Focus on facts that
+remain unknown or unverified — do not re-plan calls for facts that are
+already verified. Consider whether different tools or different queries
+might succeed where the previous attempt failed. If a fact cannot be
+resolved with the available tools, omit it from the plan rather than
+wasting budget on a call unlikely to return useful results.
 
 ## planning.system_prior_report
 
@@ -250,8 +267,12 @@ Rules:
   Note significant conflicts in the claim but extract the better-supported position.
 
 For each fact you discover, record:
-- The ID of the fact this resolves (e.g., "f001") — or if this is a newly identified
-  fact, describe it
+- The ID of the fact this resolves — use the EXACT ID from the unknown facts
+  list above (e.g., "f001"). Do not add suffixes like "_partial" or prefixes
+  like "unknown_". Even if you only found partial information, write your best
+  claim using the exact ID.
+- If you cannot find any information for a fact, simply omit it from
+  discovered_facts. Do not create entries for facts you could not resolve.
 - The subject it is about
 - A specific, precise claim (e.g., "Tyranitar is Rock/Dark type", not "Tyranitar has
   a type")

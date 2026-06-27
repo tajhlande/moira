@@ -106,6 +106,10 @@ class TestPromptsFile:
                 "evaluation_feedback",
                 "failed_conclusions",
             },
+            "planning.system_retry_review": {
+                "coverage_assessment",
+                "missing_areas",
+            },
             "planning.system_earlier_turns": {"earlier_turns"},
             "planning.system_prior_report": {"prior_question", "prior_report_answer"},
             "research.system": {"max_extra_rounds"},

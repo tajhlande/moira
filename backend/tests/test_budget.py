@@ -71,8 +71,8 @@ def test_full_cycle_cost():
 
 
 def test_review_retry_cost():
-    # research(10) + synthesis(5) + research_review(3) = 18
-    assert review_retry_cost(_default_step_costs()) == 18
+    # planning(2) + research(10) + synthesis(5) + research_review(3) = 20
+    assert review_retry_cost(_default_step_costs()) == 20
 
 
 def test_evaluation_retry_cost():

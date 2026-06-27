@@ -6,7 +6,7 @@ synthesis -> research_review -> [conditional] -> evaluation ->
 
 Research review routes:
 - continue -> evaluation
-- retry -> research (light retry, max 3 per evaluation cycle)
+- retry -> planning (re-plan for remaining unknowns, then research)
 - budget exhausted -> evaluation
 
 Evaluation routes:
@@ -89,7 +89,7 @@ def make_review_router():
                     review_count,
                     max_review,
                 )
-                return "research"
+                return "planning"
 
             logger.info(
                 "review retry declined (count=%d/%d, budget=%.1f, threshold=%.1f)",
@@ -194,7 +194,7 @@ def build_graph(config: MoiraConfig) -> StateGraph:
         "research_review",
         make_review_router(),
         {
-            "research": "research",
+            "planning": "planning",
             "evaluation": "evaluation",
             "report_generation": "report_generation",
         },

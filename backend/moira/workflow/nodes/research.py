@@ -392,8 +392,10 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
             continue
         fact_id = disc.get("fact_id")
         if fact_id:
+            matched = False
             for fact in facts:
                 if fact["id"] == fact_id and fact["status"] in ("unknown", "unverified"):
+                    matched = True
                     new_claim = (disc.get("claim") or "").strip()
                     if not new_claim:
                         # Model returned no claim for this fact.  Skip the
@@ -421,6 +423,12 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
                         fact["citation_ids"] = sorted(existing)
                     fact["status"] = "unverified"
                     break
+            if not matched:
+                logger.warning(
+                    "RESEARCH: discovered_fact fact_id=%r does not match any "
+                    "existing fact — claim will be dropped",
+                    fact_id,
+                )
         elif disc.get("fact_needed"):
             new_id = next_id("f", facts)
             facts.append(

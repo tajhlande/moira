@@ -342,14 +342,15 @@ class TestIntegration:
 
     @pytest.mark.asyncio
     async def test_review_retry_path(self, config, mock_writer, mock_model):
-        """Research review retries once, then continues to evaluation."""
+        """Research review retries once (through planning), then continues."""
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.side_effect = [
             _cr(DECOMPOSITION_JSON),  # decomposition
             _cr(PLANNING_JSON),  # planning
             _cr(RESEARCH_JSON),  # research
             _cr(SYNTHESIS_JSON),  # synthesis
-            _cr(REVIEW_RETRY_JSON),  # research_review → retry (budget sufficient)
+            _cr(REVIEW_RETRY_JSON),  # research_review → retry → planning
+            _cr(PLANNING_JSON),  # planning (retry — re-plans for gaps)
             _cr(RESEARCH_JSON),  # research (retry)
             _cr(SYNTHESIS_JSON),  # synthesis (after research retry)
             _cr(REVIEW_CONTINUE_JSON),  # research_review → continue

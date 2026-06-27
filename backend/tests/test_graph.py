@@ -143,10 +143,10 @@ def test_review_router_continue_routes_to_evaluation():
     assert router(state) == "evaluation"
 
 
-def test_review_router_retry_routes_to_research():
+def test_review_router_retry_routes_to_planning():
     router = make_review_router()
     state = _make_review_router_state(route="retry", budget_remaining=60.0, review_count=1)
-    assert router(state) == "research"
+    assert router(state) == "planning"
 
 
 def test_review_router_retry_falls_to_evaluation_on_insufficient_budget():
@@ -159,12 +159,12 @@ def test_review_router_retry_declined_when_budget_covers_retry_but_not_evaluatio
     """The router must reserve evaluation cost before allowing a retry.
     Otherwise the retry consumes the last budget and evaluation can't run.
 
-    Review retry cost = research(10) + synthesis(5) + review(3) = 18
+    Review retry cost = planning(2) + research(10) + synthesis(5) + review(3) = 20
     Evaluation cost = 5
-    Threshold = 23
+    Threshold = 25
 
-    With budget=20, the retry alone is affordable (20 >= 18) but the
-    combined cost is not (20 < 23), so the router should decline.
+    With budget=20, the retry alone is affordable (20 >= 20) but the
+    combined cost is not (20 < 25), so the router should decline.
     """
     router = make_review_router()
     state = _make_review_router_state(route="retry", budget_remaining=20.0, review_count=1)
@@ -211,7 +211,7 @@ def test_review_router_custom_max_review_allows_more_retries():
         review_count=4,
         max_review=5,
     )
-    assert router(state) == "research"
+    assert router(state) == "planning"
 
 
 def test_evaluation_router_custom_max_evaluation_allows_more_retries():
@@ -234,8 +234,8 @@ def test_review_router_falls_back_to_default_without_retry_limits():
     state = _make_review_router_state(route="retry", budget_remaining=60.0, review_count=2)
     # Remove retry_limits to test fallback
     del state["execution_state"]["retry_limits"]
-    # review_count=2 < default 3 → should route to research
-    assert router(state) == "research"
+    # review_count=2 < default 3 → should route to planning
+    assert router(state) == "planning"
     # review_count=3 >= default 3 → should fall to evaluation
     state["execution_state"]["review_count"] = 3
     assert router(state) == "evaluation"
@@ -251,15 +251,16 @@ def test_review_router_retry_declined_when_tool_cost_exceeds_budget():
     research cycles must be reserved.  Otherwise research tools will
     eat the evaluation budget.
 
-    Review retry step cost = 18, eval = 5, base threshold = 23.
+    Review retry step cost = 20 (planning+research+synthesis+review),
+    eval = 5, base threshold = 25.
     With 1 prior research cycle consuming 10 in tool calls, the
-    effective threshold rises to 33.
+    effective threshold rises to 35.
     """
     router = make_review_router()
     state = _make_review_router_state(route="retry", budget_remaining=25.0, review_count=1)
     state["execution_state"]["total_tool_cost_consumed"] = 10.0
     state["execution_state"]["research_count"] = 1
-    # 25 < 33 → retry declined
+    # 25 < 35 → retry declined
     assert router(state) == "evaluation"
 
 

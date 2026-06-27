@@ -28,9 +28,15 @@ NODE_NAME = "planning"
 
 
 def _format_unknown_facts(facts: list) -> str:
+    """Format non-verified facts for the planning prompt.
+
+    Includes 'unknown', 'unverified', and 'contradicted' facts — all
+    represent gaps that planning should address.  'verified' facts are
+    excluded since they are already resolved.
+    """
     lines = []
     for f in facts:
-        if f.get("status") in ("unknown", "contradicted"):
+        if f.get("status") != "verified":
             lines.append(f"{f['id']} | {f['subject']} | {f['fact_needed']}")
     return "\n".join(lines)
 
@@ -123,22 +129,42 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
     )
 
     system_prompt = render_prompt("planning.system")
+
     # On retry from evaluation, append evaluation feedback
     research_retry_count = es.get("research_retry_count", 0)
     if research_retry_count > 0:
         evaluation_history = knowledge.get("evaluation_history", [])
-        last_eval = evaluation_history[-1] if evaluation_history else {}
-        feedback = last_eval.get("goal_assessment", "")
-        failed_conclusions = [
-            f"{r.get('conclusion_id', '')} | {r.get('result', '')} | {r.get('reason', '')}"
-            for r in last_eval.get("conclusion_results", [])
-            if r.get("result") != "verified"
-        ]
-        system_prompt += "\n\n" + render_prompt(
-            "planning.system_retry_evaluation",
-            evaluation_feedback=feedback,
-            failed_conclusions="\n".join(failed_conclusions) if failed_conclusions else "(none)",
-        )
+        if evaluation_history and evaluation_history[-1].get("route") == "retry":
+            last_eval = evaluation_history[-1]
+            feedback = last_eval.get("goal_assessment", "")
+            failed_conclusions = [
+                f"{r.get('conclusion_id', '')} | {r.get('result', '')} | {r.get('reason', '')}"
+                for r in last_eval.get("conclusion_results", [])
+                if r.get("result") != "verified"
+            ]
+            system_prompt += "\n\n" + render_prompt(
+                "planning.system_retry_evaluation",
+                evaluation_feedback=feedback,
+                failed_conclusions="\n".join(failed_conclusions)
+                if failed_conclusions
+                else "(none)",
+            )
+
+    # On retry from research_review, append review feedback so planning
+    # knows what gaps remain and can formulate better queries / choose
+    # different tools for the remaining unknown facts.
+    review_count = es.get("review_count", 0)
+    if review_count > 0:
+        review_history = knowledge.get("review_history", [])
+        if review_history and review_history[-1].get("route") == "retry":
+            last_review = review_history[-1]
+            system_prompt += "\n\n" + render_prompt(
+                "planning.system_retry_review",
+                coverage_assessment=last_review.get("coverage_assessment", ""),
+                missing_areas="\n".join(
+                    f"- {area}" for area in last_review.get("missing_areas", [])
+                ),
+            )
 
     # Prior conversation context (multi-turn)
     prior_report = es.get("prior_report")
