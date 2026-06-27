@@ -287,6 +287,44 @@ class TestReportGeneration:
         assert report["omitted_conclusions"] == []
 
     @pytest.mark.asyncio
+    async def test_unsupported_does_not_downgrade_verified_when_goal_met(
+        self,
+        config,
+        mock_writer,
+        mock_model,
+    ):
+        """A single unsupported conclusion should not prevent "verified"
+        report reason when goal_met is true.  The evaluator's goal_met
+        already accounts for unsupported conclusions."""
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=REPORT_RESPONSE)
+
+        from moira.workflow.nodes.report_generation import report_generation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["conclusions"] = [
+            Conclusion(id="c001", conclusion="Solid", supporting_fact_ids=[], status="verified"),
+            Conclusion(id="c002", conclusion="Overclaim", supporting_fact_ids=[], status="unsupported"),
+        ]
+        state["knowledge"]["evaluation_history"] = [
+            {
+                "conclusion_results": [],
+                "goal_met": True,
+                "goal_assessment": "Verified conclusion suffices despite unsupported one",
+                "route": "accept",
+            },
+        ]
+
+        result = await report_generation(state, _make_run_config(config))
+        report = result["knowledge"]["report"]
+
+        assert result["knowledge"]["generation_reason"] == "verified"
+        # Unsupported conclusion is surfaced in omitted_conclusions
+        omitted_ids = {c["id"] for c in report["omitted_conclusions"]}
+        assert "c002" in omitted_ids
+        assert "c001" not in omitted_ids
+
+    @pytest.mark.asyncio
     async def test_report_includes_tool_cost(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(content=REPORT_RESPONSE)

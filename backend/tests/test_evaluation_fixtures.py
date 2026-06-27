@@ -20,7 +20,7 @@ import pytest
 from moira.config import MoiraConfig
 from moira.inference.client import ChatResponse, InferenceClient
 from moira.inference.registry import ModelRegistry, ResolvedModel
-from moira.models.knowledge import Fact, ResearchState
+from moira.models.knowledge import Conclusion, Fact, ResearchState
 from moira.service_setup import _services
 from moira.tools.base import ToolDefinition
 
@@ -107,8 +107,10 @@ def _build_state(config, question: str, facts: list[Fact] | None = None) -> Rese
             "total_tool_cost_consumed": 0.0,
             "error": "",
             "research_retry_count": 0,
+            "research_count": 0,
             "review_count": 0,
             "evaluation_count": 0,
+            "retry_limits": {"max_review": 3, "max_evaluation": 2},
         },
     }
 
@@ -549,11 +551,11 @@ SYNTHESIS_TRAP_EXPECTED_BEHAVIORS = [
 
 
 class TestSynthesisTrapFixture:
-    """Synthesis should not overstate conclusions from individually true facts.
+    """Synthesis passes through model output without filtering overclaims.
 
-    These tests verify that the synthesis node doesn't draw unjustified
-    conclusions from fact bundles. The facts are individually true but
-    don't support strong recommendations.
+    Overclaim detection is the evaluator's job, not synthesis's.  The test
+    below confirms that a well-hedged conclusion passes through unchanged.
+    Overclaim detection is tested in ``TestEvaluationOverclaimFixture``.
     """
 
     @pytest.fixture
@@ -632,80 +634,6 @@ class TestSynthesisTrapFixture:
         ]
         return state
 
-    @pytest.mark.xfail(
-        reason="Synthesis must enforce fact-only reasoning and reject overclaims.",
-        strict=True,
-    )
-    async def test_synthesis_does_not_claim_best_partner(
-        self, config, mock_writer, mock_model, trap_state
-    ):
-        """Synthesis should not claim Corviknight is 'the best' partner
-        without usage/stat evidence."""
-        _inject_services(config, mock_model)
-
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps(
-                {
-                    "conclusions": [
-                        {
-                            "conclusion": (
-                                "Corviknight is the best partner for Tyranitar in Gen9 OU"
-                            ),
-                            "supporting_fact_ids": ["f004", "f005"],
-                            "reasoning": "Covers all weaknesses",
-                        }
-                    ]
-                }
-            )
-        )
-
-        from moira.workflow.nodes.synthesis import synthesis
-
-        result = await synthesis(trap_state, _make_run_config(config))
-
-        conclusions_text = json.dumps(result["knowledge"]["conclusions"]).lower()
-        assert "best partner" not in conclusions_text, (
-            "Synthesis should not claim 'best partner' without usage data. "
-            f"Got: {conclusions_text[:300]}"
-        )
-
-    @pytest.mark.xfail(
-        reason="Synthesis must enforce fact-only reasoning and type interaction accuracy.",
-        strict=True,
-    )
-    async def test_synthesis_qualifies_fighting_neutral(
-        self, config, mock_writer, mock_model, trap_state
-    ):
-        """Synthesis should note that Corviknight takes neutral from Fighting,
-        not resist it (Tyranitar's x4 weakness)."""
-        _inject_services(config, mock_model)
-
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps(
-                {
-                    "conclusions": [
-                        {
-                            "conclusion": "Corviknight resists all of "
-                            "Tyranitar's weaknesses including Fighting",
-                            "supporting_fact_ids": ["f004", "f005"],
-                            "reasoning": "Steel resists Fairy and Fighting",
-                        }
-                    ]
-                }
-            )
-        )
-
-        from moira.workflow.nodes.synthesis import synthesis
-
-        result = await synthesis(trap_state, _make_run_config(config))
-
-        conclusions_text = json.dumps(result["knowledge"]["conclusions"]).lower()
-        if "resist" in conclusions_text and "fighting" in conclusions_text:
-            assert "neutral" in conclusions_text, (
-                "Synthesis should clarify Corviknight takes neutral from Fighting. "
-                f"Got: {conclusions_text[:300]}"
-            )
-
     async def test_synthesis_acknowledges_limited_evidence(
         self, config, mock_writer, mock_model, trap_state
     ):
@@ -744,3 +672,276 @@ class TestSynthesisTrapFixture:
         assert has_qualification, (
             "Synthesis should hedge given limited evidence. Got: " + conclusions_text[:200]
         )
+
+
+# ---------------------------------------------------------------------------
+# Fixture 3b: Evaluation Overclaim Detection
+# ---------------------------------------------------------------------------
+# The synthesis trap fixture above provides individually true facts that tempt
+# unjustified conclusions.  The tests below verify that the evaluation node
+# catches overclaims when the evaluator model flags them — replacing the old
+# xfail tests that incorrectly targeted synthesis as the validator.
+
+
+class TestEvaluationOverclaimFixture:
+    """Evaluation should detect overclaims and mark them unsupported.
+
+    These tests replace the former xfail synthesis tests.  Synthesis is the
+    generator — it passes through whatever the model emits.  Evaluation is the
+    validator.  Each test mocks synthesis to emit an overclaim, then runs
+    evaluation with a mock verdict of ``unsupported`` and asserts the node
+    correctly applies that status.
+    """
+
+    @pytest.fixture
+    def overclaim_state(self, config) -> ResearchState:
+        """State with individually true facts and an overclaim conclusion,
+        ready to be passed to the evaluation node."""
+        facts = [
+            Fact(
+                id="f001",
+                subject="Tyranitar",
+                fact_needed="Tyranitar typing",
+                claim="Tyranitar is Rock/Dark type",
+                status="verified",
+            ),
+            Fact(
+                id="f002",
+                subject="Tyranitar",
+                fact_needed="Tyranitar weaknesses",
+                claim="Weak to Fighting (x4), Water, Grass, Bug, Steel, Fairy, Ground (x2)",
+                status="verified",
+            ),
+            Fact(
+                id="f004",
+                subject="Corviknight",
+                fact_needed="Corviknight typing",
+                claim="Corviknight is Steel/Flying type",
+                status="verified",
+            ),
+            Fact(
+                id="f005",
+                subject="Corviknight",
+                fact_needed="Corviknight matchups",
+                claim="Resists Fairy (x0.5), takes neutral from Fighting, "
+                "immune to Ground (Flying type)",
+                status="verified",
+            ),
+        ]
+        question = "What Pokemon synergize well with Tyranitar in Gen9 OU?"
+        state = _build_state(config, question, facts)
+        state["knowledge"]["user_goal"] = "Find synergistic partners for Tyranitar in Gen9 OU"
+        state["knowledge"]["conclusions"] = [
+            Conclusion(
+                id="c001",
+                conclusion="Corviknight is the best partner for Tyranitar in Gen9 OU",
+                supporting_fact_ids=["f004", "f005"],
+                reasoning="Covers all weaknesses",
+                status="unverified",
+            ),
+        ]
+        state["knowledge"]["citations"] = [
+            {
+                "id": "cit001",
+                "source": "web_search",
+                "url": "https://example.com/corviknight",
+                "title": "Corviknight Analysis",
+                "excerpt": "Corviknight is Steel/Flying type.",
+                "content": "Corviknight is a Steel/Flying type Pokemon. "
+                "It resists Fairy and is immune to Ground. "
+                "It takes neutral damage from Fighting.",
+            },
+        ]
+        return state
+
+    async def test_evaluation_marks_best_partner_claim_unsupported(
+        self, config, mock_writer, mock_model, overclaim_state
+    ):
+        """When evaluation detects an overclaim ('best partner' with no usage
+        data), it should mark the conclusion ``unsupported``."""
+        _inject_services(config, mock_model)
+
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps(
+                {
+                    "conclusion_results": [
+                        {
+                            "conclusion_id": "c001",
+                            "result": "unsupported",
+                            "reason": (
+                                "The facts establish type matchups but contain "
+                                "no usage statistics, viability ranking, or "
+                                "comparative data to support 'best partner'."
+                            ),
+                        }
+                    ],
+                    "goal_met": False,
+                    "goal_assessment": (
+                        "The sole conclusion is an overclaim — no verified "
+                        "conclusions remain to answer the question."
+                    ),
+                    "route": "retry",
+                }
+            )
+        )
+
+        from moira.workflow.nodes.evaluation import evaluation
+
+        result = await evaluation(overclaim_state, _make_run_config(config))
+
+        conclusions = result["knowledge"]["conclusions"]
+        assert conclusions[0]["status"] == "unsupported"
+        assert "best partner" not in conclusions[0]["status"]
+
+    async def test_evaluation_marks_fighting_resist_claim_unsupported(
+        self, config, mock_writer, mock_model, overclaim_state
+    ):
+        """When evaluation detects a factual error (claiming Fighting resist
+        when the source says neutral), it should mark the conclusion
+        ``unsupported`` rather than ``contradicted`` (no active refutation,
+        just a grounding failure)."""
+        _inject_services(config, mock_model)
+
+        # Override the conclusion with the fighting-resist overclaim
+        overclaim_state["knowledge"]["conclusions"] = [
+            Conclusion(
+                id="c001",
+                conclusion="Corviknight resists all of Tyranitar's weaknesses "
+                "including Fighting",
+                supporting_fact_ids=["f004", "f005"],
+                reasoning="Steel resists Fairy and Fighting",
+                status="unverified",
+            ),
+        ]
+
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps(
+                {
+                    "conclusion_results": [
+                        {
+                            "conclusion_id": "c001",
+                            "result": "unsupported",
+                            "reason": (
+                                "The source states Corviknight takes neutral from "
+                                "Fighting, not resisted. The conclusion overstates "
+                                "the type interaction."
+                            ),
+                        }
+                    ],
+                    "goal_met": False,
+                    "goal_assessment": "Conclusion misrepresents the Fighting interaction.",
+                    "route": "retry",
+                }
+            )
+        )
+
+        from moira.workflow.nodes.evaluation import evaluation
+
+        result = await evaluation(overclaim_state, _make_run_config(config))
+
+        conclusions = result["knowledge"]["conclusions"]
+        assert conclusions[0]["status"] == "unsupported"
+
+
+# ---------------------------------------------------------------------------
+# Fixture 3c: Structural Sanity Check
+# ---------------------------------------------------------------------------
+# Verifies that research_review catches hallucinated fact references before
+# evaluation runs, and that evaluation preserves the terminal "unsupported"
+# verdict instead of overwriting it.
+
+
+class TestStructuralSanityCheck:
+    """Research review should structurally flag conclusions that reference
+    non-existent fact IDs, and evaluation should not overwrite that verdict."""
+
+    @pytest.fixture
+    def hallucination_state(self, config) -> ResearchState:
+        facts = [
+            Fact(
+                id="f001",
+                subject="Tyranitar",
+                fact_needed="Tyranitar typing",
+                claim="Rock/Dark type",
+                status="verified",
+            ),
+        ]
+        state = _build_state(config, "Test question", facts)
+        state["knowledge"]["user_goal"] = "Test goal"
+        state["knowledge"]["conclusions"] = [
+            Conclusion(
+                id="c001",
+                conclusion="Tyranitar is a strong pick",
+                supporting_fact_ids=["f001", "f999"],
+                reasoning="Based on typing",
+                status="unverified",
+            ),
+        ]
+        return state
+
+    async def test_review_marks_hallucinated_fact_id_unsupported(
+        self, config, mock_writer, mock_model, hallucination_state
+    ):
+        """research_review should mark a conclusion ``unsupported`` when its
+        supporting_fact_ids reference a fact that does not exist."""
+        _inject_services(config, mock_model)
+
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps(
+                {
+                    "fact_results": [
+                        {
+                            "fact_id": "f001",
+                            "result": "verified",
+                            "evidence": "Tyranitar is confirmed Rock/Dark",
+                        }
+                    ],
+                    "coverage_assessment": "OK",
+                    "missing_areas": [],
+                    "route": "continue",
+                }
+            )
+        )
+
+        from moira.workflow.nodes.research_review import research_review
+
+        result = await research_review(hallucination_state, _make_run_config(config))
+
+        conclusions = result["knowledge"]["conclusions"]
+        assert conclusions[0]["status"] == "unsupported"
+
+    async def test_evaluation_preserves_structural_unsupported(
+        self, config, mock_writer, mock_model, hallucination_state
+    ):
+        """Evaluation should NOT overwrite a conclusion already marked
+        ``unsupported`` by the structural check in research_review."""
+        _inject_services(config, mock_model)
+
+        # Pre-mark the conclusion as unsupported (as research_review would)
+        hallucination_state["knowledge"]["conclusions"][0]["status"] = "unsupported"
+
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps(
+                {
+                    "conclusion_results": [
+                        {
+                            "conclusion_id": "c001",
+                            "result": "verified",
+                            "reason": "Looks fine to me",
+                        }
+                    ],
+                    "goal_met": True,
+                    "goal_assessment": "Goal met",
+                    "route": "accept",
+                }
+            )
+        )
+
+        from moira.workflow.nodes.evaluation import evaluation
+
+        result = await evaluation(hallucination_state, _make_run_config(config))
+
+        # The structural "unsupported" verdict must be preserved — evaluation
+        # should skip conclusions already marked unsupported.
+        conclusions = result["knowledge"]["conclusions"]
+        assert conclusions[0]["status"] == "unsupported"
