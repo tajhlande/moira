@@ -12,7 +12,7 @@ from langgraph.config import get_stream_writer
 
 from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.models.knowledge import ResearchState, ToolCallPlan
-from moira.prompts import get_prompt
+from moira.prompts import render_prompt
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
     _check_stop,
@@ -104,7 +104,8 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
     )
     available_for_tools = max(es["budget_remaining"] - reserved_budget, 0)
 
-    user_prompt = get_prompt("planning.user").format(
+    user_prompt = render_prompt(
+        "planning.user",
         user_goal=knowledge.get("user_goal", knowledge["question"]),
         topic=knowledge.get("topic", ""),
         entities=", ".join(knowledge.get("entities", [])),
@@ -121,7 +122,7 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
         available_for_tools=available_for_tools,
     )
 
-    system_prompt = get_prompt("planning.system")
+    system_prompt = render_prompt("planning.system")
     # On retry from evaluation, append evaluation feedback
     research_retry_count = es.get("research_retry_count", 0)
     if research_retry_count > 0:
@@ -133,7 +134,8 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
             for r in last_eval.get("conclusion_results", [])
             if r.get("result") != "verified"
         ]
-        system_prompt += "\n\n" + get_prompt("planning.system_retry_evaluation").format(
+        system_prompt += "\n\n" + render_prompt(
+            "planning.system_retry_evaluation",
             evaluation_feedback=feedback,
             failed_conclusions="\n".join(failed_conclusions) if failed_conclusions else "(none)",
         )
@@ -142,14 +144,16 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
     prior_report = es.get("prior_report")
     if prior_report:
         prior_q = es.get("prior_question", "")
-        system_prompt += "\n\n" + get_prompt("planning.system_prior_report").format(
+        system_prompt += "\n\n" + render_prompt(
+            "planning.system_prior_report",
             prior_question=prior_q,
             prior_report_answer=prior_report,
         )
 
     earlier_turns = es.get("earlier_turns")
     if earlier_turns:
-        system_prompt += "\n\n" + get_prompt("planning.system_earlier_turns").format(
+        system_prompt += "\n\n" + render_prompt(
+            "planning.system_earlier_turns",
             earlier_turns=earlier_turns,
         )
 

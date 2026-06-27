@@ -11,7 +11,7 @@ from langgraph.config import get_stream_writer
 
 from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.models.knowledge import Conclusion, ResearchState, next_id
-from moira.prompts import get_prompt
+from moira.prompts import render_prompt
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
     _check_stop,
@@ -67,7 +67,7 @@ async def synthesis(state: ResearchState, config: RunnableConfig) -> dict:
     # revised conclusions. Use it if present.
     evaluation_history = knowledge.get("evaluation_history", [])
     prior_conclusions_section = ""
-    system_prompt = get_prompt("synthesis.system")
+    system_prompt = render_prompt("synthesis.system")
     if evaluation_history and evaluation_history[-1].get("route") == "retry":
         last_eval = evaluation_history[-1]
         prior_conclusions_section = (
@@ -75,11 +75,13 @@ async def synthesis(state: ResearchState, config: RunnableConfig) -> dict:
             f"{last_eval.get('goal_assessment', '')}\n\n"
             "Produce revised conclusions addressing this feedback."
         )
-        system_prompt += "\n\n" + get_prompt("synthesis.system_retry").format(
+        system_prompt += "\n\n" + render_prompt(
+            "synthesis.system_retry",
             evaluation_feedback=last_eval.get("goal_assessment", ""),
         )
 
-    user_prompt = get_prompt("synthesis.user").format(
+    user_prompt = render_prompt(
+        "synthesis.user",
         user_goal=knowledge.get("user_goal", knowledge["question"]),
         topic=knowledge.get("topic", ""),
         entities=", ".join(knowledge.get("entities", [])),

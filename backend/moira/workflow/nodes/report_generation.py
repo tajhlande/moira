@@ -12,7 +12,7 @@ from langgraph.config import get_stream_writer
 
 from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.models.knowledge import ResearchReport, ResearchState, knowledge_summary
-from moira.prompts import get_prompt
+from moira.prompts import render_prompt
 from moira.workflow.budget import deduct_cost
 from moira.workflow.nodes._helpers import (
     _check_stop,
@@ -134,7 +134,8 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     error = es.get("error", "")
     if error:
         generation_reason = "error"
-        path_instruction = get_prompt("report_generation.reason_error").format(
+        path_instruction = render_prompt(
+            "report_generation.reason_error",
             error=error,
         )
     elif knowledge.get("evaluation_history"):
@@ -147,7 +148,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
         # fail but the overall research goal is still met.
         if latest_eval.get("goal_met"):
             generation_reason = "verified"
-            path_instruction = get_prompt("report_generation.reason_verified")
+            path_instruction = render_prompt("report_generation.reason_verified")
         elif eval_route == "retry":
             # Evaluation wanted another cycle but the router sent us here.
             # Determine whether it was retry limits or budget that prevented it.
@@ -156,7 +157,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
             eval_count = es.get("evaluation_count", 0)
             if eval_count >= max_eval:
                 generation_reason = "retries_exhausted"
-                path_instruction = get_prompt(
+                path_instruction = render_prompt(
                     "report_generation.reason_retries_exhausted",
                 )
             else:
@@ -165,19 +166,19 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
                 # instruction — verification WAS completed, but the research
                 # itself was found insufficient.
                 generation_reason = "budget_exhausted"
-                path_instruction = get_prompt(
+                path_instruction = render_prompt(
                     "report_generation.reason_eval_insufficient",
                 )
         else:
             # Evaluation accepted but goal not met — research is incomplete.
             generation_reason = "incomplete"
-            path_instruction = get_prompt(
+            path_instruction = render_prompt(
                 "report_generation.reason_incomplete",
             )
     else:
         # No evaluation history — likely budget ran out before reaching evaluation.
         generation_reason = "budget_exhausted"
-        path_instruction = get_prompt("report_generation.reason_budget_exhausted")
+        path_instruction = render_prompt("report_generation.reason_budget_exhausted")
 
     # Separate verified, contradicted, and unknown items for the prompt
     all_facts = knowledge.get("facts", [])
@@ -202,10 +203,12 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
     omitted_conclusions = [dict(c) for c in all_conclusions if c.get("status") in omitted_statuses]
 
     # Build the prompt.
-    system_prompt = get_prompt("report_generation.system").format(
+    system_prompt = render_prompt(
+        "report_generation.system",
         path_instruction=path_instruction,
     )
-    user_prompt = get_prompt("report_generation.user").format(
+    user_prompt = render_prompt(
+        "report_generation.user",
         question=knowledge["question"],
         user_goal=knowledge.get("user_goal", knowledge["question"]),
         verified_facts=_format_facts(verified_facts),
@@ -309,7 +312,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
             )
             messages.append({"role": "assistant", "content": raw})
             messages.append(
-                {"role": "user", "content": get_prompt("report_generation.citation_retry")}
+                {"role": "user", "content": render_prompt("report_generation.citation_retry")}
             )
             retry_response = await resolved.client.chat_completion(
                 messages=messages,

@@ -125,7 +125,7 @@ def _validate_required(prompts: dict[str, str]) -> None:
 def get_prompt(key: str) -> str:
     """Retrieve a single prompt template by key (e.g. 'planning.system').
 
-    Returns the template string. Callers format it with .format(**kwargs).
+    Returns the raw template string with no variable substitution.
     Raises KeyError if the key is not found in the prompts file.
     """
     prompts = load_prompts()
@@ -135,3 +135,20 @@ def get_prompt(key: str) -> str:
             f"Available sections: {sorted(prompts.keys())}"
         )
     return prompts[key]
+
+
+def render_prompt(key: str, **kwargs: object) -> str:
+    """Retrieve a prompt template and substitute ``{variable}`` placeholders.
+
+    Unlike ``str.format``, JSON braces in prompt examples do **not** need
+    to be escaped as ``{{ }}``.  Only exact ``{variable_name}`` matches are
+    replaced — ``str.replace`` is used so that ``{"json_key": ...}`` is
+    never touched (the quotes and colon prevent a match).
+
+    Prompts with no placeholders can be called with no kwargs; the text is
+    returned unchanged.
+    """
+    text = get_prompt(key)
+    for name, value in kwargs.items():
+        text = text.replace(f"{{{name}}}", str(value))
+    return text

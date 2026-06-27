@@ -4,9 +4,10 @@ This file contains the system and user prompt templates used by each node in the
 research workflow graph. Sections are delimited by `## node_name.system` or
 `## node_name.user` headings. The loader splits on these headings.
 
-Template variables use Python format-string syntax: `{variable}`. These are
-filled in at runtime by the node code. Literal curly braces in output are
-escaped as `{{...}}`.
+Template variables use ``{variable}`` syntax. These are substituted at
+runtime by ``render_prompt()`` using ``str.replace`` — so literal braces in
+JSON examples are written naturally as ``{`` and ``}``. There is no need
+to double-escape them.
 
 ---
 
@@ -278,10 +279,10 @@ The JSON object must have exactly these keys:
   "title", and "excerpt" (relevant snippet from the tool output).
 
 Example response:
-{{"tool_calls": [{{"tool": "web_search", "args": {{"query": "example search"}}}}], "discovered_facts": [], "sources": []}}
+{"tool_calls": [{"tool": "web_search", "args": {"query": "example search"}}], "discovered_facts": [], "sources": []}
 
 When you are done researching and have no more tool calls to make:
-{{"tool_calls": [], "discovered_facts": [{{"fact_id": "f001", "subject": "Example", "claim": "Specific claim here", "relation": "has_property", "value": "the value", "citation_ids": ["cit001"]}}], "sources": [{{"source": "web_search", "url": "https://example.com", "title": "Example", "excerpt": "Relevant snippet"}}]}}
+{"tool_calls": [], "discovered_facts": [{"fact_id": "f001", "subject": "Example", "claim": "Specific claim here", "relation": "has_property", "value": "the value", "citation_ids": ["cit001"]}], "sources": [{"source": "web_search", "url": "https://example.com", "title": "Example", "excerpt": "Relevant snippet"}]}
 
 ## research.user
 
@@ -300,9 +301,9 @@ Available tools:
 
 Your previous response did not contain a valid JSON object with tool_calls,
 discovered_facts, and sources. Respond ONLY with a JSON object:
-{{"tool_calls": [...], "discovered_facts": [...], "sources": [...]}}.
+{"tool_calls": [...], "discovered_facts": [...], "sources": [...]}.
 Use an empty tool_calls array when done:
-{{"tool_calls": [], "discovered_facts": [...], "sources": [...]}}
+{"tool_calls": [], "discovered_facts": [...], "sources": [...]}
 
 ## research.summary
 
@@ -369,7 +370,7 @@ IMPORTANT: When you are done calling tools, output the JSON object directly in y
 text response. Do NOT wrap it in ```json blocks or use any markdown formatting.
 
 Example when done researching:
-{{"discovered_facts": [{{"fact_id": "f001", "subject": "Example", "claim": "Specific claim here", "relation": "has_property", "value": "the value", "citation_ids": ["cit001"]}}], "sources": [{{"source": "web_search", "url": "https://example.com", "title": "Example", "excerpt": "Relevant snippet"}}]}}
+{"discovered_facts": [{"fact_id": "f001", "subject": "Example", "claim": "Specific claim here", "relation": "has_property", "value": "the value", "citation_ids": ["cit001"]}], "sources": [{"source": "web_search", "url": "https://example.com", "title": "Example", "excerpt": "Relevant snippet"}]}
 
 ## research.user_native
 
@@ -547,7 +548,7 @@ If the research is sufficient, recommend continuing to evaluation.
 
 Respond with ONLY a JSON object, structured exactly like this:
 
-{{"fact_results": [{{"fact_id": "f001", "result": "verified", "evidence": "brief note on what confirmed it"}}, {{"fact_id": "f002", "result": "contradicted", "evidence": "what contradicted it"}}], "coverage_assessment": "Brief assessment of whether the research sufficiently covered the question", "missing_areas": ["specific description of what is still needed"], "route": "continue"}}
+{"fact_results": [{"fact_id": "f001", "result": "verified", "evidence": "brief note on what confirmed it"}, {"fact_id": "f002", "result": "contradicted", "evidence": "what contradicted it"}], "coverage_assessment": "Brief assessment of whether the research sufficiently covered the question", "missing_areas": ["specific description of what is still needed"], "route": "continue"}
 
 where each item in fact_results has:
 - fact_id matching one of the facts you were given
@@ -591,6 +592,10 @@ verdict and need no re-evaluation, but weigh their presence when assessing goal 
   claim misrepresents or overstates what the source said, mark the conclusion
   "unsupported".
 - If the reasoning is sound and all supporting facts are verified, mark it "verified".
+- A conclusion citing any "contradicted" fact cannot be marked "verified" —
+  a contradicted fact means its central claim was refuted by other evidence,
+  tainting any conclusion built on it. Mark it "unsupported" if the
+  contradiction doesn't directly propagate, or "contradicted" if it does.
 - Reserve "contradicted" for cases where a supporting fact is actively refuted by
   other evidence or the reasoning contains a logical error. A lack of grounding
   is "unsupported", not "contradicted".
@@ -619,7 +624,7 @@ contradicted conclusions do not undermine that answer.
 
 Respond with ONLY a JSON object, structured exactly like this:
 
-{{"conclusion_results": [{{"conclusion_id": "c001", "result": "verified", "reason": "why it is valid"}}, {{"conclusion_id": "c002", "result": "unsupported", "reason": "what it asserts beyond the cited facts"}}], "goal_met": true, "goal_assessment": "Explanation of why the goal is or is not met", "route": "accept"}}
+{"conclusion_results": [{"conclusion_id": "c001", "result": "verified", "reason": "why it is valid"}, {"conclusion_id": "c002", "result": "unsupported", "reason": "what it asserts beyond the cited facts"}], "goal_met": true, "goal_assessment": "Explanation of why the goal is or is not met", "route": "accept"}
 
 where each item in conclusion_results has:
 - conclusion_id referencing one of the conclusions you were given
@@ -673,7 +678,7 @@ Rules:
 
 Respond with a JSON object with these keys:
 - "answer": the narrative answer text with inline [n] citation markers
-- "citations": list of {{id, source, url, title, excerpt}} objects
+- "citations": list of {id, source, url, title, excerpt} objects
 - "verified_facts": list of the verified facts used in the report
 - "verified_conclusions": list of the verified conclusions used in the report
 - "contradicted": list of facts and conclusions that were contradicted, with brief

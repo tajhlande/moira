@@ -211,6 +211,70 @@ class TestResearch:
         assert result["knowledge"]["facts"][0]["status"] == "unknown"
 
     @pytest.mark.asyncio
+    async def test_empty_claim_reverted_by_cleanup(self, config, mock_writer, mock_model):
+        """A fact auto-promoted to 'unverified' by tool execution but never
+        given a claim by the model must be reverted to 'unknown' by the
+        cleanup pass before the node returns."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search",
+                    output="Some search result",
+                    success=True,
+                    duration_ms=100,
+                ),
+            ]
+        )
+        _services["tool_executor"] = mock_executor
+
+        # Round 1: model calls a tool.  Round 2: model sees the result but
+        # returns an empty claim for f001.
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(
+                content=json.dumps(
+                    {"tool_calls": [{"tool": "web_search", "args": {"query": "x"}}]}
+                )
+            ),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [
+                            {"fact_id": "f001", "claim": ""},
+                        ],
+                        "sources": [],
+                    }
+                )
+            ),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(
+                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+            ),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+
+        result = await research(state, _make_run_config(config))
+
+        # Fact was auto-promoted during the loop, then reverted by cleanup
+        assert result["knowledge"]["facts"][0]["status"] == "unknown", (
+            "Empty-claim fact should be reverted to 'unknown' by cleanup pass"
+        )
+
+    @pytest.mark.asyncio
     async def test_citation_linked_when_discovered_facts_come_first(
         self, config, mock_writer, mock_model
     ):

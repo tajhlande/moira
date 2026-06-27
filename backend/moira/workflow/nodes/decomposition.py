@@ -12,7 +12,7 @@ from langgraph.config import get_stream_writer
 
 from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.models.knowledge import Fact, ResearchState, next_id
-from moira.prompts import get_prompt
+from moira.prompts import render_prompt
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
     _check_stop,
@@ -56,8 +56,8 @@ async def decomposition(state: ResearchState, config: RunnableConfig) -> dict:
 
     registry = _get_model(config)
     resolved = await registry.resolve("intelligence")
-    system_prompt = get_prompt("decomposition.system")
-    user_prompt = get_prompt("decomposition.user").format(question=question)
+    system_prompt = render_prompt("decomposition.system")
+    user_prompt = render_prompt("decomposition.user", question=question)
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},

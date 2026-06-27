@@ -104,14 +104,168 @@ def _fix_json_control_chars(text: str) -> str:
     return "".join(result)
 
 
-def _parse_json_object(text: str) -> dict:
-    """Extract the first JSON object from text, handling markdown fences.
+def _strip_trailing_commas(text: str) -> str:
+    """Remove trailing commas before ``}`` or ``]``.
 
-    Also strips <think>...</think> blocks and standalone </think> tags that
-    some models leak into the response content, and repairs literal control
-    characters inside JSON strings (common with quantized models).
+    Local models frequently emit ``{"a": 1,}`` which ``json.loads`` rejects.
+    This repair is safe because a comma immediately before a closing brace
+    is never valid JSON.
+    """
+    import re
+
+    return re.sub(r",(\s*[}\]])", r"\1", text)
+
+
+def _fix_double_braces(text: str) -> str:
+    """Replace ``{{`` → ``{`` and ``}}`` → ``}`` outside of JSON strings.
+
+    Models sometimes mimic the double-brace escaping used in Python
+    ``str.format()`` templates (``{{…}}``) when they see it in prompt
+    examples.  This collapses double braces to single braces so the
+    resulting JSON is parseable.
+
+    Braces inside JSON string values are left untouched.
+    """
+    result: list[str] = []
+    in_string = False
+    escaped = False
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if escaped:
+            result.append(ch)
+            escaped = False
+            i += 1
+            continue
+        if ch == "\\":
+            result.append(ch)
+            escaped = True
+            i += 1
+            continue
+        if ch == '"':
+            in_string = not in_string
+            result.append(ch)
+            i += 1
+            continue
+        if not in_string:
+            if ch == "{" and i + 1 < len(text) and text[i + 1] == "{":
+                result.append("{")
+                i += 2
+                continue
+            if ch == "}" and i + 1 < len(text) and text[i + 1] == "}":
+                result.append("}")
+                i += 2
+                continue
+        result.append(ch)
+        i += 1
+    return "".join(result)
+
+
+def _extract_balanced_braces(text: str) -> str | None:
+    """Find the outermost balanced ``{ ... }`` in *text* using depth counting.
+
+    Unlike a regex, this handles arbitrary nesting depth and correctly
+    ignores braces that appear inside JSON string values.  Returns ``None``
+    when no balanced object is found.
+
+    If multiple top-level objects exist, the **longest** one is returned —
+    models sometimes emit a small fragment (e.g. ``{"query": "..."}``)
+    before the real response object.
+    """
+    candidates: list[str] = []
+    i = 0
+    length = len(text)
+    while i < length:
+        # Find the next opening brace
+        start = text.find("{", i)
+        if start == -1:
+            break
+        depth = 0
+        in_string = False
+        escaped = False
+        end = -1
+        for j in range(start, length):
+            ch = text[j]
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\":
+                escaped = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = j
+                    break
+        if end != -1:
+            candidates.append(text[start : end + 1])
+            i = end + 1
+        else:
+            # Unbalanced — no point searching further from this start
+            break
+    if not candidates:
+        return None
+    # Return the longest candidate; models sometimes prepend a small
+    # JSON fragment before the real response.
+    return max(candidates, key=len)
+
+
+def _try_parse_json(text: str) -> dict | None:
+    """Attempt ``json.loads``, then retry with common model-output repairs:
+    trailing-comma removal and double-brace collapsing.
     """
     import json
+
+    try:
+        result = json.loads(text)
+        if isinstance(result, dict):
+            return result
+    except json.JSONDecodeError:
+        pass
+    # Apply repairs incrementally so we can see which one helped
+    for repair in (_strip_trailing_commas, _fix_double_braces):
+        repaired = repair(text)
+        if repaired != text:
+            try:
+                result = json.loads(repaired)
+                if isinstance(result, dict):
+                    return result
+            except json.JSONDecodeError:
+                pass
+    # Apply both repairs together as a last resort
+    repaired = _fix_double_braces(_strip_trailing_commas(text))
+    if repaired != text:
+        try:
+            result = json.loads(repaired)
+            if isinstance(result, dict):
+                return result
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+def _parse_json_object(text: str) -> dict:
+    """Extract the first JSON object from model output.
+
+    Applies a multi-strategy pipeline:
+
+    1. Strip ``<think>`` blocks and repair literal control characters.
+    2. Direct ``json.loads`` on the full text (handles clean responses).
+    3. Markdown-fence extraction (``\\`\\`\\`json ... \\`\\`\\``).
+    4. **Balanced-brace extraction** — a depth-counting scan that finds the
+       outermost ``{ ... }`` while ignoring braces inside string values.
+       This replaces a regex that could only handle one level of nesting.
+    5. Trailing-comma repair applied to each candidate.
+
+    Returns ``{}`` when all strategies fail.
+    """
     import re
 
     text = text.strip()
@@ -121,39 +275,33 @@ def _parse_json_object(text: str) -> dict:
     # Repair literal control characters inside JSON string values.
     # No-op on valid JSON; fixes broken JSON from quantized models.
     text = _fix_json_control_chars(text)
-    # Try direct parse
-    try:
-        result = json.loads(text)
-        if isinstance(result, dict):
-            return result
-    except json.JSONDecodeError:
-        pass
-    # Strip markdown fences
+
+    # Strategy 1: direct parse
+    parsed = _try_parse_json(text)
+    if parsed is not None:
+        return parsed
+
+    # Strategy 2: markdown fence
     fenced = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     if fenced:
-        try:
-            result = json.loads(fenced.group(1).strip())
-            if isinstance(result, dict):
-                return result
-        except json.JSONDecodeError:
-            pass
-    # Find all { ... } matches and try longest first.  Models sometimes
-    # embed small JSON fragments (e.g. {"query": "..."}) before or after
-    # the real response object; trying the longest match first avoids
-    # extracting the wrong fragment.
-    matches = list(re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.DOTALL))
-    matches.sort(key=lambda m: len(m.group(0)), reverse=True)
-    for match in matches:
-        try:
-            result = json.loads(match.group(0))
-            if isinstance(result, dict):
-                return result
-        except json.JSONDecodeError:
-            continue
+        parsed = _try_parse_json(fenced.group(1).strip())
+        if parsed is not None:
+            return parsed
+
+    # Strategy 3: balanced-brace extraction (handles deep nesting and
+    # braces inside string values — the regex fallback could do neither).
+    extracted = _extract_balanced_braces(text)
+    if extracted:
+        parsed = _try_parse_json(extracted)
+        if parsed is not None:
+            return parsed
+
     logger.warning(
-        "Failed to extract JSON object from model output (len=%d, first 200 chars: %s)",
+        "Failed to extract JSON object from model output "
+        "(len=%d, first 200 chars: %s, last 200 chars: %s)",
         len(text),
         text[:200],
+        text[-200:],
     )
     return {}
 

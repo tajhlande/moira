@@ -1,6 +1,6 @@
 import pytest
 
-from moira.prompts import _parse, get_prompt, load_prompts
+from moira.prompts import _parse, get_prompt, load_prompts, render_prompt
 
 
 class TestPromptParsing:
@@ -65,8 +65,39 @@ class TestLoadPrompts:
         moira.prompts._PROMPTS = None
         monkeypatch.delenv("MOIRA_PROMPT_FILE")
 
-    def test_format_variables(self):
-        template = get_prompt("report_generation.system")
-        # Should not raise — {path_instruction} is the only variable
-        formatted = template.format(path_instruction="Test instruction")
-        assert "Test instruction" in formatted
+    def test_render_prompt_substitutes_variable(self):
+        """render_prompt replaces {variable} placeholders with values."""
+        result = render_prompt("report_generation.system", path_instruction="Test instruction")
+        assert "Test instruction" in result
+        assert "{path_instruction}" not in result
+
+    def test_render_prompt_no_kwargs_returns_raw(self):
+        """render_prompt with no kwargs returns the template unchanged."""
+        raw = get_prompt("evaluation.system")
+        rendered = render_prompt("evaluation.system")
+        assert raw == rendered
+
+    def test_render_prompt_preserves_json_braces(self):
+        """render_prompt must NOT touch braces in JSON examples — only
+        exact {variable_name} matches are replaced."""
+        # evaluation.system contains a JSON example with braces like
+        # {"conclusion_results": [...]} — verify those survive intact.
+        rendered = render_prompt("evaluation.system")
+        assert '"conclusion_results"' in rendered
+        assert '{"conclusion_results"' in rendered or '{"conclusion_results"' in rendered
+
+    def test_render_prompt_does_not_match_json_keys(self):
+        """A JSON key like {"user_goal": ...} must not be replaced even
+        when a kwarg named user_goal is passed.  str.replace only matches
+        exact {user_goal} (closing brace immediately after the name)."""
+        # research.user has both {user_goal} as a template variable and
+        # potentially JSON-like content.  Verify the substitution works.
+        rendered = render_prompt(
+            "research.user",
+            user_goal="test goal",
+            unknown_facts="fact list",
+            tool_call_plan="plan",
+            tool_descriptions="tools",
+        )
+        assert "test goal" in rendered
+        assert "{user_goal}" not in rendered

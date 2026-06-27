@@ -37,6 +37,99 @@ class TestResearchHelpers:
             f"Empty claim should not overwrite existing claim. Got: '{facts[0]['claim']}'"
         )
 
+    def test_apply_discovered_facts_empty_claim_skips_unknown_fact(self):
+        """When the model returns an empty claim for an 'unknown' fact, the
+        entire update must be skipped — status stays 'unknown', no fields set.
+
+        Without this guard, status would flip to 'unverified' with no claim,
+        creating a phantom fact invisible to subsequent research rounds.
+        """
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts = [
+            Fact(
+                id="f001",
+                subject="test",
+                fact_needed="price of X",
+                status="unknown",
+            ),
+        ]
+
+        _apply_discovered_facts(
+            {
+                "discovered_facts": [
+                    {
+                        "fact_id": "f001",
+                        "claim": "",
+                        "relation": "costs",
+                        "value": "$10",
+                        "citation_ids": ["cit001"],
+                    }
+                ]
+            },
+            facts,
+        )
+
+        assert facts[0]["status"] == "unknown"
+        assert facts[0].get("claim", "") == ""
+        assert "relation" not in facts[0] or facts[0].get("relation") is None
+        assert facts[0].get("citation_ids", []) == []
+
+    def test_apply_discovered_facts_whitespace_claim_skips_unknown_fact(self):
+        """Whitespace-only claims should be treated the same as empty."""
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts = [
+            Fact(
+                id="f001",
+                subject="test",
+                fact_needed="weight of X",
+                status="unknown",
+            ),
+        ]
+
+        _apply_discovered_facts(
+            {"discovered_facts": [{"fact_id": "f001", "claim": "   \n\t  "}]},
+            facts,
+        )
+
+        assert facts[0]["status"] == "unknown"
+
+    def test_cleanup_empty_claims_reverts_unverified_to_unknown(self):
+        """_cleanup_empty_claims reverts 'unverified' facts with empty claims
+        back to 'unknown' so the gap is visible to research_review."""
+        from moira.workflow.nodes.research import _cleanup_empty_claims
+
+        facts = [
+            # Auto-promoted by tool execution, model never wrote a claim
+            Fact(id="f001", subject="A", fact_needed="x", status="unverified"),
+            # Properly researched
+            Fact(
+                id="f002",
+                subject="B",
+                fact_needed="y",
+                claim="B costs $5",
+                status="unverified",
+            ),
+            # Already unknown — not affected
+            Fact(id="f003", subject="C", fact_needed="z", status="unknown"),
+            # Whitespace-only claim
+            Fact(
+                id="f004",
+                subject="D",
+                fact_needed="w",
+                claim="   ",
+                status="unverified",
+            ),
+        ]
+
+        _cleanup_empty_claims(facts)
+
+        assert facts[0]["status"] == "unknown"
+        assert facts[1]["status"] == "unverified"
+        assert facts[2]["status"] == "unknown"
+        assert facts[3]["status"] == "unknown"
+
     def test_try_merge_snippets_suffix_prefix(self):
         """A's suffix overlaps B's prefix → merged into one string."""
         from moira.workflow.nodes.research import _try_merge_snippets

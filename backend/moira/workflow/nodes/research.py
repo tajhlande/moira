@@ -27,7 +27,7 @@ from moira.inference.client import ChatResponse
 from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.inference.registry import ResolvedModel
 from moira.models.knowledge import Citation, Fact, ResearchState, next_id
-from moira.prompts import get_prompt
+from moira.prompts import render_prompt
 from moira.tools.base import ToolCall, ToolDefinition
 from moira.tools.executor import ToolExecutor
 from moira.workflow.budget import can_execute, deduct_cost
@@ -374,8 +374,11 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
     """Apply discovered_facts from a model response to the facts list.
 
     For facts with a matching fact_id and status "unknown" or "unverified",
-    updates the claim, relation, value, and status to "unverified". For new
-    facts (fact_id is null/missing with fact_needed), appends them.
+    updates the claim, relation, value, and status to "unverified" — but
+    only if the model provided a non-empty claim.  An empty claim causes
+    the entire update to be skipped so the fact stays in its prior state.
+
+    For new facts (fact_id is null/missing with fact_needed), appends them.
 
     Also applies to "unverified" facts so the model can improve a claim that
     was initially set by plan-matching (raw tool output) with a proper
@@ -391,9 +394,19 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
         if fact_id:
             for fact in facts:
                 if fact["id"] == fact_id and fact["status"] in ("unknown", "unverified"):
-                    new_claim = disc.get("claim", "")
-                    if new_claim:
-                        fact["claim"] = new_claim
+                    new_claim = (disc.get("claim") or "").strip()
+                    if not new_claim:
+                        # Model returned no claim for this fact.  Skip the
+                        # entire update so the fact keeps its current state.
+                        # Without this guard, status would be set to
+                        # "unverified" with an empty claim, creating a
+                        # phantom fact that downstream nodes can't use.
+                        logger.warning(
+                            "RESEARCH: model returned empty claim for %s, skipping",
+                            fact_id,
+                        )
+                        break
+                    fact["claim"] = new_claim
                     if disc.get("relation"):
                         fact["relation"] = disc["relation"]
                     if disc.get("value"):
@@ -418,6 +431,30 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
                     status="unknown",
                 )
             )
+
+
+def _cleanup_empty_claims(facts: list[Fact]) -> None:
+    """Revert facts that were auto-promoted to "unverified" by tool execution
+    but never received a claim from the model.
+
+    During research, ``_process_execution_results`` auto-promotes facts from
+    "unknown" to "unverified" when a tool runs for them (so the model doesn't
+    re-research them in subsequent rounds).  If the model then fails to write
+    a claim across all remaining rounds, the fact is left as "unverified"
+    with an empty claim — a phantom fact that downstream nodes can't use.
+
+    This cleanup reverts such facts to "unknown" so the gap is visible to
+    research_review and can trigger a retry.
+    """
+    for fact in facts:
+        if fact.get("status") == "unverified":
+            claim = (fact.get("claim") or "").strip()
+            if not claim:
+                fact["status"] = "unknown"
+                logger.warning(
+                    "RESEARCH: %s has no claim after all rounds, reverting to unknown",
+                    fact["id"],
+                )
 
 
 def _try_merge_snippets(a: str, b: str, min_words: int = 3) -> str | None:
@@ -574,10 +611,11 @@ async def _extract_facts_from_results(
         return []
 
     messages = [
-        {"role": "system", "content": get_prompt("research.fact_extraction.system")},
+        {"role": "system", "content": render_prompt("research.fact_extraction.system")},
         {
             "role": "user",
-            "content": get_prompt("research.fact_extraction.user").format(
+            "content": render_prompt(
+                "research.fact_extraction.user",
                 user_goal=user_goal,
                 unknown_facts=unknown_facts_text,
                 tool_results_text=tool_results_text,
@@ -737,7 +775,8 @@ async def _run_native_tool_loop(
             messages.append(
                 {
                     "role": "user",
-                    "content": get_prompt("research.tool_feedback").format(
+                    "content": render_prompt(
+                        "research.tool_feedback",
                         tool_results=tool_summary,
                     ),
                 }
@@ -878,7 +917,7 @@ async def _run_text_tool_loop(
                 messages.append(
                     {
                         "role": "user",
-                        "content": get_prompt("research.parse_correction"),
+                        "content": render_prompt("research.parse_correction"),
                     }
                 )
 
@@ -954,7 +993,8 @@ async def _run_text_tool_loop(
         messages.append(
             {
                 "role": "user",
-                "content": get_prompt("research.tool_feedback").format(
+                "content": render_prompt(
+                    "research.tool_feedback",
                     tool_results=tool_summary,
                 ),
             }
@@ -1100,18 +1140,22 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
 
     # Select prompts based on tool-calling mode
     if resolved.native_tool_calling:
-        system_prompt = get_prompt("research.system_native_tools").format(
+        system_prompt = render_prompt(
+            "research.system_native_tools",
             max_extra_rounds=DEFAULT_MAX_ROUNDS,
         )
-        user_prompt = get_prompt("research.user_native").format(
+        user_prompt = render_prompt(
+            "research.user_native",
             user_goal=knowledge.get("user_goal", knowledge["question"]),
             unknown_facts=_format_unknown_facts(facts),
         )
     else:
-        system_prompt = get_prompt("research.system").format(
+        system_prompt = render_prompt(
+            "research.system",
             max_extra_rounds=DEFAULT_MAX_ROUNDS,
         )
-        user_prompt = get_prompt("research.user").format(
+        user_prompt = render_prompt(
+            "research.user",
             user_goal=knowledge.get("user_goal", knowledge["question"]),
             unknown_facts=_format_unknown_facts(facts),
             tool_call_plan=_format_tool_call_plan(tool_plan),
@@ -1123,7 +1167,8 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     review_history = knowledge.get("review_history", [])
     if review_count > 0 and bool(review_history) and review_history[-1].get("route") == "retry":
         last_review = review_history[-1]
-        system_prompt += "\n\n" + get_prompt("research.system_retry_review").format(
+        system_prompt += "\n\n" + render_prompt(
+            "research.system_retry_review",
             coverage_assessment=last_review.get("coverage_assessment", ""),
             missing_areas="\n".join(f"- {area}" for area in last_review.get("missing_areas", [])),
         )
@@ -1191,7 +1236,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     # what it has gathered without requesting more tools.
     if exhausted_rounds and tool_results_log:
         logger.info("RESEARCH: max rounds exhausted, requesting final summary")
-        messages.append({"role": "user", "content": get_prompt("research.summary")})
+        messages.append({"role": "user", "content": render_prompt("research.summary")})
         try:
             summary_response: ChatResponse = await resolved.client.chat_completion(
                 messages=messages,
@@ -1231,6 +1276,12 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             fact_text = "\n".join(f"- {f['id']}: {f.get('claim', '')}" for f in resolved_facts)
             last_response = ChatResponse(content=fact_text)
             last_thinking = ""
+
+    # Revert any facts that were auto-promoted to "unverified" by tool
+    # execution but never received a claim from the model.  Must run
+    # BEFORE the detail dict is built so facts_resolved and
+    # facts_newly_unknown reflect the true final state.
+    _cleanup_empty_claims(facts)
 
     # --- Build detail and emit ---
     # NOTE: tool_results are NOT included here. The run_manager accumulates

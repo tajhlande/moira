@@ -294,6 +294,17 @@ class ActiveRun:
                     else 0
                 )
                 self._current_step["step_version"] = self._current_step.get("step_version", 1) + 1
+                # Persist the failed step — the run_error event handler
+                # may not have run if the exception propagated before
+                # the custom event was yielded from langgraph.
+                from moira.persistence.write_queue import AsyncWriteQueue
+
+                write_queue = cast(
+                    AsyncWriteQueue,
+                    self._run_manager._get_service("write_queue"),
+                )
+                exc_step_copy = dict(self._current_step)
+                write_queue.enqueue(lambda: self._persist_step(exc_step_copy))
                 self.execution_steps.append(self._current_step)
                 self._current_step = None
             self._finalize_metrics()
@@ -404,6 +415,14 @@ class ActiveRun:
                     else 0
                 )
                 self._current_step["step_version"] = self._current_step.get("step_version", 1) + 1
+                from moira.persistence.write_queue import AsyncWriteQueue
+
+                write_queue = cast(
+                    AsyncWriteQueue,
+                    self._run_manager._get_service("write_queue"),
+                )
+                exc_step_copy = dict(self._current_step)
+                write_queue.enqueue(lambda: self._persist_step(exc_step_copy))
                 self.execution_steps.append(self._current_step)
                 self._current_step = None
             self._finalize_metrics()
@@ -653,6 +672,11 @@ class ActiveRun:
                     "purpose",
                     "model",
                     "call_count",
+                    "input_tokens",
+                    "thinking_tokens",
+                    "output_tokens",
+                    "prompt_time_ms",
+                    "gen_time_ms",
                 ):
                     if key in payload:
                         self._current_step[key] = payload[key]
@@ -662,6 +686,18 @@ class ActiveRun:
                     else 0
                 )
                 self._current_step["step_version"] = self._current_step.get("step_version", 1) + 1
+                # Persist the failed step to the workflow_steps table so
+                # the error detail (including model response) is available
+                # for post-mortem debugging.  Without this, failed steps
+                # vanish from the DB — only node_end calls _persist_step.
+                from moira.persistence.write_queue import AsyncWriteQueue
+
+                write_queue = cast(
+                    AsyncWriteQueue,
+                    self._run_manager._get_service("write_queue"),
+                )
+                step_copy = dict(self._current_step)
+                write_queue.enqueue(lambda: self._persist_step(step_copy))
                 self.execution_steps.append(self._current_step)
                 self._current_step = None
             self._finalize_metrics()

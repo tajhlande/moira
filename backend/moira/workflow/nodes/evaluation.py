@@ -17,7 +17,7 @@ from langgraph.config import get_stream_writer
 
 from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.models.knowledge import EvaluationOutcome, ResearchState
-from moira.prompts import get_prompt
+from moira.prompts import render_prompt
 from moira.workflow.budget import can_execute, deduct_cost, get_node_cost
 from moira.workflow.nodes._helpers import (
     _check_stop,
@@ -88,7 +88,8 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
     facts = list(knowledge["facts"])
     conclusions = list(knowledge.get("conclusions", []))
 
-    user_prompt = get_prompt("evaluation.user").format(
+    user_prompt = render_prompt(
+        "evaluation.user",
         user_goal=knowledge.get("user_goal", knowledge["question"]),
         question=knowledge["question"],
         facts_with_statuses=_format_facts_for_evaluation(facts),
@@ -101,7 +102,7 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
     registry = _get_model(config)
     resolved = await registry.resolve("intelligence")
     messages = [
-        {"role": "system", "content": get_prompt("evaluation.system")},
+        {"role": "system", "content": render_prompt("evaluation.system")},
         {"role": "user", "content": user_prompt},
     ]
 

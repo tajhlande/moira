@@ -15,7 +15,7 @@ import logging
 from typing import cast
 
 from moira.inference.defaults import DEFAULT_TEMPERATURE
-from moira.prompts import get_prompt
+from moira.prompts import render_prompt
 from moira.service_setup import service_provider
 from moira.tools.base import ToolDefinition
 
@@ -37,7 +37,8 @@ async def _enrich_single(
     Returns the enriched text, or None on any failure (model error, empty
     response, etc.).
     """
-    user_prompt = get_prompt("tool_enrichment.user").format(
+    user_prompt = render_prompt(
+        "tool_enrichment.user",
         tool_name=tool.name,
         tool_description=tool.description[:500],
         tool_parameters=_format_parameter_list(tool),
@@ -47,7 +48,7 @@ async def _enrich_single(
         raw = await resolved.client.chat_completion(
             model=resolved.model_id,
             messages=[
-                {"role": "system", "content": get_prompt("tool_enrichment.system")},
+                {"role": "system", "content": render_prompt("tool_enrichment.system")},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=DEFAULT_TEMPERATURE,
