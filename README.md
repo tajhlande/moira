@@ -71,16 +71,16 @@ The following environment variables are required:
 
 The following environment variables are optional:
 
-| Environment variable | Description                                               |
-|----------------------|-----------------------------------------------------------|
-| `MOIRA_PROMPT_FILE` | Path to a markdown file to override the system prompts for each research cycle step |
+| Environment variable | Description                                                                         |
+|----------------------|-------------------------------------------------------------------------------------|
+| `MOIRA_PROMPT_FILE`  | Path to a markdown file to override the system prompts for each research cycle step |
 
 
 
 
 ## License
 
-Copyright 2006 Tajh L. Taylor
+Copyright 2026 Tajh L. Taylor
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this software except in compliance with the License.

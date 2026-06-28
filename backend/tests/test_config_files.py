@@ -110,6 +110,11 @@ class TestPromptsFile:
                 "coverage_assessment",
                 "missing_areas",
             },
+            "planning.system_retry_context": {
+                "established_facts",
+                "prior_conclusions",
+                "prior_citations",
+            },
             "planning.system_earlier_turns": {"earlier_turns"},
             "planning.system_prior_report": {"prior_question", "prior_report_answer"},
             "research.system": {"max_extra_rounds"},
@@ -120,6 +125,11 @@ class TestPromptsFile:
                 "tool_descriptions",
             },
             "research.system_retry_review": {"coverage_assessment", "missing_areas"},
+            "research.system_retry_context": {
+                "established_facts",
+                "prior_conclusions",
+                "prior_citations",
+            },
             "synthesis.user": {
                 "user_goal",
                 "topic",

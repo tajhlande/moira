@@ -371,3 +371,44 @@ def _format_citation_content(citations: list, conclusions: list, facts: list) ->
         total += len(content)
 
     return "\n\n".join(lines)
+
+
+# --- Retry context formatting (shared by planning and research) ---
+
+
+def _format_established_facts(facts: list) -> str:
+    """Format verified facts with their claims for retry context.
+
+    Only facts with status 'verified' and a non-empty claim are included,
+    so the model sees what has already been established and can avoid
+    re-discovering it.
+    """
+    lines = []
+    for f in facts:
+        if f.get("status") == "verified" and f.get("claim"):
+            cit_ids = ", ".join(f.get("citation_ids") or [])
+            claim = (f["claim"] or "")[:200]
+            lines.append(f"{f['id']} | {f.get('subject', '')} | {claim} | [{cit_ids}]")
+    return "\n".join(lines)
+
+
+def _format_prior_conclusions(conclusions: list) -> str:
+    """Format conclusions compactly for retry context."""
+    lines = []
+    for c in conclusions:
+        facts_str = ", ".join(c.get("supporting_fact_ids") or [])
+        conclusion = (c.get("conclusion") or "")[:200]
+        lines.append(f"{c['id']} | {conclusion} | [{facts_str}] | {c.get('status', '')}")
+    return "\n".join(lines)
+
+
+def _format_prior_citations(citations: list) -> str:
+    """Format a compact citation list (ID, title, URL) for retry context.
+
+    Omits snippet/content to keep the prompt lean — the model just needs
+    to know which sources were already consulted.
+    """
+    lines = []
+    for c in citations:
+        lines.append(f"{c['id']} | {c.get('title') or ''} | {c.get('url') or ''}")
+    return "\n".join(lines)

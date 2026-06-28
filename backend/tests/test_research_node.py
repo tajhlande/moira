@@ -1796,3 +1796,96 @@ class TestResearchNativeMode:
         call_kwargs = mock_model["client"].chat_completion.call_args[1]
         assert "tools" in call_kwargs
         assert len(call_kwargs["tools"]) == 1
+
+
+class TestResearchRetryContext:
+    """Tests for retry context — when review_count > 0 and last review
+    routed 'retry', the system prompt should include established facts,
+    prior conclusions, and prior citations so the model can avoid
+    re-discovering what is already known."""
+
+    @pytest.mark.asyncio
+    async def test_retry_context_in_system_prompt(self, config, mock_writer, mock_model):
+        """On review retry, the system prompt should contain the established
+        facts, prior conclusions, and prior citations."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(return_value=[])
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps({"tool_calls": [], "discovered_facts": [], "sources": []}),
+        )
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find retailers"
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="Manufacturer A",
+                fact_needed="who makes it",
+                claim="Company A makes it",
+                status="verified",
+                citation_ids=["cit001"],
+            ),
+            Fact(
+                id="f003",
+                subject="Retailers",
+                fact_needed="which retailers sell it",
+                status="unverified",
+            ),
+        ]
+        state["knowledge"]["conclusions"] = [
+            {
+                "id": "c001",
+                "conclusion": "Company A manufactures the product",
+                "supporting_fact_ids": ["f001"],
+                "status": "verified",
+                "reasoning": "based on f001",
+            }
+        ]
+        state["knowledge"]["citations"] = [
+            {
+                "id": "cit001",
+                "source": "web_search",
+                "title": "Company A Site",
+                "url": "https://company-a.com",
+                "excerpt": "Company A makes products",
+            }
+        ]
+        state["knowledge"]["review_history"] = [
+            {
+                "route": "retry",
+                "coverage_assessment": "Missing retailer information",
+                "missing_areas": ["Specific retailers that sell the product"],
+            }
+        ]
+        state["execution_state"]["review_count"] = 1
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+
+        await research(state, _make_run_config(config))
+
+        # Check the system prompt sent to the model
+        call_args = mock_model["client"].chat_completion.call_args
+        messages = call_args.kwargs.get("messages") or call_args.args[0]
+        system_prompt = messages[0]["content"]
+
+        # Established facts context
+        assert "f001" in system_prompt
+        assert "Company A makes it" in system_prompt
+        # Prior conclusions context
+        assert "c001" in system_prompt
+        assert "Company A manufactures" in system_prompt
+        # Prior citations context
+        assert "cit001" in system_prompt
+        assert "https://company-a.com" in system_prompt
+        # Review feedback
+        assert "Missing retailer information" in system_prompt
+        # Unverified fact should appear in user prompt
+        user_prompt = messages[1]["content"]
+        assert "f003" in user_prompt

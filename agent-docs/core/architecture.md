@@ -34,7 +34,7 @@ The system must prioritize:
 
 ## The Name
 
-"MOiRA" stands for "My Own intelligent Research Agent".  Use `moira` as the base name or namespace for code or configuration for this project. 
+"MOiRA" stands for "My Open intelligent Research Agent".  Use `moira` as the base name or namespace for code or configuration for this project. 
 
 ---
 

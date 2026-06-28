@@ -34,6 +34,9 @@ from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
     _SNIPPET_MAX_LENGTH,
     _check_stop,
+    _format_established_facts,
+    _format_prior_citations,
+    _format_prior_conclusions,
     _get_model,
     _now,
     _parse_json_object,
@@ -106,9 +109,15 @@ def _format_tool_call_plan(plan: list) -> str:
 
 
 def _format_unknown_facts(facts: list[Fact]) -> str:
+    """Format non-verified facts for the research prompt.
+
+    Includes 'unknown', 'unverified', and 'contradicted' facts — all
+    represent gaps that research should address.  'verified' facts are
+    excluded since they are already resolved.
+    """
     lines = []
     for f in facts:
-        if f.get("status") in ("unknown", "contradicted"):
+        if f.get("status") != "verified":
             lines.append(f"{f['id']} | {f['subject']} | {f['fact_needed']}")
     return "\n".join(lines)
 
@@ -335,7 +344,7 @@ def _process_execution_results(
                 Citation(
                     id=cit_id,
                     source=result.tool_name,
-                    excerpt=result.output[:_SNIPPET_MAX_LENGTH ] if result.output else "",
+                    excerpt=result.output[:_SNIPPET_MAX_LENGTH] if result.output else "",
                     content=result.output[:_CITATION_CONTENT_LIMIT] if result.output else "",
                 )
             )
@@ -348,7 +357,7 @@ def _process_execution_results(
             {
                 "tool": result.tool_name,
                 "args": args,
-                "output": result.output[:_SNIPPET_MAX_LENGTH ] if result.output else "",
+                "output": result.output[:_SNIPPET_MAX_LENGTH] if result.output else "",
                 "duration_ms": result.duration_ms,
                 "success": result.success,
                 "metadata": result.metadata,
@@ -537,17 +546,17 @@ def _find_or_merge_citation(
                             break
                         # Existing is substring of new → replace with longer
                         if existing_norm in snippet_norm:
-                            snippets[i] = snippet[:_SNIPPET_MAX_LENGTH ]
+                            snippets[i] = snippet[:_SNIPPET_MAX_LENGTH]
                             merged_into = True
                             break
                         # Suffix-prefix overlap → merge into one
                         merged = _try_merge_snippets(existing, snippet)
                         if merged:
-                            snippets[i] = merged[:_SNIPPET_MAX_LENGTH ]
+                            snippets[i] = merged[:_SNIPPET_MAX_LENGTH]
                             merged_into = True
                             break
                     if not merged_into:
-                        snippets.append(snippet[:_SNIPPET_MAX_LENGTH ])
+                        snippets.append(snippet[:_SNIPPET_MAX_LENGTH])
                     c["snippets"] = snippets
                 # Content follows longest-wins (see docstring).
                 if content:
@@ -565,7 +574,7 @@ def _find_or_merge_citation(
         citation["title"] = title
     if snippet:
         citation["excerpt"] = snippet
-        citation["snippets"] = [snippet[:_SNIPPET_MAX_LENGTH ]]
+        citation["snippets"] = [snippet[:_SNIPPET_MAX_LENGTH]]
     if content:
         citation["content"] = content
     citations.append(citation)
@@ -1172,6 +1181,8 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
         )
 
     # When re-entered from research_review retry, add feedback about gaps
+    # and context from the previous research pass so the model can avoid
+    # re-discovering what is already established.
     review_count = es.get("review_count", 0)
     review_history = knowledge.get("review_history", [])
     if review_count > 0 and bool(review_history) and review_history[-1].get("route") == "retry":
@@ -1180,6 +1191,12 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             "research.system_retry_review",
             coverage_assessment=last_review.get("coverage_assessment", ""),
             missing_areas="\n".join(f"- {area}" for area in last_review.get("missing_areas", [])),
+        )
+        system_prompt += "\n\n" + render_prompt(
+            "research.system_retry_context",
+            established_facts=_format_established_facts(facts),
+            prior_conclusions=_format_prior_conclusions(knowledge.get("conclusions", [])),
+            prior_citations=_format_prior_citations(citations),
         )
 
     messages: list[dict] = [

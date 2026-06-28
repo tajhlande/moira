@@ -201,6 +201,24 @@ might succeed where the previous attempt failed. If a fact cannot be
 resolved with the available tools, omit it from the plan rather than
 wasting budget on a call unlikely to return useful results.
 
+## planning.system_retry_context
+
+Context from the previous research pass — use this to plan queries that
+fill the identified gaps without re-searching what is already known.
+
+Previously established facts (ID | subject | claim | citations):
+{established_facts}
+
+Conclusions already drawn (ID | conclusion | supporting facts | status):
+{prior_conclusions}
+
+Sources already consulted (citation ID | title | URL):
+{prior_citations}
+
+Do not plan tool calls that would re-discover information already listed
+above. Target the missing areas with new queries and potentially different
+tools.
+
 ## planning.system_prior_report
 
 Previous question: {prior_question}
@@ -415,6 +433,23 @@ Use the same tools available to you. Focus on the gaps identified above. Do not
 repeat queries that have already been answered — look for new information to
 fill the missing areas.
 
+## research.system_retry_context
+
+Context from the previous research pass — use this to avoid re-discovering
+information that has already been established and to focus on the gaps.
+
+Previously established facts (ID | subject | claim | citations):
+{established_facts}
+
+Conclusions already drawn (ID | conclusion | supporting facts | status):
+{prior_conclusions}
+
+Sources already consulted (citation ID | title | URL):
+{prior_citations}
+
+Do not re-research information that has already been established. Focus your
+tool calls on the missing areas identified in the review.
+
 ## research.fact_extraction.system
 
 You are a fact extraction assistant. Given tool execution results and a list
@@ -547,10 +582,14 @@ A fact must describe a single observable property or relationship that can be di
 supported by one or more citations. It must not contain recommendations, evaluations, 
 strategic judgments, or combine multiple independent assertions into one statement.
 
-For each fact that has a claim, review the claim against its cited evidence:
-- "verified": the claim is well-supported by the cited source
+For each fact that has a claim, review the claim against its cited evidence.
+A fact is only "verified" if its claim BOTH (a) answers what fact_needed asks
+AND (b) is well-supported by the cited source. If the claim is true but
+addresses a different question than fact_needed poses, mark it "unverified" —
+the specific information requested has not been established.
+- "verified": the claim answers the fact_needed question and is well-supported by the cited source
 - "contradicted": the claim conflicts with the cited evidence
-- "unverified": insufficient evidence to confirm or refute
+- "unverified": the claim does not address what fact_needed asks, or there is insufficient evidence to confirm or refute
 
 When evaluating conflicting evidence, weigh the credibility and consensus of
 sources. Official documentation, peer-reviewed research, and specialized
@@ -564,7 +603,7 @@ Then assess overall coverage:
 - Are the materially required facts answered?
 - What specific information is still missing (if any)?
 
-If critical facts remain unknown or contradicted, recommend retrying research.
+If critical facts remain unknown, unverified, or contradicted, recommend retrying research.
 If the research is sufficient, recommend continuing to evaluation.
 
 Respond with ONLY a JSON object, structured exactly like this:

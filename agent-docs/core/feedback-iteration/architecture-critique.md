@@ -1,6 +1,6 @@
 # What the document describes
 
-MOiRA ("My Own intelligent Research Agent") is a self-hosted interactive research agent. The user opens a chat UI, asks a research question, and the system runs a deterministic
+MOiRA ("My Open intelligent Research Agent") is a self-hosted interactive research agent. The user opens a chat UI, asks a research question, and the system runs a deterministic
 LangGraph workflow — Planning → Tool Discovery → Research Execution → Compression → Draft → Verification → Report Generation — using two LLM tiers (a larger "intelligence" model and a
 smaller "task" model) accessed via OpenAI-compatible endpoints. Tools include REST APIs and MCP servers, retrieved by semantic similarity from a LanceDB index so the model only ever
 sees a small relevant subset. A step-cost budget caps total work and governs how many times verification can fail and retry through Planning before the system gives up and writes a

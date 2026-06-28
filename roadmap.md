@@ -19,7 +19,7 @@ These are roughly organized by area and not in a plan order.
 
 ## Content and intelligence
 
-- Assure claim validation in research review - cross reference claims, detect overclaims (remove xfail tests for synthesis in test_evaluation_fixtures.py)
+- Include pre-existing facts and conclusions in subsequent conversation input
 - Normalize tool calling to one shape
 - Extract source age from tool output (have tools discover and express source age)
 - Reduce tool calling volume

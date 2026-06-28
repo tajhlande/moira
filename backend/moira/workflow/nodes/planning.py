@@ -16,6 +16,9 @@ from moira.prompts import render_prompt
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
     _check_stop,
+    _format_established_facts,
+    _format_prior_citations,
+    _format_prior_conclusions,
     _get_model,
     _now,
     _parse_json_object,
@@ -152,7 +155,9 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
 
     # On retry from research_review, append review feedback so planning
     # knows what gaps remain and can formulate better queries / choose
-    # different tools for the remaining unknown facts.
+    # different tools for the remaining unknown facts.  Also include
+    # context from the previous research pass so the planner can avoid
+    # re-searching what is already established.
     review_count = es.get("review_count", 0)
     if review_count > 0:
         review_history = knowledge.get("review_history", [])
@@ -164,6 +169,12 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
                 missing_areas="\n".join(
                     f"- {area}" for area in last_review.get("missing_areas", [])
                 ),
+            )
+            system_prompt += "\n\n" + render_prompt(
+                "planning.system_retry_context",
+                established_facts=_format_established_facts(knowledge["facts"]),
+                prior_conclusions=_format_prior_conclusions(knowledge.get("conclusions", [])),
+                prior_citations=_format_prior_citations(knowledge.get("citations", [])),
             )
 
     # Prior conversation context (multi-turn)

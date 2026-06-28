@@ -380,10 +380,130 @@ class TestExtractToolCalls:
 
         assert _extract_tool_calls({"tool_calls": "not a list"}) == []
 
-    def test_skips_missing_name(self):
+    def test_extract_tool_calls_skips_missing_name(self):
         from moira.workflow.nodes.research import _extract_tool_calls
 
         parsed = {"tool_calls": [{"args": {"x": 1}}, {"tool": "ok", "args": {}}]}
         calls = _extract_tool_calls(parsed)
         assert len(calls) == 1
         assert calls[0].name == "ok"
+
+
+class TestFormatUnknownFacts:
+    """Tests for _format_unknown_facts — verifies that all non-verified
+    statuses are included so retry passes can see unverified facts."""
+
+    def test_includes_unverified_facts(self):
+        """'unverified' facts must appear so the research model can
+        re-research facts whose claims didn't match fact_needed."""
+        from moira.workflow.nodes.research import _format_unknown_facts
+
+        facts = [
+            Fact(id="f001", subject="A", fact_needed="x", status="unverified"),
+            Fact(id="f002", subject="B", fact_needed="y", status="unknown"),
+            Fact(id="f003", subject="C", fact_needed="z", status="contradicted"),
+            Fact(
+                id="f004",
+                subject="D",
+                fact_needed="w",
+                status="verified",
+                claim="done",
+            ),
+        ]
+        result = _format_unknown_facts(facts)
+        assert "f001" in result
+        assert "f002" in result
+        assert "f003" in result
+        assert "f004" not in result
+
+    def test_empty_when_all_verified(self):
+        from moira.workflow.nodes.research import _format_unknown_facts
+
+        facts = [
+            Fact(id="f001", subject="A", fact_needed="x", status="verified", claim="ok"),
+        ]
+        result = _format_unknown_facts(facts)
+        assert result == ""
+
+
+class TestRetryContextHelpers:
+    """Tests for the shared retry-context formatting helpers."""
+
+    def test_format_established_facts_includes_only_verified_with_claims(self):
+        from moira.workflow.nodes._helpers import _format_established_facts
+
+        facts = [
+            Fact(
+                id="f001",
+                subject="Price",
+                fact_needed="cost",
+                claim="Costs $5",
+                status="verified",
+                citation_ids=["cit001"],
+            ),
+            Fact(id="f002", subject="Weight", fact_needed="wt", status="unknown"),
+            Fact(
+                id="f003",
+                subject="Color",
+                fact_needed="color",
+                claim="",
+                status="verified",
+            ),
+        ]
+        result = _format_established_facts(facts)
+        assert "f001" in result
+        assert "Costs $5" in result
+        assert "cit001" in result
+        assert "f002" not in result
+        assert "f003" not in result
+
+    def test_format_established_facts_empty(self):
+        from moira.workflow.nodes._helpers import _format_established_facts
+
+        assert _format_established_facts([]) == ""
+
+    def test_format_prior_conclusions(self):
+        from moira.workflow.nodes._helpers import _format_prior_conclusions
+
+        conclusions = [
+            {
+                "id": "c001",
+                "conclusion": "X is true",
+                "supporting_fact_ids": ["f001", "f002"],
+                "status": "verified",
+            },
+            {
+                "id": "c002",
+                "conclusion": "Y is false",
+                "supporting_fact_ids": [],
+                "status": "contradicted",
+            },
+        ]
+        result = _format_prior_conclusions(conclusions)
+        assert "c001" in result
+        assert "X is true" in result
+        assert "f001" in result
+        assert "c002" in result
+
+    def test_format_prior_conclusions_empty(self):
+        from moira.workflow.nodes._helpers import _format_prior_conclusions
+
+        assert _format_prior_conclusions([]) == ""
+
+    def test_format_prior_citations(self):
+        from moira.workflow.nodes._helpers import _format_prior_citations
+
+        citations = [
+            {"id": "cit001", "title": "Source A", "url": "https://a.com"},
+            {"id": "cit002", "title": "Source B", "url": "https://b.com"},
+        ]
+        result = _format_prior_citations(citations)
+        assert "cit001" in result
+        assert "Source A" in result
+        assert "https://a.com" in result
+        assert "cit002" in result
+
+    def test_format_prior_citations_empty(self):
+        from moira.workflow.nodes._helpers import _format_prior_citations
+
+        assert _format_prior_citations([]) == ""
