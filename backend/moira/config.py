@@ -35,35 +35,6 @@ class BudgetConfig(BaseModel):
     retry_limits: RetryLimits = RetryLimits()
 
 
-class ModelCapabilityConfig(BaseModel):
-    """Per-model capability flags. Lives under the provider's model list
-    since the same model ID served by different providers can have
-    different capabilities depending on the server's chat template."""
-
-    id: str
-    native_tool_calling: bool = False
-
-
-class InferenceEndpointConfig(BaseModel):
-    name: str
-    base_url: str
-    api_key: str = ""
-    provider_type: str = "completions"
-    models: list[ModelCapabilityConfig] = []
-
-
-class InferenceModelsConfig(BaseModel):
-    intelligence_endpoint: str = ""
-    intelligence_model: str = ""
-    task_endpoint: str = ""
-    task_model: str = ""
-
-
-class InferenceConfig(BaseModel):
-    providers: list[InferenceEndpointConfig] = []
-    models: InferenceModelsConfig = InferenceModelsConfig()
-
-
 class EmbeddingConfig(BaseModel):
     provider: str = "local"
     model: str = "all-MiniLM-L6-v2"
@@ -95,7 +66,6 @@ class AppConfig(BaseModel):
 class MoiraConfig(BaseModel):
     database: DatabaseConfig = DatabaseConfig()
     budget: BudgetConfig = BudgetConfig()
-    inference: InferenceConfig = InferenceConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
     tools: list[ToolConfig] = []
     mcp_servers: list[MCPServerConfig] = []

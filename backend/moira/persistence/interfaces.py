@@ -163,6 +163,70 @@ class ModelPreferencesRepository(ABC):
     async def set_preferences(self, preferences: ModelPreferences) -> None: ...
 
 
+@dataclass
+class InferenceProvider:
+    """A configured inference provider (OpenAI-compatible endpoint).
+
+    API keys are stored encrypted in the credentials table, referenced
+    by credential_name. This dataclass holds only connection metadata.
+
+    slug is a kebab-case identifier derived from display_name at creation
+    time and is immutable thereafter. display_name is user-editable."""
+
+    slug: str
+    display_name: str
+    base_url: str
+    provider_type: str = "completions"
+    credential_name: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+@dataclass
+class InferenceModelRow:
+    """A discovered model on a provider, with user-configurable capability flags."""
+
+    provider_slug: str
+    model_id: str
+    native_tool_calling: bool = False
+    discovered_at: str = ""
+
+
+class InferenceProviderRepository(ABC):
+    """Persistence interface for inference_providers + inference_models tables."""
+
+    @abstractmethod
+    async def get_all_providers(self) -> list[InferenceProvider]: ...
+
+    @abstractmethod
+    async def get_provider(self, slug: str) -> InferenceProvider | None: ...
+
+    @abstractmethod
+    async def upsert_provider(self, provider: InferenceProvider) -> None: ...
+
+    @abstractmethod
+    async def delete_provider(self, slug: str) -> bool: ...
+
+    @abstractmethod
+    async def get_models(self, provider_slug: str) -> list[InferenceModelRow]: ...
+
+    @abstractmethod
+    async def get_all_models(self) -> list[InferenceModelRow]: ...
+
+    @abstractmethod
+    async def upsert_model(
+        self, provider_slug: str, model_id: str, native_tool_calling: bool
+    ) -> None: ...
+
+    @abstractmethod
+    async def upsert_discovered_models(self, provider_slug: str, model_ids: list[str]) -> None: ...
+
+    @abstractmethod
+    async def delete_stale_models(
+        self, provider_slug: str, current_model_ids: list[str]
+    ) -> None: ...
+
+
 class ToolRepository(ABC):
     @abstractmethod
     async def get_all_tools(self) -> list[ToolDefinition]: ...

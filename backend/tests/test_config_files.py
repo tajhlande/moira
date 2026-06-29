@@ -60,15 +60,6 @@ class TestConfigTemplate:
         assert rl.max_review >= 1
         assert rl.max_evaluation >= 1
 
-    def test_template_has_inference_structure(self):
-        with open(CONFIG_TEMPLATE) as f:
-            raw = yaml.safe_load(f)
-        config = MoiraConfig.model_validate(raw)
-        assert hasattr(config.inference, "providers")
-        assert hasattr(config.inference, "models")
-        assert hasattr(config.inference.models, "intelligence_endpoint")
-        assert hasattr(config.inference.models, "task_endpoint")
-
 
 class TestPromptsFile:
     def test_prompts_file_exists(self):

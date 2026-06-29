@@ -6,9 +6,6 @@ from fastapi.testclient import TestClient
 
 from moira.config import (
     DatabaseConfig,
-    InferenceConfig,
-    InferenceEndpointConfig,
-    InferenceModelsConfig,
     MoiraConfig,
 )
 from moira.persistence.interfaces import (
@@ -114,15 +111,6 @@ def _config(tmp_dir: str):
         database=DatabaseConfig(
             sqlite_path=str(Path(tmp_dir) / "test.db"),
             lancedb_path=str(Path(tmp_dir) / "vectors"),
-        ),
-        inference=InferenceConfig(
-            providers=[InferenceEndpointConfig(name="test", base_url="http://localhost:9999/v1")],
-            models=InferenceModelsConfig(
-                intelligence_endpoint="test",
-                intelligence_model="test-model",
-                task_endpoint="",
-                task_model="",
-            ),
         ),
     )
 
@@ -262,28 +250,6 @@ def test_delete_conversation(app_client):
 def test_delete_conversation_not_found(app_client):
     resp = app_client.delete("/api/conversations/nonexistent")
     assert resp.status_code == 404
-
-
-def test_models_endpoint(app_client):
-    resp = app_client.get("/api/models")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "models" in data
-    assert "assignments" in data
-
-
-def test_set_model_assignments(app_client):
-    resp = app_client.put(
-        "/api/models",
-        json={
-            "intelligence": {"endpoint": "test", "model": "new-model"},
-            "task": {"endpoint": "test", "model": "tiny-model"},
-        },
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["intelligence"]["model"] == "new-model"
-    assert data["task"]["model"] == "tiny-model"
 
 
 def test_get_setting_definitions(app_client):

@@ -74,14 +74,14 @@ vi.mock("../../api/client", () => ({
       messages: [],
       runs: [],
     })),
-    getModels: vi.fn(async () => ({
+    getInferenceModels: vi.fn(async () => ({
       models: [],
       assignments: {
         intelligence: { endpoint: "", model: "" },
         task: { endpoint: "", model: "" },
       },
     })),
-    setModels: vi.fn(async (assignments) => assignments),
+    setModelAssignments: vi.fn(async (assignments) => assignments),
     startRun: vi.fn(async () => ({
       run_id: "run-1",
       user_message_id: 1,

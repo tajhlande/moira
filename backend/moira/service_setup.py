@@ -1,5 +1,4 @@
 import logging
-import os
 from typing import cast
 
 from moira.config import MoiraConfig, resolve_db_path, resolve_lancedb_path
@@ -22,7 +21,8 @@ logger = logging.getLogger(__name__)
 #   "credential_repository"                -> CredentialRepository
 #   "credential_service"                   -> CredentialService
 #   "model_registry"                       -> ModelRegistry
-#   "inference_client:{endpoint_name}"     -> InferenceClient
+#   "inference_provider_repository"        -> InferenceProviderRepository
+#   "inference_client:{endpoint_name}"     -> InferenceClient (legacy, may not be set)
 #   "embedding_provider"                   -> EmbeddingProvider
 #   "tool_catalog"                         -> ToolCatalog
 #   "tool_discovery"                       -> ToolDiscovery
@@ -109,36 +109,39 @@ async def init_services(
     except Exception as e:
         logger.error("Credential service not available: %s", e)
 
+    # --- Inference Provider service ---
     clients: dict[str, InferenceClient] = {}
-    for ep in config.inference.providers:
-        # API key resolution: check MOIRA_API_KEY_{NAME} env var first
-        # (uppercased provider name), then fall back to config. This keeps
-        # secrets out of config files while still allowing in-config keys
-        # for local dev.
-        env_key = f"MOIRA_API_KEY_{ep.name.upper()}"
-        api_key = os.environ.get(env_key, ep.api_key)
-        if api_key:
-            logger.debug("Using API key from %s for endpoint '%s'", env_key, ep.name)
-        logger.info("Connecting to inference endpoint '%s' at %s", ep.name, ep.base_url)
+    from moira.persistence.sqlite.repos import SqliteInferenceProviderRepository
+
+    provider_repo = SqliteInferenceProviderRepository(db_path)
+    _services["inference_provider_repository"] = provider_repo
+
+    cred_service = _services.get("credential_service")
+
+    registry = ModelRegistry(
+        provider_repo=provider_repo,
+        prefs_repo=prefs_repo,
+        user_id=DEFAULT_USER_ID,
+        credential_service=cred_service,
+    )
+
+    # Load providers from DB and start their clients
+    providers = await provider_repo.get_all_providers()
+    for ep in providers:
+        api_key = await registry.resolve_api_key(ep.slug, ep.credential_name)
+        logger.info("Connecting to inference provider '%s' at %s", ep.slug, ep.base_url)
         client = InferenceClient(
             base_url=ep.base_url,
             api_key=api_key,
             provider_type=ep.provider_type,
         )
         await client.start()
-        clients[ep.name] = client
-        _services[f"inference_client:{ep.name}"] = client
+        clients[ep.slug] = client
+        registry.add_client(ep.slug, client)
 
-    registry = ModelRegistry(
-        config=config.inference,
-        prefs_repo=prefs_repo,
-        user_id=DEFAULT_USER_ID,
-    )
-    for name, client in clients.items():
-        registry.add_client(name, client)
     await registry.refresh_models()
     logger.info(
-        "Model registry initialized with %d models from %d endpoints",
+        "Model registry initialized with %d models from %d providers",
         len(registry.get_available_models()),
         len(clients),
     )

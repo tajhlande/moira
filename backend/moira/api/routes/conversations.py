@@ -359,28 +359,6 @@ async def update_conversation(
     }
 
 
-@router.get("/models", response_model=dict)
-async def list_models():
-    registry = _registry()
-    models = registry.get_available_models()
-    prefs = await _prefs().get_preferences(DEFAULT_USER_ID)
-    return {
-        "models": [
-            {"id": m.id, "owned_by": m.owned_by, "endpoint": m.source_endpoint} for m in models
-        ],
-        "assignments": {
-            "intelligence": {
-                "endpoint": prefs.intelligence_endpoint,
-                "model": prefs.intelligence_model,
-            },
-            "task": {
-                "endpoint": prefs.task_endpoint,
-                "model": prefs.task_model,
-            },
-        },
-    }
-
-
 @router.delete("/conversations/{conversation_id}")
 async def delete_conversation(
     conversation_id: str,
@@ -391,21 +369,6 @@ async def delete_conversation(
         raise HTTPException(status_code=404, detail="Conversation not found")
     logger.info("Deleted conversation %s", conversation_id)
     return {"status": "deleted"}
-
-
-@router.put("/models", response_model=dict)
-async def set_model_assignments(body: dict[str, Any]):
-    intel = body.get("intelligence", {})
-    task = body.get("task", {})
-    logger.info("Setting model assignments: intelligence=%s, task=%s", intel, task)
-    registry = _registry()
-    await registry.set_assignments(
-        intelligence_endpoint=intel.get("endpoint", ""),
-        intelligence_model=intel.get("model", ""),
-        task_endpoint=task.get("endpoint", ""),
-        task_model=task.get("model", ""),
-    )
-    return {"intelligence": intel, "task": task}
 
 
 @router.post("/conversations/{conversation_id}/generate-title")

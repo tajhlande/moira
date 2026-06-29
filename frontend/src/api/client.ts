@@ -202,9 +202,33 @@ export interface ModelAssignments {
   task: ModelSelection;
 }
 
-export interface ModelsResponse {
-  models: { id: string; owned_by: string; endpoint: string }[];
+export interface InferenceProvider {
+  slug: string;
+  display_name: string;
+  base_url: string;
+  provider_type: string;
+  credential_name: string;
+  last_error: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InferenceModel {
+  id: string;
+  provider: string;
+  native_tool_calling: boolean;
+}
+
+export interface InferenceModelsResponse {
+  models: InferenceModel[];
   assignments: ModelAssignments;
+}
+
+export interface RefreshModelsResponse {
+  discovered_count: number;
+  models: { id: string; endpoint: string }[];
+  error?: string;
+  errors?: Record<string, string>;
 }
 
 export interface CredentialInfo {
@@ -311,12 +335,87 @@ export const api = {
 
   eventsUrl: () => `${API_BASE}/events`,
 
-  getModels: () => request<ModelsResponse>("/models"),
+  getInferenceProviders: () =>
+    request<{ providers: InferenceProvider[] }>("/inference/providers"),
 
-  setModels: (assignments: ModelAssignments) =>
-    request<ModelAssignments>("/models", {
+  validateInferenceProvider: (data: {
+    base_url: string;
+    api_key?: string;
+    provider_type?: string;
+    slug?: string;
+  }) =>
+    request<{ valid: boolean; model_count?: number; error?: string }>(
+      "/inference/providers/validate",
+      { method: "POST", body: JSON.stringify(data) },
+    ),
+
+  createInferenceProvider: (data: {
+    display_name: string;
+    base_url: string;
+    api_key?: string;
+    provider_type?: string;
+  }) =>
+    request<{ slug: string; display_name: string; base_url: string }>(
+      "/inference/providers",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    ),
+
+  updateInferenceProvider: (
+    slug: string,
+    data: {
+      display_name?: string;
+      base_url: string;
+      api_key?: string;
+      provider_type?: string;
+    },
+  ) =>
+    request<{ slug: string; base_url: string }>(
+      `/inference/providers/${slug}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(data),
+      },
+    ),
+
+  deleteInferenceProvider: (slug: string) =>
+    request<{ status: string }>(`/inference/providers/${slug}`, {
+      method: "DELETE",
+    }),
+
+  refreshProviderModels: (slug: string) =>
+    request<RefreshModelsResponse>(`/inference/providers/${slug}/refresh`, {
+      method: "POST",
+    }),
+
+  refreshAllModels: () =>
+    request<RefreshModelsResponse>("/inference/refresh", {
+      method: "POST",
+    }),
+
+  getInferenceModels: () =>
+    request<InferenceModelsResponse>("/inference/models"),
+
+  setModelAssignments: (assignments: ModelAssignments) =>
+    request<ModelAssignments>("/inference/models/assign", {
       method: "PUT",
       body: JSON.stringify(assignments),
+    }),
+
+  setModelCapability: (
+    provider: string,
+    modelId: string,
+    native_tool_calling: boolean,
+  ) =>
+    request<{
+      provider: string;
+      model: string;
+      native_tool_calling: boolean;
+    }>(`/inference/models/${provider}/${modelId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ native_tool_calling }),
     }),
 
   getTools: () =>

@@ -9,6 +9,7 @@ from moira.persistence.sqlite.repos.api_sources import SqliteApiSourceRepository
 from moira.persistence.sqlite.repos.conversations import SqliteConversationRepository
 from moira.persistence.sqlite.repos.credentials import SqliteCredentialRepository
 from moira.persistence.sqlite.repos.inference_metrics import SqliteInferenceMetricsRepository
+from moira.persistence.sqlite.repos.inference_providers import SqliteInferenceProviderRepository
 from moira.persistence.sqlite.repos.model_prefs import SqliteModelPreferencesRepository
 from moira.persistence.sqlite.repos.settings import SqliteSystemSettingsRepository
 from moira.persistence.sqlite.repos.tool_metrics import SqliteToolMetricsRepository
@@ -20,6 +21,7 @@ __all__ = [
     "SqliteConversationRepository",
     "SqliteCredentialRepository",
     "SqliteInferenceMetricsRepository",
+    "SqliteInferenceProviderRepository",
     "SqliteModelPreferencesRepository",
     "SqliteSystemSettingsRepository",
     "SqliteToolMetricsRepository",

@@ -13,9 +13,6 @@ from fastapi.testclient import TestClient
 
 from moira.config import (
     DatabaseConfig,
-    InferenceConfig,
-    InferenceEndpointConfig,
-    InferenceModelsConfig,
     MoiraConfig,
 )
 from moira.persistence.interfaces import (
@@ -103,15 +100,6 @@ def _config(tmp_dir: str):
         database=DatabaseConfig(
             sqlite_path=str(Path(tmp_dir) / "test.db"),
             lancedb_path=str(Path(tmp_dir) / "vectors"),
-        ),
-        inference=InferenceConfig(
-            providers=[InferenceEndpointConfig(name="test", base_url="http://localhost:9999/v1")],
-            models=InferenceModelsConfig(
-                intelligence_endpoint="test",
-                intelligence_model="test-model",
-                task_endpoint="",
-                task_model="",
-            ),
         ),
     )
 

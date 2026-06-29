@@ -34,34 +34,19 @@ budget:
     max_evaluation: 2   # max evaluation cycles per research run
 
 # --- Inference ---
-
-inference:
-  providers:
-    - name: local
-      base_url: "http://localhost:8080/v1"
-      # API keys can be provided here or via MOIRA_API_KEY_{NAME} env vars.
-      # For example, MOIRA_API_KEY_LOCAL for the provider named "local".
-      # Env vars take precedence over this value.
-      api_key: ""
-      # provider_type identifies the API dialect of this server.
-      # "completions" = OpenAI Chat Completions (vLLM, llama.cpp, OpenAI)
-      # "responses"   = OpenAI Responses API (not yet implemented)
-      # "messages"    = Anthropic Messages API (not yet implemented)
-      provider_type: "completions"
-      # Per-model capability flags. Same model ID on different servers
-      # can have different capabilities depending on the chat template.
-      # models:
-      #   - id: "Qwen3.6-35B-A3B"
-      #     native_tool_calling: true
-      #   - id: "Qwen3.5-2B-No-Thinking"
-      #     native_tool_calling: false  # default
-  models:
-    intelligence_endpoint: ""  # provider name
-    intelligence_model: ""     # model ID
-    task_endpoint: ""          # provider name
-    task_model: ""             # model ID
+#
+# Inference providers are configured at runtime via the UI or API.
+# Navigate to Settings > Inference to add providers, discover models,
+# and assign roles. See agent-docs/inference-settings-migration.md for
+# details.
 
 # --- Embeddings (Phase 2) ---
+#
+# Embeddings are used for semantic tool discovery (vector search over tool
+# descriptions in LanceDB). This is separate from inference providers above
+# — inference providers serve chat completions (LLM responses), while the
+# embedding provider converts text to vectors for similarity search.
+# They can point at different backends.
 
 embedding:
   provider: local  # local | openai_compatible

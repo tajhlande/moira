@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NMenu } from "naive-ui";
-import { IconSettings, IconChartLine, IconBug } from "@tabler/icons-vue";
+import { IconSettings, IconChartLine, IconBug, IconCpu } from "@tabler/icons-vue";
 import { useRoute, useRouter } from "vue-router";
 import { computed, h } from "vue";
 
@@ -9,11 +9,13 @@ const router = useRouter();
 
 const menuItems = [
   { label: "System", key: "system", icon: IconSettings },
+  { label: "Inference", key: "inference", icon: IconCpu },
   { label: "Analytics", key: "analytics", icon: IconChartLine },
   { label: "Debug", key: "debug", icon: IconBug },
 ];
 
 const activeKey = computed(() => {
+  if (route.path.endsWith("/inference")) return "inference";
   if (route.path.endsWith("/analytics")) return "analytics";
   if (route.path.endsWith("/debug")) return "debug";
   return "system";

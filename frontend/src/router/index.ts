@@ -63,6 +63,11 @@ const router = createRouter({
           component: () => import("../components/SettingsSystem.vue"),
         },
         {
+          path: "inference",
+          name: "settings-inference",
+          component: () => import("../components/SettingsInference.vue"),
+        },
+        {
           path: "analytics",
           name: "settings-analytics",
           component: () => import("../components/SettingsAnalytics.vue"),
