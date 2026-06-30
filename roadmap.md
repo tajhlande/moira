@@ -56,10 +56,6 @@ These are roughly organized by area and not in a plan order.
 
 ## Deployment
 
-- Create publishable build with front-end served by uvicorn
-- Docker container
-- Docker compose
-- Packaged releases
 - A graphic logo
 
 ## Identity and security
