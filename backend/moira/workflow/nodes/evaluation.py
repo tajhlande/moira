@@ -20,10 +20,10 @@ from moira.models.knowledge import EvaluationOutcome, ResearchState
 from moira.prompts import render_prompt
 from moira.workflow.budget import can_execute, deduct_cost, get_node_cost
 from moira.workflow.nodes._helpers import (
+    _call_for_json,
     _check_stop,
     _format_citation_content,
     _now,
-    _parse_json_object,
     _resolve_intelligence,
     _response_meta,
 )
@@ -108,15 +108,21 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
     evaluation_count = es.get("evaluation_count", 0) + 1
     logger.info("EVALUATION Start (count=%d)", evaluation_count)
 
-    response = await resolved.client.chat_completion(
-        messages=messages,
-        model=resolved.model_id,
+    parsed, response, call_count = await _call_for_json(
+        resolved.client,
+        resolved.model_id,
+        messages,
+        required_key="route",
+        node_name=NODE_NAME,
         temperature=DEFAULT_TEMPERATURE,
     )
 
     raw = response.content or ""
     thinking = getattr(response, "thinking", "") or ""
     new_budget = deduct_cost(es["step_costs"], NODE_NAME, es["budget_remaining"])
+    # Charge for retry calls too
+    if call_count > 1:
+        new_budget = deduct_cost(es["step_costs"], NODE_NAME, new_budget)
 
     detail = {
         "prompt": user_prompt,
@@ -140,7 +146,7 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
                     "detail": detail,
                     "purpose": NODE_NAME,
                     "model": resolved.model_id,
-                    "call_count": 1,
+                    "call_count": call_count,
                 },
             }
         )
@@ -148,11 +154,11 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
             f"Model returned empty content for {NODE_NAME} (thinking={len(thinking)} chars)"
         )
 
-    parsed = _parse_json_object(raw)
-
     if not parsed or "route" not in parsed:
         logger.error(
-            "EVALUATION: JSON parse failed (parsed=%d keys, response=%d chars)",
+            "EVALUATION: JSON parse failed after %d attempts "
+            "(parsed=%d keys, response=%d chars).",
+            call_count,
             len(parsed),
             len(raw),
         )
@@ -160,18 +166,20 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
             {
                 "event": "run_error",
                 "payload": {
-                    "error": "Evaluation model returned unparseable JSON",
+                    "error": "Evaluation model returned unparseable JSON "
+                    f"after {call_count} attempts",
                     "budget_remaining": new_budget,
                     "detail": detail,
                     "purpose": NODE_NAME,
                     "model": resolved.model_id,
-                    "call_count": 1,
+                    "call_count": call_count,
                 },
             }
         )
         raise RuntimeError(
             f"Evaluation model returned unparseable JSON "
-            f"(response={len(raw)} chars, parsed_keys={list(parsed.keys())})"
+            f"after {call_count} attempts "
+            f"(response={len(raw)} chars)"
         )
 
     # Apply conclusion results. Accept "status" as a fallback for "result"
@@ -222,7 +230,7 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
                 "detail": detail,
                 "purpose": NODE_NAME,
                 "model": resolved.model_id,
-                "call_count": 1,
+                "call_count": call_count,
                 **_response_meta(response),
             },
         }

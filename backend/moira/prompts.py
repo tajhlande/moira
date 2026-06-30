@@ -61,6 +61,7 @@ REQUIRED_SECTIONS = [
     "report_generation.citation_retry",
     "tool_enrichment.system",
     "tool_enrichment.user",
+    "json_repair.user",
 ]
 
 

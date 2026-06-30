@@ -317,6 +317,68 @@ def _parse_json_object(text: str) -> dict:
     return {}
 
 
+async def _call_for_json(
+    client,
+    model_id: str,
+    messages: list[dict],
+    required_key: str,
+    node_name: str,
+    *,
+    temperature: float = 0.7,
+) -> tuple[dict, object, int]:
+    """Call the model and parse JSON, retrying once on parse failure.
+
+    Returns ``(parsed_dict, response, call_count)``.
+
+    On the first attempt, calls the model with the original messages.
+    If the response doesn't yield valid JSON (or lacks *required_key*),
+    retries once with a repair instruction appended to the conversation.
+
+    If both attempts fail, returns ``({}, response, 2)`` — the caller
+    is responsible for raising an error or providing a safe default.
+    """
+    from moira.prompts import render_prompt
+
+    call_count = 0
+    response = None
+
+    for attempt in range(2):
+        call_count += 1
+        response = await client.chat_completion(
+            messages=messages,
+            model=model_id,
+            temperature=temperature,
+        )
+        raw = response.content or ""
+        parsed = _parse_json_object(raw)
+
+        if parsed and required_key in parsed:
+            logger.info(
+                "%s: JSON parsed successfully on attempt %d",
+                node_name.upper(),
+                call_count,
+            )
+            return parsed, response, call_count
+
+        logger.warning(
+            "%s: JSON parse failed on attempt %d (parsed=%d keys, response=%d chars, has_key=%s)",
+            node_name.upper(),
+            call_count,
+            len(parsed),
+            len(raw),
+            required_key in parsed if parsed else False,
+        )
+
+        if attempt == 0:
+            messages = [
+                *messages,
+                {"role": "assistant", "content": raw},
+                {"role": "user", "content": render_prompt("json_repair.user")},
+            ]
+
+    return {}, response, call_count
+
+
 def _response_meta(response) -> dict:
     """Extract inference metadata from a ChatResponse for node_end payload.
 

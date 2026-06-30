@@ -841,3 +841,9 @@ no explanation.
 Tool name: {tool_name}
 Description: {tool_description}
 Parameters: {tool_parameters}
+
+## json_repair.user
+
+Your previous response was not valid JSON and could not be parsed.
+Respond with ONLY a JSON object — no markdown, no prose, no code fences.
+Use the exact schema from the system prompt.
