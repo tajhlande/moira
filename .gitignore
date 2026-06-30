@@ -1,10 +1,46 @@
+# Config
 config/moira-config.yaml
+
+# Data
 data/
-backend/.venv/
-backend/__pycache__/
-frontend/node_modules/
-frontend/dist/
-**/.coverage
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+
+# Python
+**/.venv/
+**/__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+**/node_modules/
+**/dist/
+*.tsbuildinfo
+.eslintcache
+
+# IDE
+.vscode/
+.idea/
+*.sw?
+
+# OS
 .DS_Store
+
+# Environment
 **/.env
+
+# Logs
+*.log
+
+# Coverage
+**/.coverage
+
+# Opencode tool state
+.opencode/
+
+# Session files
 session*.md

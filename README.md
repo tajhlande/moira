@@ -55,7 +55,7 @@ and smart retries.
 - Capability growth
   - Install API -> New research capability appears, with little manual effort
 
-- Transparency, You can see:
+- Transparency. You can see:
   - what facts MOiRA sought
   - what it found
   - how it found it
@@ -69,7 +69,7 @@ and smart retries.
 - **Encrypted credential storage** — API keys and tool secrets stored encrypted in the database
 - **Semantic tool discovery** — LanceDB embeddings match research queries to relevant tools from the catalog
 - **LLM-powered tool description enrichment** — tool descriptions are automatically expanded for better semantic matching
-- **OpenAPI and Swagger ingestion** — guided wizard parses specs, selects operations, and binds credentials
+- **OpenAPI and Swagger ingestion** — guided wizard parses specs, selects operations, and flags auth requirements for later credential binding
 - **Checkpointed stop and resume** — pause any research run and resume from where it left off
 - **Budget-aware execution** — synthetic budget with per-node cost weights and configurable retry limits
 - **Inference metrics** — token counts, thinking tokens, and timing tracked per model and purpose
@@ -89,7 +89,7 @@ I wanted to:
 
 **What we are trying to achieve**
 
-A research agent whose answers are *more trustworthy than single-pass or multi-pass tool-using agents. 
+A research agent whose answers are *more trustworthy* than single-pass or multi-pass tool-using agents. 
 Specifically:
 
 - Fewer fabricated citations
@@ -102,7 +102,7 @@ Specifically:
 ### Prerequisites
 
 - [Python](https://www.python.org/) >= 3.13
-- [Node.js](https://nodejs.org/) >= 20.19
+- [Node.js](https://nodejs.org/) 20.19+ (LTS) or 22.12+ (LTS)
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
 - An OpenAI-compatible LLM endpoint (e.g., [Ollama](https://ollama.com), [vLLM](https://github.com/vllm-project/vllm), [OpenRouter](https://openrouter.ai))
 

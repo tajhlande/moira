@@ -164,7 +164,7 @@ config/moira-config.yaml
 
 ## External dependencies (not included in Docker)
 
-- **LLM inference endpoints** — already running on `llmhost1.internal.tajh.house`
+- **LLM inference endpoints** — already running on your inference host
 - **SearXNG** — already running as a separate service
 - **Nginx reverse proxy** — already running for TLS termination
 

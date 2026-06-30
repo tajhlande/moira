@@ -31,10 +31,6 @@ I am considering the following:
 
 ##  Recommendations from GPT-5.5:
 
-Conversation history:
-https://chatgpt.com/c/6a2a1fa9-9b90-83ea-8510-0232ffc83bc7
-
-
 - Fact requirement extraction (before research) 
 - Deterministic tool routing from fact type → tool
 - Tool description update - defining tools by the questions they answer
