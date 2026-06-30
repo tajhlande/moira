@@ -92,7 +92,8 @@ These are roughly organized by area and not in a plan order.
 - export and import system settings
 - export and import conversation history
 
-# Cleanup
+# Bugs and cleanup
 
 - Set proper user agent headers for tool calls and inference
 - Replace httpx with httpx2 when huggingface-hub and langgraph-sdk migrate to httpx2
+- Fix Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
