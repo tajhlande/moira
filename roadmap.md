@@ -98,3 +98,7 @@ These are roughly organized by area and not in a plan order.
 - Replace httpx with httpx2 when huggingface-hub and langgraph-sdk migrate to httpx2
 - Fix Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
 - On dev shutdown, UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/loky-80962-3am4i1x0'}
+- `npx vitest run` warning: (node:86890) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+  (Use `node --trace-warnings ...` to show where the warning was created)
+   ✓ src/components/__tests__/StructuredOutputRenderer.spec.ts (16 tests) 37ms
+   ✓ src/components/__tests__/ChatView.spec.ts (12 tests) 289ms
