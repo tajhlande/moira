@@ -7,7 +7,7 @@ from typing import cast
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
-from backend.moira.inference.client import ChatResponse, InferenceClient
+from moira.inference.client import ChatResponse, InferenceClient
 
 logger = logging.getLogger(__name__)
 
