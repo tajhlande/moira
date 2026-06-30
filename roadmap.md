@@ -4,6 +4,10 @@ A set of outstanding features and capabilities to be build into MOiRA.
 
 These are roughly organized by area and not in a plan order.
 
+## Bugs
+
+- Start conversation, leave, return while running - execution time at the bottom says 0:00
+
 ## Major Capabilities
 
 - Classification of wanted facts as a verifiable claim or an opinion/consensus claim,
@@ -19,6 +23,7 @@ These are roughly organized by area and not in a plan order.
 
 ## Content and intelligence
 
+- Handle conflicts by downgrading fact if possible 
 - Include pre-existing facts and conclusions in subsequent conversation input
 - Normalize tool calling to one shape
 - Extract source age from tool output (have tools discover and express source age)

@@ -1,23 +1,51 @@
 # MOiRA
 
+<div align="center">
+<pre>
+
+ ██████   ██████    ███████     ███  ███████████     █████████  
+▒▒██████ ██████   ███▒▒▒▒▒███  ▒▒▒  ▒▒███▒▒▒▒▒███   ███▒▒▒▒▒███ 
+ ▒███▒█████▒███  ███     ▒▒███ ████  ▒███    ▒███  ▒███    ▒███ 
+ ▒███▒▒███ ▒███ ▒███      ▒███▒▒███  ▒██████████   ▒███████████ 
+ ▒███ ▒▒▒  ▒███ ▒███      ▒███ ▒███  ▒███▒▒▒▒▒███  ▒███▒▒▒▒▒███ 
+ ▒███      ▒███ ▒▒███     ███  ▒███  ▒███    ▒███  ▒███    ▒███ 
+ █████     █████ ▒▒▒███████▒   █████ █████   █████ █████   █████
+▒▒▒▒▒     ▒▒▒▒▒    ▒▒▒▒▒▒▒    ▒▒▒▒▒ ▒▒▒▒▒   ▒▒▒▒▒ ▒▒▒▒▒   ▒▒▒▒▒ 
+</pre>
+</div>
+
 MOiRA is a general-purpose research system that can automatically acquire new capabilities through API ingestion.
 
 ## What it can do
 
-**Automatic capability acquisition**
-
-MOiRA has capabilities to automatically register tools from any OpenAPI compatible API. 
-
 **Structured research workflow**
 
 MOiRA generates verified answers to user questions by reasoning about facts and conclusions, with full traceability.
+
+**Automatic capability acquisition**
+
+MOiRA has capabilities to automatically register tools from any OpenAPI compatible API,
+with a guided tool onboarding wizard, and semantig 
 
 **Local-first execution**
 
 MOiRA is built to work with models you can host locally, on a single GPU. It will work with 
 more powerful models, too.
 
-## What problem does MOiRA solve better than existing agents?
+**Multi-provider inference**
+
+Connect local and cloud providers simultaneously; pick the best model for each research conversation.
+
+**Stop and resume** 
+
+Long-running research can be paused and resumed as needed.
+
+**Cost-aware execution** 
+
+The research workflow is limited to a synthetic budget with per-step costs
+and smart retries. 
+
+## What problems does MOiRA solve better than existing agents?
 
 - Reliability. MOiRA:
   - identifies unsupported claims
@@ -37,6 +65,8 @@ more powerful models, too.
 
 ## Why I built this
 
+I wanted to:
+
 * build a research agent
 * learn LangGraph
 * produce something that can pass the Pokemon strategy test (a project I'm doing with my son)
@@ -44,7 +74,8 @@ more powerful models, too.
 
 **What we are trying to achieve**
 
-A research agent whose answers are *more trustworthy than a single-pass tool-using agent*. Specifically:
+A research agent whose answers are *more trustworthy than single-pass or multi-pass tool-using agents. 
+Specifically:
 
 - Fewer fabricated citations
 - Fewer confidently-wrong claims
@@ -64,16 +95,18 @@ Copy it and make changes appropriate to your environment.
 
 The following environment variables are required:
 
-| Environment variable | Description                                               |
-|----------------------|-----------------------------------------------------------|
-| `MOIRA_CONFIG_FILE`  | The path to your configuration file                       |
-| `MOIRA_DATA_DIR`     | The path to the directory where MOiRA will store its data |
+| Environment variable | Description                                                 |
+|----------------------|-------------------------------------------------------------|
+| `MOIRA_CONFIG_FILE`  | The path to your configuration file                         |
+| `MOIRA_DATA_DIR`     | The path to the directory where MOiRA will store its data   |
+| `MOIRA_SECRETS_KEY`  | Encryption key to secure stored credentials in the database |
 
 The following environment variables are optional:
 
 | Environment variable | Description                                                                         |
 |----------------------|-------------------------------------------------------------------------------------|
 | `MOIRA_PROMPT_FILE`  | Path to a markdown file to override the system prompts for each research cycle step |
+| `HF_TOKEN`           | HuggingFace API token, used to check or download the embedding model                |
 
 
 
