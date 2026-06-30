@@ -151,6 +151,15 @@ Specifically:
    cd frontend
    npm run dev
    ```
+**OR**
+
+start both at the same time using the `run.sh` script:
+
+```bash
+./run.sh dev
+```
+
+Use `CTRL-C` to exit. 
 
 8. **Configure an inference provider:**
    Open [http://localhost:5173](http://localhost:5173), then navigate to
