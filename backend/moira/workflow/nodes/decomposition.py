@@ -16,9 +16,9 @@ from moira.prompts import render_prompt
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
     _check_stop,
-    _get_model,
     _now,
     _parse_json_object,
+    _resolve_intelligence,
     _response_meta,
 )
 
@@ -54,8 +54,7 @@ async def decomposition(state: ResearchState, config: RunnableConfig) -> dict:
             },
         }
 
-    registry = _get_model(config)
-    resolved = await registry.resolve("intelligence")
+    resolved = await _resolve_intelligence(config)
     system_prompt = render_prompt("decomposition.system")
     user_prompt = render_prompt("decomposition.user", question=question)
     messages = [

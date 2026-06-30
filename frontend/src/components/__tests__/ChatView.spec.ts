@@ -81,7 +81,20 @@ vi.mock("../../api/client", () => ({
         task: { endpoint: "", model: "" },
       },
     })),
+    getInferenceProviders: vi.fn(async () => ({ providers: [] })),
+    getConversationModel: vi.fn(async () => ({
+      endpoint: "",
+      model: "",
+      overridden: false,
+    })),
+    setConversationModel: vi.fn(async () => ({ endpoint: "", model: "" })),
+    resetConversationModel: vi.fn(async () => ({ status: "reset" })),
     setModelAssignments: vi.fn(async (assignments) => assignments),
+    setModelCapability: vi.fn(async () => ({
+      provider: "",
+      model: "",
+      native_tool_calling: false,
+    })),
     startRun: vi.fn(async () => ({
       run_id: "run-1",
       user_message_id: 1,

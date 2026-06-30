@@ -19,9 +19,9 @@ from moira.workflow.nodes._helpers import (
     _format_established_facts,
     _format_prior_citations,
     _format_prior_conclusions,
-    _get_model,
     _now,
     _parse_json_object,
+    _resolve_intelligence,
     _response_meta,
 )
 
@@ -194,8 +194,7 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
             earlier_turns=earlier_turns,
         )
 
-    registry = _get_model(config)
-    resolved = await registry.resolve("intelligence")
+    resolved = await _resolve_intelligence(config)
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},

@@ -37,9 +37,9 @@ from moira.workflow.nodes._helpers import (
     _format_established_facts,
     _format_prior_citations,
     _format_prior_conclusions,
-    _get_model,
     _now,
     _parse_json_object,
+    _resolve_intelligence,
     _response_meta,
 )
 
@@ -1152,8 +1152,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     last_model_id = ""
     exhausted_rounds = False
 
-    registry = _get_model(config)
-    resolved = await registry.resolve("intelligence")
+    resolved = await _resolve_intelligence(config)
     last_model_id = resolved.model_id
 
     # Select prompts based on tool-calling mode

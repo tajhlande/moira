@@ -202,6 +202,7 @@ class RunManager:
             {
                 "configurable": {
                     "thread_id": resumable_run.thread_id,
+                    "conversation_id": conversation_id,
                     "run_id": run_id,
                     "moira_config": config,
                 },

@@ -226,6 +226,7 @@ async def send_message(
     graph_config = {
         "configurable": {
             "thread_id": thread_id,
+            "conversation_id": conversation_id,
             "moira_config": config,
             "prior_report": prior_report,
             "prior_question": prior_question,
@@ -401,6 +402,7 @@ async def rerun_message(
     graph_config = {
         "configurable": {
             "thread_id": thread_id,
+            "conversation_id": conversation_id,
             "moira_config": config,
             "prior_report": prior_report,
             "prior_question": prior_question,

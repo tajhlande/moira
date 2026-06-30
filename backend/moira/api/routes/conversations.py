@@ -14,6 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from moira.inference.registry import ModelRegistry
 from moira.persistence.interfaces import (
     DEFAULT_USER_ID,
+    ConversationModelOverride,
+    ConversationModelRepository,
     ConversationRepository,
     ModelPreferencesRepository,
     WorkflowRun,
@@ -49,6 +51,13 @@ def _steps_repo():
     from moira.persistence.interfaces import WorkflowStepRepository
 
     return cast(WorkflowStepRepository, service_provider("workflow_step_repository"))
+
+
+def _conversation_model_repo() -> ConversationModelRepository:
+    return cast(
+        ConversationModelRepository,
+        service_provider("conversation_model_repository"),
+    )
 
 
 def _step_tool_call_count(step: WorkflowStep) -> int:
@@ -419,3 +428,81 @@ async def generate_conversation_title(
         "title": updated.title,
         "created_at": updated.created_at,
     }
+
+
+@router.get("/conversations/{conversation_id}/model")
+async def get_conversation_model(conversation_id: str):
+    """Return the effective intelligence model for a conversation.
+
+    If a per-conversation override exists, returns its endpoint + model
+    with ``overridden: true``. Otherwise returns the global default from
+    model_preferences with ``overridden: false``."""
+    conversations = _conversations()
+    conversation = await conversations.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    repo = _conversation_model_repo()
+    override = await repo.get_override(conversation_id)
+
+    if override is not None:
+        return {
+            "endpoint": override.intelligence_endpoint,
+            "model": override.intelligence_model,
+            "overridden": True,
+        }
+
+    prefs = await _prefs().get_preferences(DEFAULT_USER_ID)
+    return {
+        "endpoint": prefs.intelligence_endpoint,
+        "model": prefs.intelligence_model,
+        "overridden": False,
+    }
+
+
+@router.put("/conversations/{conversation_id}/model")
+async def set_conversation_model(conversation_id: str, body: dict[str, Any]):
+    """Set or update the per-conversation intelligence model override."""
+    conversations = _conversations()
+    conversation = await conversations.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    endpoint = body.get("endpoint", "").strip()
+    model = body.get("model", "").strip()
+    if not endpoint or not model:
+        raise HTTPException(status_code=400, detail="endpoint and model are required")
+
+    repo = _conversation_model_repo()
+    await repo.upsert_override(
+        ConversationModelOverride(
+            conversation_id=conversation_id,
+            intelligence_endpoint=endpoint,
+            intelligence_model=model,
+        )
+    )
+    logger.info(
+        "Set conversation %s model override: %s/%s",
+        conversation_id,
+        endpoint,
+        model,
+    )
+    return {"endpoint": endpoint, "model": model}
+
+
+@router.delete("/conversations/{conversation_id}/model")
+async def reset_conversation_model(conversation_id: str):
+    """Remove the per-conversation intelligence model override.
+
+    The conversation will fall back to the global default."""
+    conversations = _conversations()
+    conversation = await conversations.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    repo = _conversation_model_repo()
+    deleted = await repo.delete_override(conversation_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="No model override for this conversation")
+    logger.info("Reset conversation %s model to global default", conversation_id)
+    return {"status": "reset"}

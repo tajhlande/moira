@@ -19,9 +19,9 @@ from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
     _check_stop,
     _format_citation_content,
-    _get_model,
     _now,
     _parse_json_object,
+    _resolve_intelligence,
     _response_meta,
 )
 
@@ -120,8 +120,7 @@ async def research_review(state: ResearchState, config: RunnableConfig) -> dict:
         ),
     )
 
-    registry = _get_model(config)
-    resolved = await registry.resolve("intelligence")
+    resolved = await _resolve_intelligence(config)
     messages = [
         {"role": "system", "content": render_prompt("research_review.system")},
         {"role": "user", "content": user_prompt},

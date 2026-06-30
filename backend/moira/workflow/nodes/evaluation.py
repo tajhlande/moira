@@ -22,9 +22,9 @@ from moira.workflow.budget import can_execute, deduct_cost, get_node_cost
 from moira.workflow.nodes._helpers import (
     _check_stop,
     _format_citation_content,
-    _get_model,
     _now,
     _parse_json_object,
+    _resolve_intelligence,
     _response_meta,
 )
 
@@ -99,8 +99,7 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
         ),
     )
 
-    registry = _get_model(config)
-    resolved = await registry.resolve("intelligence")
+    resolved = await _resolve_intelligence(config)
     messages = [
         {"role": "system", "content": render_prompt("evaluation.system")},
         {"role": "user", "content": user_prompt},

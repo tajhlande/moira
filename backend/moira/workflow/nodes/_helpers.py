@@ -45,6 +45,17 @@ def _get_model(config: RunnableConfig):
     return registry
 
 
+async def _resolve_intelligence(config: RunnableConfig):
+    """Resolve the intelligence model, respecting per-conversation overrides.
+
+    Extracts conversation_id from the graph config and passes it to
+    resolve() so that a conversation-level model override takes precedence
+    over the global default."""
+    registry = _get_model(config)
+    conversation_id = config.get("configurable", {}).get("conversation_id", "")
+    return await registry.resolve("intelligence", conversation_id=conversation_id)
+
+
 def _fix_json_control_chars(text: str) -> str:
     """Escape literal control characters inside JSON string values.
 

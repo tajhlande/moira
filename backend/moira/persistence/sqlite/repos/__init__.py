@@ -6,6 +6,7 @@ after the module was decomposed into a package.
 """
 
 from moira.persistence.sqlite.repos.api_sources import SqliteApiSourceRepository
+from moira.persistence.sqlite.repos.conversation_models import SqliteConversationModelRepository
 from moira.persistence.sqlite.repos.conversations import SqliteConversationRepository
 from moira.persistence.sqlite.repos.credentials import SqliteCredentialRepository
 from moira.persistence.sqlite.repos.inference_metrics import SqliteInferenceMetricsRepository
@@ -18,6 +19,7 @@ from moira.persistence.sqlite.repos.workflow_steps import SqliteWorkflowStepRepo
 
 __all__ = [
     "SqliteApiSourceRepository",
+    "SqliteConversationModelRepository",
     "SqliteConversationRepository",
     "SqliteCredentialRepository",
     "SqliteInferenceMetricsRepository",

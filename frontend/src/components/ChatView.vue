@@ -18,6 +18,7 @@ import {
 import { useDialog } from "naive-ui";
 import RunArtifacts from "./RunArtifacts.vue";
 import MarkdownContent from "./MarkdownContent.vue";
+import ModelSelector from "./ModelSelector.vue";
 import "./workflow-artifacts.css";
 
 const store = useChatStore();
@@ -156,6 +157,10 @@ function confirmRerun(msgId: number) {
 <template>
   <div class="chat-container">
     <div class="chat-header">
+      <ModelSelector
+        :conversation-id="store.currentConversationId || ''"
+        class="header-model-pill"
+      />
       <NText class="chat-title">{{ currentTitle }}</NText>
     </div>
 
@@ -309,11 +314,18 @@ function confirmRerun(msgId: number) {
   padding: 20px 40px 12px;
   border-bottom: 1px solid var(--moira-border, #e0e0e0);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 
 .chat-title {
   font-size: 1.2em;
   font-weight: 600;
+}
+
+.header-model-pill {
+  flex-shrink: 0;
 }
 
 .messages-area {

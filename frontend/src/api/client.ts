@@ -224,6 +224,12 @@ export interface InferenceModelsResponse {
   assignments: ModelAssignments;
 }
 
+export interface ConversationModelResponse {
+  endpoint: string;
+  model: string;
+  overridden: boolean;
+}
+
 export interface RefreshModelsResponse {
   discovered_count: number;
   models: { id: string; endpoint: string }[];
@@ -416,6 +422,29 @@ export const api = {
     }>(`/inference/models/${provider}/${modelId}`, {
       method: "PATCH",
       body: JSON.stringify({ native_tool_calling }),
+    }),
+
+  getConversationModel: (conversationId: string) =>
+    request<ConversationModelResponse>(
+      `/conversations/${conversationId}/model`,
+    ),
+
+  setConversationModel: (
+    conversationId: string,
+    endpoint: string,
+    model: string,
+  ) =>
+    request<{ endpoint: string; model: string }>(
+      `/conversations/${conversationId}/model`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ endpoint, model }),
+      },
+    ),
+
+  resetConversationModel: (conversationId: string) =>
+    request<{ status: string }>(`/conversations/${conversationId}/model`, {
+      method: "DELETE",
     }),
 
   getTools: () =>

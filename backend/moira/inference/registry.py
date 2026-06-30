@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from moira.inference.client import InferenceClient, ModelInfo
 from moira.persistence.interfaces import (
+    ConversationModelRepository,
     InferenceProviderRepository,
     ModelPreferences,
     ModelPreferencesRepository,
@@ -82,11 +83,13 @@ class ModelRegistry:
         prefs_repo: ModelPreferencesRepository,
         user_id: str,
         credential_service=None,
+        conversation_model_repo: ConversationModelRepository | None = None,
     ):
         self._provider_repo = provider_repo
         self._prefs_repo = prefs_repo
         self._user_id = user_id
         self._credential_service = credential_service
+        self._conversation_model_repo = conversation_model_repo
         self._clients: dict[str, InferenceClient] = {}
         self._available_models: list[ModelInfo] = []
         self._provider_errors: dict[str, str] = {}
@@ -360,20 +363,41 @@ class ModelRegistry:
         """Return per-provider discovery errors from the last refresh."""
         return dict(self._provider_errors)
 
-    async def resolve(self, purpose: str) -> ResolvedModel:
+    async def resolve(self, purpose: str, conversation_id: str = "") -> ResolvedModel:
         """Resolve a model for the given purpose (intelligence or task).
+
+        For intelligence, checks conversation-level override first (when
+        conversation_id is provided and a conversation_model_repo is
+        configured), then falls back to global model_preferences.
 
         Reads role assignments from model_preferences (DB), then looks up
         the provider client and capability flags from the DB.
         """
-        logger.debug("Resolving model for purpose '%s'", purpose)
+        logger.debug(
+            "Resolving model for purpose '%s' (conversation_id='%s')",
+            purpose,
+            conversation_id,
+        )
         prefs = await self._prefs_repo.get_preferences(self._user_id)
 
         endpoint_slug = ""
         model_id = ""
         if purpose == "intelligence":
-            endpoint_slug = prefs.intelligence_endpoint
-            model_id = prefs.intelligence_model
+            # Check per-conversation override first
+            if conversation_id and self._conversation_model_repo:
+                override = await self._conversation_model_repo.get_override(conversation_id)
+                if override is not None:
+                    endpoint_slug = override.intelligence_endpoint
+                    model_id = override.intelligence_model
+                    logger.debug(
+                        "Using conversation override: %s/%s",
+                        endpoint_slug,
+                        model_id,
+                    )
+            # Fall back to global default
+            if not endpoint_slug or not model_id:
+                endpoint_slug = prefs.intelligence_endpoint
+                model_id = prefs.intelligence_model
         elif purpose == "task":
             endpoint_slug = prefs.task_endpoint
             model_id = prefs.task_model

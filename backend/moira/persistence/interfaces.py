@@ -227,6 +227,33 @@ class InferenceProviderRepository(ABC):
     ) -> None: ...
 
 
+@dataclass
+class ConversationModelOverride:
+    """Per-conversation intelligence model override.
+
+    When a row exists, its endpoint + model are used instead of the
+    global default from model_preferences. Only intelligence model is
+    stored here — task model is always global."""
+
+    conversation_id: str
+    intelligence_endpoint: str
+    intelligence_model: str
+    updated_at: str = ""
+
+
+class ConversationModelRepository(ABC):
+    """Persistence interface for the conversation_models table."""
+
+    @abstractmethod
+    async def get_override(self, conversation_id: str) -> ConversationModelOverride | None: ...
+
+    @abstractmethod
+    async def upsert_override(self, override: ConversationModelOverride) -> None: ...
+
+    @abstractmethod
+    async def delete_override(self, conversation_id: str) -> bool: ...
+
+
 class ToolRepository(ABC):
     @abstractmethod
     async def get_all_tools(self) -> list[ToolDefinition]: ...

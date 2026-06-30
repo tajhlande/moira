@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 #   "credential_service"                   -> CredentialService
 #   "model_registry"                       -> ModelRegistry
 #   "inference_provider_repository"        -> InferenceProviderRepository
+#   "conversation_model_repository"        -> ConversationModelRepository
 #   "inference_client:{endpoint_name}"     -> InferenceClient (legacy, may not be set)
 #   "embedding_provider"                   -> EmbeddingProvider
 #   "tool_catalog"                         -> ToolCatalog
@@ -111,10 +112,16 @@ async def init_services(
 
     # --- Inference Provider service ---
     clients: dict[str, InferenceClient] = {}
-    from moira.persistence.sqlite.repos import SqliteInferenceProviderRepository
+    from moira.persistence.sqlite.repos import (
+        SqliteConversationModelRepository,
+        SqliteInferenceProviderRepository,
+    )
 
     provider_repo = SqliteInferenceProviderRepository(db_path)
     _services["inference_provider_repository"] = provider_repo
+
+    conversation_model_repo = SqliteConversationModelRepository(db_path)
+    _services["conversation_model_repository"] = conversation_model_repo
 
     cred_service = _services.get("credential_service")
 
@@ -123,6 +130,7 @@ async def init_services(
         prefs_repo=prefs_repo,
         user_id=DEFAULT_USER_ID,
         credential_service=cred_service,
+        conversation_model_repo=conversation_model_repo,
     )
 
     # Load providers from DB and start their clients
