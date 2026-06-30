@@ -13,6 +13,8 @@ usage() {
     echo "  dev             Start backend + frontend dev servers"
     echo "  dev:backend     Start backend only"
     echo "  dev:frontend    Start frontend only"
+    echo "  build           Build frontend for production"
+    echo "  prod            Build frontend + start backend serving everything"
     echo "  test            Run all tests"
     echo "  test:backend    Run backend tests"
     echo "  test:frontend   Run frontend tests"
@@ -85,6 +87,24 @@ cmd_dev_frontend() {
     npm run dev
 }
 
+cmd_build() {
+    echo "=== Building frontend ==="
+    cd "$REPO_ROOT/frontend"
+    npm run build
+    echo "=== Build complete: frontend/dist/ ==="
+}
+
+cmd_prod() {
+    check_config
+    check_data_dir
+    cmd_build
+    echo "=== Starting MOiRA (production mode) ==="
+    cd "$REPO_ROOT/backend"
+    source "$REPO_ROOT/.env"
+    MOIRA_CONFIG_FILE="$CONFIG_FILE" MOIRA_DATA_DIR="$DATA_DIR" MOIRA_SECRETS_KEY="$MOIRA_SECRETS_KEY" \
+        uv run python -m uvicorn moira.main:app --host 0.0.0.0 --port 8000
+}
+
 cmd_test() {
     cmd_test_backend
     cmd_test_frontend
@@ -113,7 +133,7 @@ cmd_lint_backend() {
 
 cmd_lint_frontend() {
     cd "$REPO_ROOT/frontend"
-    npx vue-tsc --noEmit
+    npm run lint
 }
 
 cmd_format() {
@@ -129,7 +149,7 @@ cmd_format_backend() {
 
 cmd_format_frontend() {
     cd "$REPO_ROOT/frontend"
-    npx prettier --write "src/**/*.{ts,vue}"
+    npm run lint:fix
 }
 
 case "${1:-}" in
@@ -137,6 +157,8 @@ case "${1:-}" in
     dev)             cmd_dev ;;
     dev:backend)     cmd_dev_backend ;;
     dev:frontend)    cmd_dev_frontend ;;
+    build)           cmd_build ;;
+    prod)            cmd_prod ;;
     test)            cmd_test ;;
     test:backend)    cmd_test_backend ;;
     test:frontend)   cmd_test_frontend ;;

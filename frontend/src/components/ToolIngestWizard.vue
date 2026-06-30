@@ -160,17 +160,17 @@ let _progressTimer: ReturnType<typeof setTimeout> | null = null;
 
 function startProgress() {
   commitProgress.value = 5;
-  commitPhase.value = COMMIT_PHASES[0].label;
+  commitPhase.value = COMMIT_PHASES[0]!.label;
   let phaseIdx = 0;
 
   const tick = () => {
     if (!committing.value) return;
-    const phase = COMMIT_PHASES[phaseIdx];
+    const phase = COMMIT_PHASES[phaseIdx]!;
     if (commitProgress.value < phase.target) {
       commitProgress.value += 1;
     } else if (phaseIdx < COMMIT_PHASES.length - 1) {
       phaseIdx++;
-      commitPhase.value = COMMIT_PHASES[phaseIdx].label;
+      commitPhase.value = COMMIT_PHASES[phaseIdx]!.label;
     }
     _progressTimer = setTimeout(tick, 300);
   };

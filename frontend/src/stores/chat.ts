@@ -953,6 +953,7 @@ export const useChatStore = defineStore("chat", () => {
     isStepDetailLoading,
     connectGlobalEvents,
     disconnectGlobalEvents,
+    activeRun,
     isConversationRunning,
     runningConversations,
     loadDefaultSettings,

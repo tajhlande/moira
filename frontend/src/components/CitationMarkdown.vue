@@ -29,10 +29,11 @@ function annotateCitations(html: string): string {
         result += html.slice(i);
         break;
       }
-      const tag = html
-        .slice(i + 1, close)
-        .split(/[\s/>]/)[0]
-        .toUpperCase();
+      const tag =
+        html
+          .slice(i + 1, close)
+          .split(/[\s/>]/)[0]
+          ?.toUpperCase() ?? "";
       result += html.slice(i, close + 1);
       i = close + 1;
       // Skip content inside self-closing or void-style tags we want to avoid

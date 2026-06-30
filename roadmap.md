@@ -7,6 +7,7 @@ These are roughly organized by area and not in a plan order.
 ## Bugs
 
 - Start conversation, leave, return while running - execution time at the bottom says 0:00
+- Conversation that has an error, then restarts successfully still has "The research run encountered an error and could not generate a report." messages in it, after the report. 
 
 ## Major Capabilities
 
@@ -43,6 +44,7 @@ These are roughly organized by area and not in a plan order.
 
 ## Built-in Tools
 
+- Ask the user a question tool
 - Try refactoring web_search tool to return only URLs, so that fetch_url is used for content
 - Kagi search tool
 - Wikipedia search
@@ -93,3 +95,4 @@ These are roughly organized by area and not in a plan order.
 # Cleanup
 
 - Set proper user agent headers for tool calls and inference
+- Replace httpx with httpx2 when huggingface-hub and langgraph-sdk migrate to httpx2

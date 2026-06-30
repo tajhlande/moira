@@ -348,7 +348,15 @@
 }
 
 .so-card-code {
-  font-family: var(--moira-font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace);
+  font-family: var(
+    --moira-font-mono,
+    ui-monospace,
+    SFMono-Regular,
+    "SF Mono",
+    Menlo,
+    Consolas,
+    monospace
+  );
   font-size: 0.8em;
   margin: 2px 0 0 0;
   white-space: pre-wrap;
@@ -368,7 +376,15 @@
 }
 
 .so-kv-key {
-  font-family: var(--moira-font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace);
+  font-family: var(
+    --moira-font-mono,
+    ui-monospace,
+    SFMono-Regular,
+    "SF Mono",
+    Menlo,
+    Consolas,
+    monospace
+  );
   font-size: 0.9em;
   color: var(--n-text-color-3, #999);
 }
@@ -686,7 +702,15 @@
 }
 
 .report-raw {
-  font-family: var(--moira-font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace);
+  font-family: var(
+    --moira-font-mono,
+    ui-monospace,
+    SFMono-Regular,
+    "SF Mono",
+    Menlo,
+    Consolas,
+    monospace
+  );
   font-size: 0.93em;
   white-space: pre-wrap;
   word-break: break-word;
@@ -727,7 +751,15 @@
 }
 
 .token-stats {
-  font-family: var(--moira-font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace);
+  font-family: var(
+    --moira-font-mono,
+    ui-monospace,
+    SFMono-Regular,
+    "SF Mono",
+    Menlo,
+    Consolas,
+    monospace
+  );
 }
 
 .run-error {
@@ -742,8 +774,12 @@
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .cite-ref {

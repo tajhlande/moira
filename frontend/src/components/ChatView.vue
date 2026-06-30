@@ -86,7 +86,7 @@ watch(
       const reports =
         scrollContent.value?.querySelectorAll<HTMLElement>(".report-panel");
       if (reports && reports.length > 0) {
-        reports[reports.length - 1].scrollIntoView({
+        reports[reports.length - 1]?.scrollIntoView({
           block: "start",
           behavior: "smooth",
         });

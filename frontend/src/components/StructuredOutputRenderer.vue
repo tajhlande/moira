@@ -94,7 +94,7 @@ const FIELD_REGISTRY: Record<string, FieldSpec> = {
 const props = defineProps<{ so: Record<string, unknown> }>();
 
 function resolveSpec(key: string, value: unknown): FieldSpec {
-  if (key in FIELD_REGISTRY) return FIELD_REGISTRY[key];
+  if (key in FIELD_REGISTRY) return FIELD_REGISTRY[key]!;
   return inferSpec(value);
 }
 

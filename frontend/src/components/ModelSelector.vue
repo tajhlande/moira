@@ -7,7 +7,11 @@ import {
   IconBolt,
   IconBoltOff,
 } from "@tabler/icons-vue";
-import { api, type InferenceProvider, type InferenceModel } from "../api/client";
+import {
+  api,
+  type InferenceProvider,
+  type InferenceModel,
+} from "../api/client";
 import ModelPill from "./ModelPill.vue";
 
 const props = defineProps<{ conversationId: string }>();
@@ -94,7 +98,9 @@ const filteredGroups = computed<GroupedModel[]>(() => {
 });
 
 function isSelected(providerSlug: string, modelId: string): boolean {
-  return providerSlug === currentEndpoint.value && modelId === currentModel.value;
+  return (
+    providerSlug === currentEndpoint.value && modelId === currentModel.value
+  );
 }
 
 function readCapability(providerSlug: string, modelId: string): boolean {
@@ -177,8 +183,7 @@ async function toggleNativeToolCalling() {
     // Update the models list entry so the list below stays in sync
     const m = models.value.find(
       (m) =>
-        m.provider === currentEndpoint.value &&
-        m.id === currentModel.value,
+        m.provider === currentEndpoint.value && m.id === currentModel.value,
     );
     if (m) m.native_tool_calling = newVal;
     emit("changed");

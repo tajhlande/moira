@@ -75,6 +75,25 @@ The system must prioritize:
 - If verification could not be run, say why.
 - Implementation phases are not complete until they run with clean typecheck, lint, and testing for both typescript/frontend and python/backend.
 
+### Commands
+
+**Backend (Python)** — run from `backend/`:
+```
+uv run pytest tests/ -q -x --ignore=tests/test_url_content.py   # tests
+.venv/bin/ruff check                                              # lint
+.venv/bin/ruff format --check                                     # format check
+```
+
+**Frontend (TypeScript)** — run from `frontend/`:
+```
+npm run lint          # type-check (vue-tsc) + prettier --check
+npm run test:unit     # vitest (28 tests)
+npm run build         # full production build (type-check + vite build)
+```
+
+`npm run lint` catches type errors that `npm run test:unit` alone will miss
+(vitest strips types at runtime). Always run `npm run lint` — not just tests.
+
 ## Output Style
 - Be direct.
 - No unnecessary preamble.

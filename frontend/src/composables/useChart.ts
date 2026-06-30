@@ -37,7 +37,7 @@ export function useChart<T extends ChartType>(
     if (!chart) return;
     const next = getConfig();
     chart.data = next.data;
-    chart.options = next.options;
+    chart.options = next.options ?? chart.options;
     chart.update();
   }
 

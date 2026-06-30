@@ -132,7 +132,7 @@ export const useToolsStore = defineStore("tools", () => {
         if (list.length > 0)
           groupLookup.set(g, {
             name: g,
-            display_name: list[0].groupDisplayName,
+            display_name: list[0]!.groupDisplayName,
           });
       }
       Object.assign(tool, apiToolToStore(updated, groupLookup));
@@ -152,7 +152,7 @@ export const useToolsStore = defineStore("tools", () => {
       if (list.length > 0)
         groupLookup.set(g, {
           name: g,
-          display_name: list[0].groupDisplayName,
+          display_name: list[0]!.groupDisplayName,
         });
     }
     for (const info of resp.updated) {

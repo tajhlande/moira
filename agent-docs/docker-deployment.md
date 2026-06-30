@@ -17,14 +17,20 @@
 | `docker-compose.yml` | Single service definition with volume mount, env vars, restart policy |
 | `deploy.sh` | Script for the docker host: build, stop old, start new, health check |
 
-## Code Changes
+## Code Changes (DONE)
+
+All of these are already implemented in `backend/moira/main.py`:
 
 | Change | File | Reason |
 |---|---|---|
-| Mount `StaticFiles` for frontend dist | `backend/moira/main.py` | Serve frontend from same origin as API |
-| Add `/api/health` endpoint | `backend/moira/main.py` | Docker HEALTHCHECK + deploy script verification |
-| Fix `banner.txt` path to use `__file__`-relative resolution | `backend/moira/main.py` | Docker WORKDIR may differ from dev |
-| Update CORS origins comment | `config/moira-config-template.yaml` | Document that same-origin doesn't need CORS |
+| `_resolve_static_dir()` + `SPAStaticFiles` mount | `backend/moira/main.py` | Serve frontend from same origin as API; SPA fallback for client-side routing |
+| `/api/health` endpoint | `backend/moira/main.py` | Docker HEALTHCHECK + deploy script verification |
+| `banner.txt` path via `__file__`-relative resolution | `backend/moira/main.py` | Docker WORKDIR may differ from dev |
+| `MOIRA_STATIC_DIR` env var support | `backend/moira/main.py` | Docker container tells the app where the frontend dist lives |
+
+The Dockerfile must set `MOIRA_STATIC_DIR=/app/static` (see below) so the
+container finds the frontend. Without it, the fallback checks
+`<repo_root>/frontend/dist` which won't exist in the container image.
 
 ## Dockerfile
 
@@ -42,28 +48,28 @@ Multi-stage build:
 - `uv sync --frozen --no-dev`
 - `COPY backend/`
 - `COPY --from=0 /app/frontend/dist/ /app/static/`
+- `ENV MOIRA_STATIC_DIR=/app/static` — so `_resolve_static_dir()` finds the frontend
 - Pre-download `all-MiniLM-L6-v2` sentence-transformers model via a short Python script
   (so first container start doesn't need internet access or a 30s+ download)
 - `EXPOSE 8000`
 - `CMD: uvicorn moira.main:app --host 0.0.0.0 --port 8000`
 
-### Static file serving in main.py
+### Static file serving in main.py (ALREADY IMPLEMENTED)
 
-After building all API routes, mount `StaticFiles` at `/` (catch-all, after API routes):
+`main.py` already has `_resolve_static_dir()` which checks (in order):
+1. `MOIRA_STATIC_DIR` env var → used by Docker
+2. `<repo_root>/frontend/dist` → used by `./run.sh prod` (standalone production build)
 
-```python
-from starlette.staticfiles import StaticFiles
-import os
+And `SPAStaticFiles` (a `StaticFiles` subclass) that returns `index.html` for
+any 404, enabling client-side routing fallback.
 
-static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
-if os.path.isdir(static_dir):
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
-```
+The mount happens LAST in `create_app()` so `/api/...` routes take precedence.
 
-This must be mounted LAST so `/api/...` routes take precedence. `html=True` enables
-serving `index.html` for SPA routing.
+No code changes needed — just set `MOIRA_STATIC_DIR=/app/static` in the Dockerfile.
 
-### Health check endpoint
+### Health check endpoint (ALREADY IMPLEMENTED)
+
+`/api/health` already exists in `main.py`:
 
 ```python
 @app.get("/api/health")
@@ -71,14 +77,9 @@ async def health():
     return {"status": "ok"}
 ```
 
-### Banner path fix
+### Banner path fix (ALREADY IMPLEMENTED)
 
-The banner currently loads via a relative path that assumes CWD is `backend/`.
-Change to use `__file__`-relative resolution:
-
-```python
-banner_path = Path(__file__).parent / "resources" / "banner.txt"
-```
+Already uses `__file__`-relative resolution in `main.py`.
 
 ## docker-compose.yml
 
@@ -95,6 +96,7 @@ services:
     environment:
       - MOIRA_CONFIG_FILE=/app/config/moira-config.yaml
       - MOIRA_DATA_DIR=/app/data
+      - MOIRA_STATIC_DIR=/app/static
       - MOIRA_SECRETS_KEY=${MOIRA_SECRETS_KEY}
     restart: unless-stopped
     healthcheck:

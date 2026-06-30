@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { NMenu } from "naive-ui";
-import { IconSettings, IconChartLine, IconBug, IconCpu } from "@tabler/icons-vue";
+import {
+  IconSettings,
+  IconChartLine,
+  IconBug,
+  IconCpu,
+} from "@tabler/icons-vue";
 import { useRoute, useRouter } from "vue-router";
 import { computed, h } from "vue";
 

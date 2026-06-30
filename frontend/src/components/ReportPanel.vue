@@ -59,6 +59,13 @@ let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
 const fullReportMarkdown = computed(() => buildFullReport());
 
+// Safe accessor for the currently hovered citation — avoids repeated
+// nullable indexing in the template.
+const activeCitation = computed(() => {
+  if (!hoveredCitation.value) return null;
+  return report.value.citations[hoveredCitation.value.index] ?? null;
+});
+
 async function copyAnswer() {
   await navigator.clipboard.writeText(report.value.answer);
   copiedAnswer.value = true;
@@ -380,22 +387,19 @@ function handleTooltipLeave() {
       @mouseleave="handleTooltipLeave"
     >
       <div class="citation-tooltip-source">
-        {{ report.citations[hoveredCitation.index].source }}
+        {{ activeCitation?.source }}
       </div>
       <a
-        v-if="report.citations[hoveredCitation.index].url"
-        :href="report.citations[hoveredCitation.index].url"
+        v-if="activeCitation?.url"
+        :href="activeCitation.url"
         target="_blank"
         rel="noopener noreferrer"
         class="citation-tooltip-url"
       >
-        {{ report.citations[hoveredCitation.index].url }}
+        {{ activeCitation.url }}
       </a>
-      <div
-        v-if="report.citations[hoveredCitation.index].excerpt"
-        class="citation-tooltip-excerpt"
-      >
-        {{ report.citations[hoveredCitation.index].excerpt }}
+      <div v-if="activeCitation?.excerpt" class="citation-tooltip-excerpt">
+        {{ activeCitation.excerpt }}
       </div>
     </div>
   </div>

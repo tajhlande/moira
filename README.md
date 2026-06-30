@@ -106,72 +106,62 @@ Specifically:
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
 - An OpenAI-compatible LLM endpoint (e.g., [Ollama](https://ollama.com), [vLLM](https://github.com/vllm-project/vllm), [OpenRouter](https://openrouter.ai))
 
-### Setup
+### Quickstart
 
 1. **Clone the repository**
 
-2. **Install backend dependencies:**
-   ```bash
-   cd backend
-   uv sync
-   cd ..
-   ```
-
-3. **Install frontend dependencies:**
-   ```bash
-   cd frontend
-   npm install
-   cd ..
-   ```
-
-4. **Create your config file:**
+2. **Create your config file:**
    ```bash
    cp config/moira-config-template.yaml config/moira-config.yaml
    ```
-   The defaults work for local development. See the template for customization options.
 
-5. **Set environment variables:**
+3. **Create a `.env` file** in the repo root:
    ```bash
-   export MOIRA_CONFIG_FILE=/path/to/moira/config/moira-config.yaml
-   export MOIRA_DATA_DIR=/path/to/moira/data
+   cat > .env << 'EOF'
+   export MOIRA_CONFIG_FILE="$(pwd)/config/moira-config.yaml"
+   export MOIRA_DATA_DIR="$(pwd)/data"
    export MOIRA_SECRETS_KEY="$(openssl rand -base64 32)"
+   EOF
+   chmod 600 .env
    ```
+
+   or set the environment variables another way.
+   
    > **Important:** Store `MOIRA_SECRETS_KEY` somewhere safe. It encrypts stored
    > credentials (e.g. inference provider API keys). If it changes, previously stored 
    > credentials become undecryptable.
 
-6. **Start the backend:**
+4. **Install dependencies and start:**
    ```bash
-   cd backend
-   uv run uvicorn moira.main:app --reload
+   ./run.sh setup   # one-time: installs Python + Node dependencies
+   mkdir -p data    # one-time: create the data directory
+   ./run.sh prod    # builds frontend + starts backend on port 8000
    ```
 
-7. **Start the frontend** (in a separate terminal):
-   ```bash
-   cd frontend
-   npm run dev
-   ```
-**OR**
-
-start both at the same time using the `run.sh` script:
-
-```bash
-./run.sh dev
-```
-
-Use `CTRL-C` to exit. 
-
-8. **Configure an inference provider:**
-   Open [http://localhost:5173](http://localhost:5173), then navigate to
+5. **Configure an inference provider:**
+   Open [http://localhost:8000](http://localhost:8000), then navigate to
    **Settings → Inference** to add a provider, discover models, and assign
    intelligence and task roles.
 
-9. **Start researching**
+6. **Start researching** — create a new conversation and ask a question.
 
-Create a new conversation and ask a question.
+### Developer start
 
+For development with hot reload (separate frontend and backend servers):
 
-### Environment configuration 
+1. Follow steps 1–3 in [Quickstart](#quickstart) above.
+
+2. **Start both dev servers:**
+   ```bash
+   ./run.sh dev
+   ```
+
+   This starts the backend on `http://localhost:8000` and the frontend dev server
+   on `http://localhost:5173`. Use `Ctrl-C` to stop.
+
+3. Open [http://localhost:5173](http://localhost:5173).
+
+### Environment configuration
 
 The following environment variables are required:
 

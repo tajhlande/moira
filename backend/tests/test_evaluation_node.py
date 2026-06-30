@@ -133,9 +133,7 @@ class TestEvaluation:
         assert result["execution_state"]["review_count"] == 2
 
     @pytest.mark.asyncio
-    async def test_parse_failure_raises_after_retry(
-        self, config, mock_writer, mock_model
-    ):
+    async def test_parse_failure_raises_after_retry(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(content="not json")
 

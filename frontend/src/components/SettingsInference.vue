@@ -17,7 +17,13 @@ import {
   NPopconfirm,
   useMessage,
 } from "naive-ui";
-import { IconCpu, IconRefresh, IconPlus, IconTrash, IconEdit } from "@tabler/icons-vue";
+import {
+  IconCpu,
+  IconRefresh,
+  IconPlus,
+  IconTrash,
+  IconEdit,
+} from "@tabler/icons-vue";
 import type {
   InferenceProvider,
   InferenceModel,
@@ -66,9 +72,8 @@ function modelOptionsFor(providerName: string) {
 const intelligenceToolCalling = computed(() => {
   const a = assignments.value.intelligence;
   return (
-    models.value.find(
-      (m) => m.provider === a.endpoint && m.id === a.model,
-    )?.native_tool_calling ?? false
+    models.value.find((m) => m.provider === a.endpoint && m.id === a.model)
+      ?.native_tool_calling ?? false
   );
 });
 
@@ -234,10 +239,7 @@ async function updateProvider(
   }
 }
 
-async function updateModel(
-  role: "intelligence" | "task",
-  modelId: string,
-) {
+async function updateModel(role: "intelligence" | "task", modelId: string) {
   const newAssignments = {
     ...assignments.value,
     [role]: { ...assignments.value[role], model: modelId },
@@ -321,22 +323,17 @@ const providerTypeOptions = [
                   >
                     <template #icon><IconRefresh :size="14" /></template>
                   </NButton>
-                  <NButton
-                    size="tiny"
-                    quaternary
-                    @click="openEditProvider(p)"
-                  >
+                  <NButton size="tiny" quaternary @click="openEditProvider(p)">
                     <template #icon><IconEdit :size="14" /></template>
                   </NButton>
-                  <NPopconfirm
-                    @positive-click="removeProvider(p.slug)"
-                  >
+                  <NPopconfirm @positive-click="removeProvider(p.slug)">
                     <template #trigger>
                       <NButton size="tiny" quaternary type="error">
                         <template #icon><IconTrash :size="14" /></template>
                       </NButton>
                     </template>
-                    Remove provider "{{ p.display_name }}" and all its discovered models?
+                    Remove provider "{{ p.display_name }}" and all its
+                    discovered models?
                   </NPopconfirm>
                 </NSpace>
               </div>
@@ -441,7 +438,9 @@ const providerTypeOptions = [
             v-model:value="providerForm.api_key"
             type="password"
             show-password-on="click"
-            :placeholder="editingProvider ? 'Leave blank to keep existing' : 'Optional'"
+            :placeholder="
+              editingProvider ? 'Leave blank to keep existing' : 'Optional'
+            "
           />
         </NFormItem>
         <NFormItem label="Provider Type">

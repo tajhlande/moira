@@ -51,8 +51,8 @@ describe("StructuredOutputRenderer", () => {
     expect(wrapper.text()).toContain("accept");
     const badges = wrapper.findAll(".so-badge");
     expect(badges.length).toBe(2);
-    expect(badges[0].classes()).toContain("success");
-    expect(badges[1].classes()).toContain("success");
+    expect(badges[0]!.classes()).toContain("success");
+    expect(badges[1]!.classes()).toContain("success");
   });
 
   it("renders warning badge for retry routes", () => {

@@ -156,8 +156,7 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
 
     if not parsed or "route" not in parsed:
         logger.error(
-            "EVALUATION: JSON parse failed after %d attempts "
-            "(parsed=%d keys, response=%d chars).",
+            "EVALUATION: JSON parse failed after %d attempts (parsed=%d keys, response=%d chars).",
             call_count,
             len(parsed),
             len(raw),

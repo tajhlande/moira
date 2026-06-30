@@ -141,7 +141,10 @@ function buildToolDatasets(): ChartDataset<"line">[] {
 
   datasets.push({
     label: "Total",
-    data: totalBuckets.map((b) => ({ x: b.date, y: b.count })),
+    data: totalBuckets.map((b) => ({
+      x: b.date,
+      y: b.count,
+    })) as unknown as ChartDataset<"line">["data"],
     borderColor: "#94a3b8",
     backgroundColor: "rgba(148, 163, 184, 0.1)",
     borderWidth: 2,
@@ -154,7 +157,10 @@ function buildToolDatasets(): ChartDataset<"line">[] {
   toolDatasets.forEach((td, i) => {
     datasets.push({
       label: td.name,
-      data: td.buckets.map((b) => ({ x: b.date, y: b.count })),
+      data: td.buckets.map((b) => ({
+        x: b.date,
+        y: b.count,
+      })) as unknown as ChartDataset<"line">["data"],
       borderColor: PALETTE[i % PALETTE.length],
       backgroundColor: PALETTE[i % PALETTE.length] + "1a",
       borderWidth: 2,
@@ -256,7 +262,10 @@ function buildInfDatasets(): ChartDataset<"line">[] {
   return [
     {
       label: "Input Tokens",
-      data: inputBuckets.map((b) => ({ x: b.date, y: b.count })),
+      data: inputBuckets.map((b) => ({
+        x: b.date,
+        y: b.count,
+      })) as unknown as ChartDataset<"line">["data"],
       borderColor: PALETTE[0],
       backgroundColor: PALETTE[0] + "33",
       borderWidth: 2,
@@ -267,7 +276,10 @@ function buildInfDatasets(): ChartDataset<"line">[] {
     },
     {
       label: "Output Tokens",
-      data: outputBuckets.map((b) => ({ x: b.date, y: b.count })),
+      data: outputBuckets.map((b) => ({
+        x: b.date,
+        y: b.count,
+      })) as unknown as ChartDataset<"line">["data"],
       borderColor: PALETTE[1],
       backgroundColor: PALETTE[1] + "33",
       borderWidth: 2,
@@ -278,7 +290,10 @@ function buildInfDatasets(): ChartDataset<"line">[] {
     },
     {
       label: "Thinking Tokens",
-      data: thinkingBuckets.map((b) => ({ x: b.date, y: b.count })),
+      data: thinkingBuckets.map((b) => ({
+        x: b.date,
+        y: b.count,
+      })) as unknown as ChartDataset<"line">["data"],
       borderColor: PALETTE[2],
       backgroundColor: PALETTE[2] + "33",
       borderWidth: 2,
