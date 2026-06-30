@@ -26,6 +26,7 @@ These are roughly organized by area and not in a plan order.
 - Handle conflicts by downgrading fact if possible 
 - Include pre-existing facts and conclusions in subsequent conversation input
 - Normalize tool calling to one shape
+- Source grading and classification (authoritative, consensus, other)
 - Extract source age from tool output (have tools discover and express source age)
 - Reduce tool calling volume
 - Thinking budgets
@@ -49,14 +50,14 @@ These are roughly organized by area and not in a plan order.
 - Wolfram Alpha
 - OpenAlex
 - Wikidata
+- Pluggable document storage and retrieval
 
 ## Deployment
 
-- README improvements
+- Create publishable build with front-end served by uvicorn
 - Docker container
 - Docker compose
 - Packaged releases
-- Quickstart and onboarding
 - A graphic logo
 
 ## Identity and security
@@ -73,16 +74,14 @@ These are roughly organized by area and not in a plan order.
 - UI Themes
   - light/dark/system theme application
   - built in
-  - installable third party packaged themes
+  - installable third-party packaged themes
 - Organization for conversations
   - chronological
   - search
-- Latex rendering support
-- toggle Markdown rich text/source on report
-- paragraph spacing issues in report
+- Katex rendering support
 - render images from web content
 - suggested follow-up prompts
-- Share links
+- Share links (should work now)
 - export and import of tool groups
 - fix horizontal divider line styling at joints
 - make "additional sources" block collapsed by default
