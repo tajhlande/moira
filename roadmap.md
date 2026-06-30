@@ -97,3 +97,4 @@ These are roughly organized by area and not in a plan order.
 - Set proper user agent headers for tool calls and inference
 - Replace httpx with httpx2 when huggingface-hub and langgraph-sdk migrate to httpx2
 - Fix Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+- On dev shutdown, UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/loky-80962-3am4i1x0'}
