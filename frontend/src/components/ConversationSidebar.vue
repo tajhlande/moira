@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { NButton, NScrollbar, NInput, useDialog } from "naive-ui";
+import { NButton, NScrollbar, NInput, NPopover, useDialog } from "naive-ui";
 import {
   IconPencil,
   IconCheck,
   IconSparkles,
   IconTrash,
   IconHandStop,
+  IconDotsVertical,
 } from "@tabler/icons-vue";
 import { useChatStore } from "../stores/chat";
 import { useRouter } from "vue-router";
@@ -144,30 +145,6 @@ function hasMessages(conversationId: string): boolean {
             <span class="conv-title">{{ conversation.title }}</span>
             <span class="conv-actions">
               <NButton
-                quaternary
-                circle
-                size="small"
-                @click.stop="startEdit(conversation)"
-                class="icon-btn"
-              >
-                <template #icon>
-                  <IconPencil :size="18" />
-                </template>
-              </NButton>
-              <NButton
-                quaternary
-                circle
-                size="small"
-                :disabled="!hasMessages(conversation.id)"
-                :loading="generatingTitleId === conversation.id"
-                @click.stop="handleGenerateTitle(conversation.id)"
-                class="icon-btn"
-              >
-                <template #icon>
-                  <IconSparkles :size="18" />
-                </template>
-              </NButton>
-              <NButton
                 v-if="store.isConversationRunning(conversation.id)"
                 quaternary
                 circle
@@ -179,18 +156,61 @@ function hasMessages(conversationId: string): boolean {
                   <IconHandStop :size="18" />
                 </template>
               </NButton>
-              <NButton
-                v-else
-                quaternary
-                circle
-                size="small"
-                @click.stop="handleDelete(conversation.id)"
-                class="icon-btn icon-btn-delete"
-              >
-                <template #icon>
-                  <IconTrash :size="18" />
+              <NPopover trigger="click" placement="right" :show-arrow="false">
+                <template #trigger>
+                  <NButton
+                    quaternary
+                    circle
+                    size="small"
+                    @click.stop
+                    class="icon-btn"
+                  >
+                    <template #icon>
+                      <IconDotsVertical :size="18" />
+                    </template>
+                  </NButton>
                 </template>
-              </NButton>
+                <div class="conv-menu">
+                  <NButton
+                    quaternary
+                    circle
+                    size="small"
+                    @click.stop="startEdit(conversation)"
+                    class="icon-btn"
+                    title="Rename"
+                  >
+                    <template #icon>
+                      <IconPencil :size="18" />
+                    </template>
+                  </NButton>
+                  <NButton
+                    quaternary
+                    circle
+                    size="small"
+                    :disabled="!hasMessages(conversation.id)"
+                    :loading="generatingTitleId === conversation.id"
+                    @click.stop="handleGenerateTitle(conversation.id)"
+                    class="icon-btn"
+                    title="Generate title"
+                  >
+                    <template #icon>
+                      <IconSparkles :size="18" />
+                    </template>
+                  </NButton>
+                  <NButton
+                    quaternary
+                    circle
+                    size="small"
+                    @click.stop="handleDelete(conversation.id)"
+                    class="icon-btn icon-btn-delete"
+                    title="Delete"
+                  >
+                    <template #icon>
+                      <IconTrash :size="18" />
+                    </template>
+                  </NButton>
+                </div>
+              </NPopover>
             </span>
           </div>
         </div>
@@ -267,6 +287,12 @@ function hasMessages(conversationId: string): boolean {
   align-items: center;
   gap: 0;
   flex-shrink: 0;
+}
+
+.conv-menu {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .icon-btn {
