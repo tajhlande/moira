@@ -117,14 +117,14 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
         temperature=DEFAULT_TEMPERATURE,
     )
 
-    raw = response.content or ""
+    raw = (response.content or "") if response else ""
     thinking = getattr(response, "thinking", "") or ""
     new_budget = deduct_cost(es["step_costs"], NODE_NAME, es["budget_remaining"])
     # Charge for retry calls too
     if call_count > 1:
         new_budget = deduct_cost(es["step_costs"], NODE_NAME, new_budget)
 
-    detail = {
+    detail: dict[str, object] = {
         "prompt": user_prompt,
         "response": raw,
         "model": resolved.model_id,

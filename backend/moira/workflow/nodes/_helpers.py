@@ -7,6 +7,8 @@ from typing import cast
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
+from backend.moira.inference.client import ChatResponse, InferenceClient
+
 logger = logging.getLogger(__name__)
 
 
@@ -318,14 +320,14 @@ def _parse_json_object(text: str) -> dict:
 
 
 async def _call_for_json(
-    client,
+    client: InferenceClient,
     model_id: str,
     messages: list[dict],
     required_key: str,
     node_name: str,
     *,
     temperature: float = 0.7,
-) -> tuple[dict, object, int]:
+) -> tuple[dict, ChatResponse | None, int]:
     """Call the model and parse JSON, retrying once on parse failure.
 
     Returns ``(parsed_dict, response, call_count)``.
