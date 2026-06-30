@@ -1,52 +1,14 @@
 # MOiRA Configuration Template
 #
-# Copy this file to moira-config.yaml and edit it.
+# Copy this file to moira-config.yaml and edit it as needed.
 # Set MOIRA_CONFIG_FILE to point to your moira-config.yaml before starting the app.
-#
-# NOTE: This template will mutate across phases as new features are built.
-# If you edited your config in a prior phase, you may need to re-merge
-# against the updated template after upgrading.
 
-# --- Database ---
-# Override the database directory with MOIRA_DATA_DIR env var.
-# If set, the database file is $MOIRA_DATA_DIR/moira.db and sqlite_path below is ignored.
-database:
-  sqlite_path: ./data/moira.db
-  lancedb_path: ./data/vectors
-
-# --- Budget (consumed by Phase 2 workflow) ---
-
-budget:
-  default_limit: 60
-  cost_weights:
-    decomposition: 2
-    tool_identification: 1
-    planning: 2
-    research: 10
-    synthesis: 5
-    research_review: 3
-    evaluation: 5
-    report_generation: 3  # budget-exempt: tracked for accounting, never gates execution
-  # Retry limits are also configurable via system settings (retry.max_review,
-  # retry.max_evaluation). Settings take precedence over these file values.
-  retry_limits:
-    max_review: 3       # max research_review cycles per evaluation cycle
-    max_evaluation: 2   # max evaluation cycles per research run
-
-# --- Inference ---
-#
-# Inference providers are configured at runtime via the UI or API.
-# Navigate to Settings > Inference to add providers, discover models,
-# and assign roles. See agent-docs/inference-settings-migration.md for
-# details.
-
-# --- Embeddings (Phase 2) ---
+# --- Embeddings ---
 #
 # Embeddings are used for semantic tool discovery (vector search over tool
-# descriptions in LanceDB). This is separate from inference providers above
-# — inference providers serve chat completions (LLM responses), while the
+# descriptions in LanceDB). This is separate from inference providers —
+# inference providers serve chat completions (LLM responses), while the
 # embedding provider converts text to vectors for similarity search.
-# They can point at different backends.
 
 embedding:
   provider: local  # local | openai_compatible
@@ -54,35 +16,6 @@ embedding:
   # For openai_compatible:
   # endpoint: "http://localhost:8080/v1"
   # model: text-embedding-small
-
-# --- Tools (Phase 2) ---
-
-tools: []
-  # - name: web_search
-  #   description: "Search the web for information"
-  #   endpoint: "https://api.example.com/search"
-  #   method: POST
-  #   argument_schema:
-  #     type: object
-  #     properties:
-  #       query:
-  #         type: string
-  #     required: [query]
-  #   tags: [web, search]
-  #   reliability: high
-
-# Built-in tools (web_search, url_content, calculator) are seeded
-# automatically. To configure the web_search tool's SearXNG instance,
-# set the searxng_base_url in the tool's config via the API:
-#
-#   PATCH /api/tools/web_search
-#   { "config": { "searxng_base_url": "http://localhost:8888" } }
-
-# --- MCP Servers (Phase 3) ---
-
-mcp_servers: []
-  # - name: filesystem
-  #   address: "http://localhost:3001"
 
 # --- Application ---
 
