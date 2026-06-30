@@ -101,14 +101,58 @@ Specifically:
 
 ### Prerequisites
 
-- [Python](https://www.python.org/) >= 3.13
-- [Node.js](https://nodejs.org/) 20.19+ (LTS) or 22.12+ (LTS)
-- [uv](https://docs.astral.sh/uv/) (Python package manager)
 - An OpenAI-compatible LLM endpoint (e.g., [Ollama](https://ollama.com), [vLLM](https://github.com/vllm-project/vllm), [OpenRouter](https://openrouter.ai))
 
-### Quickstart
+Choose one of the three quickstart paths below.
 
-1. **Clone the repository**
+### Docker quickstart
+
+> Requires: [Docker](https://docs.docker.com/get-docker/) with the Compose plugin.
+
+1. **Clone the repository** (you only need `docker-compose.yml` and the config template).
+
+2. **Create your config file:**
+   ```bash
+   cp config/moira-config-template.yaml config/moira-config.yaml
+   ```
+
+3. **Create a `.env` file** in the repo root:
+   ```bash
+   cat > .env << 'EOF'
+   MOIRA_SECRETS_KEY=$(openssl rand -base64 32)
+   EOF
+   ```
+   Replace the `$(...)` with an actual generated key — Docker Compose does not
+   expand command substitutions in `.env` files.
+
+   > **Important:** Store `MOIRA_SECRETS_KEY` somewhere safe. It encrypts stored
+   > credentials (e.g. inference provider API keys). If it changes, previously stored
+   > credentials become undecryptable.
+
+4. **Pull and start:**
+   ```bash
+   docker compose pull
+   docker compose up -d
+   ```
+
+   To build from source instead: `docker compose build && docker compose up -d`.
+
+5. **Configure an inference provider:**
+   Open [http://localhost:8000](http://localhost:8000), then navigate to
+   **Settings → Inference** to add a provider, discover models, and assign
+   intelligence and task roles.
+
+6. **Start researching** — create a new conversation and ask a question.
+
+### Local production quickstart
+
+> Requirements:
+> - [Python](https://www.python.org/) >= 3.13
+> - [Node.js](https://nodejs.org/) 20.19+ (LTS) or 22.12+ (LTS)
+> - [uv](https://docs.astral.sh/uv/) (Python package manager)
+
+
+1. **Clone the repository.**
 
 2. **Create your config file:**
    ```bash
@@ -125,10 +169,8 @@ Specifically:
    chmod 600 .env
    ```
 
-   or set the environment variables another way.
-   
    > **Important:** Store `MOIRA_SECRETS_KEY` somewhere safe. It encrypts stored
-   > credentials (e.g. inference provider API keys). If it changes, previously stored 
+   > credentials (e.g. inference provider API keys). If it changes, previously stored
    > credentials become undecryptable.
 
 4. **Install dependencies and start:**
@@ -145,11 +187,11 @@ Specifically:
 
 6. **Start researching** — create a new conversation and ask a question.
 
-### Developer start
+### Local development quickstart
 
-For development with hot reload (separate frontend and backend servers):
+> Requires: same as [Local production quickstart](#local-production-quickstart).
 
-1. Follow steps 1–3 in [Quickstart](#quickstart) above.
+1. Follow steps 1–3 in [Local production quickstart](#local-production-quickstart) above.
 
 2. **Start both dev servers:**
    ```bash
