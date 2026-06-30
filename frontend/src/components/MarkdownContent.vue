@@ -37,14 +37,10 @@ function handleClick(e: MouseEvent) {
   if (!block) return;
 
   const raw = block.getAttribute("data-raw") || "";
-  // Decode HTML entities back to plain text for clipboard
-  const decoded = raw
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"');
+  // getAttribute() already decodes HTML entities that were encoded in
+  // markdown.ts (wrapHighlightedCode) when building the data-raw attribute.
 
-  navigator.clipboard.writeText(decoded).then(() => {
+  navigator.clipboard.writeText(raw).then(() => {
     btn.textContent = "Copied!";
     setTimeout(() => {
       btn.textContent = "Copy";
