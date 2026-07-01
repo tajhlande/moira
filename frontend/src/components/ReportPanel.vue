@@ -7,6 +7,8 @@ import {
   IconMarkdown,
   IconFileTypography,
   IconAlertTriangle,
+  IconChevronDown,
+  IconChevronRight,
 } from "@tabler/icons-vue";
 import type { ResearchReport } from "../api/client";
 import MarkdownContent from "./MarkdownContent.vue";
@@ -56,6 +58,20 @@ const hoveredCitation = ref<{ index: number; x: number; y: number } | null>(
   null,
 );
 let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
+const expandedCitations = ref<Set<number>>(new Set());
+
+const showUncited = ref(false);
+
+function toggleCitation(index: number) {
+  if (expandedCitations.value.has(index)) {
+    expandedCitations.value.delete(index);
+  } else {
+    expandedCitations.value.add(index);
+  }
+  // Trigger reactivity for Set mutation
+  expandedCitations.value = new Set(expandedCitations.value);
+}
 
 const fullReportMarkdown = computed(() => buildFullReport());
 
@@ -228,28 +244,48 @@ function handleTooltipLeave() {
           :key="ci"
           :id="'cite-' + (ci + 1)"
         >
-          {{ c.source }}
-          <a
-            v-if="c.url"
-            :href="c.url"
-            target="_blank"
-            rel="noopener noreferrer"
-            >{{ c.url }}</a
-          >
-          <span
-            v-if="c.snippets && c.snippets.length"
-            class="citation-snippets"
+          <div class="citation-row">
+            <span class="citation-label">
+              {{ c.source }}
+              <a
+                v-if="c.url"
+                :href="c.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                >{{ c.url }}</a
+              >
+            </span>
+            <button
+              v-if="(c.snippets && c.snippets.length) || c.excerpt"
+              class="citation-toggle"
+              @click="toggleCitation(ci)"
+            >
+              <IconChevronDown v-if="expandedCitations.has(ci)" :size="16" />
+              <IconChevronRight v-else :size="16" />
+            </button>
+          </div>
+          <div
+            v-if="
+              expandedCitations.has(ci) &&
+              ((c.snippets && c.snippets.length) || c.excerpt)
+            "
+            class="citation-snippet-area"
           >
             <span
-              v-for="(s, si) in c.snippets"
-              :key="si"
-              class="citation-snippet"
-              >{{ s }}</span
+              v-if="c.snippets && c.snippets.length"
+              class="citation-snippets"
             >
-          </span>
-          <span v-else-if="c.excerpt" class="citation-excerpt">{{
-            c.excerpt
-          }}</span>
+              <span
+                v-for="(s, si) in c.snippets"
+                :key="si"
+                class="citation-snippet"
+                >{{ s }}</span
+              >
+            </span>
+            <span v-else-if="c.excerpt" class="citation-excerpt">{{
+              c.excerpt
+            }}</span>
+          </div>
         </li>
       </ol>
     </div>
@@ -258,13 +294,19 @@ function handleTooltipLeave() {
       v-if="report.uncited_sources.length > 0"
       class="report-secondary-section report-uncited-sources"
     >
-      <h4>
-        Additional Sources
-        <span class="uncited-count"
-          >({{ report.uncited_sources.length }} consulted, not cited)</span
-        >
+      <h4 class="collapsible-header" @click="showUncited = !showUncited">
+        <span class="collapsible-header-label">
+          Additional Sources
+          <span class="uncited-count"
+            >({{ report.uncited_sources.length }} consulted, not cited)</span
+          >
+        </span>
+        <button class="section-toggle">
+          <IconChevronDown v-if="showUncited" :size="18" />
+          <IconChevronRight v-else :size="18" />
+        </button>
       </h4>
-      <ul>
+      <ul v-if="showUncited">
         <li
           v-for="(c, ci) in report.uncited_sources"
           :key="ci"

@@ -633,6 +633,38 @@
   font-size: 0.9em;
 }
 
+.citation-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.citation-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.citation-toggle {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  color: var(--n-text-color-3, #999);
+  opacity: 0.6;
+}
+
+.citation-toggle:hover {
+  opacity: 1;
+  color: var(--n-primary-color);
+}
+
+.citation-snippet-area {
+  margin-top: 4px;
+}
+
 .citation-snippets {
   display: flex;
   flex-direction: column;
@@ -658,6 +690,29 @@
   font-weight: 400;
   text-transform: none;
   letter-spacing: 0;
+}
+
+.collapsible-header {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+}
+
+.collapsible-header-label {
+  flex: 1;
+}
+
+.section-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  color: inherit;
+  flex-shrink: 0;
 }
 
 .uncited-source {
