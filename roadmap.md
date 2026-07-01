@@ -82,9 +82,7 @@ These are roughly organized by area and not in a plan order.
 - Share links (should work now)
 - export and import of tool groups
 - fix horizontal divider line styling at joints
-- make "additional sources" block collapsed by default
-- in conversation list, put individual buttons in a popup menu to make more room for titles
-- in sources list, put web search snippets in chevron collapsible area
+
 - export and import system settings
 - export and import conversation history
 
