@@ -1,5 +1,6 @@
 import { Marked } from "marked";
 import markedShiki from "marked-shiki";
+import markedKatex from "marked-katex-extension";
 import { createHighlighter } from "shiki";
 
 import langBash from "@shikijs/langs/bash";
@@ -136,6 +137,14 @@ export async function initMarked(): Promise<Marked> {
           return wrapHighlightedCode(html, code, resolvedLang);
         },
         container: "%s",
+      }),
+    );
+
+    // KaTeX math rendering: handles $...$ (inline) and $$...$$ (display).
+    // throwOnError:false renders raw LaTeX on parse error instead of crashing.
+    md.use(
+      markedKatex({
+        throwOnError: false,
       }),
     );
 

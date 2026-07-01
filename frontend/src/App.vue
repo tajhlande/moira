@@ -4,6 +4,7 @@ import { provide, ref } from "vue";
 import { RouterView } from "vue-router";
 import AppLayout from "./components/AppLayout.vue";
 import "./themes/default-light/style.css";
+import "katex/dist/katex.min.css";
 
 const isDark = ref(false);
 provide("isDark", isDark);

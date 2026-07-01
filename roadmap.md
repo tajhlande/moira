@@ -76,7 +76,6 @@ These are roughly organized by area and not in a plan order.
 - Organization for conversations
   - chronological
   - search
-- Katex rendering support
 - render images from web content
 - suggested follow-up prompts
 - Share links (should work now)
