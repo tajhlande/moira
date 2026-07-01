@@ -117,6 +117,65 @@ def _fix_json_control_chars(text: str) -> str:
     return "".join(result)
 
 
+def _fix_invalid_escapes(text: str) -> str:
+    r"""Double-escape invalid backslash escapes inside JSON string values.
+
+    JSON (RFC 8259 § 7) permits only these escape sequences inside strings:
+    ``\"  \\  \/  \b  \f  \n  \r  \t  \uXXXX``.
+
+    Models frequently emit LaTeX commands (``\sim``, ``\psi``, ``\infty``),
+    regex patterns (``\d``, ``\w``), or Windows paths (``\Users``) inside JSON
+    string values without escaping the backslash.  Python's ``json.loads``
+    rejects any ``\X`` where *X* is not in the allowed set, causing the entire
+    object to fail parsing.
+
+    This function scans inside JSON string values and replaces every invalid
+    ``\X`` with ``\\X`` (a properly escaped backslash followed by the literal
+    character).  Valid escape sequences and structural text outside strings
+    are left untouched.
+
+    On already-valid JSON this is a no-op.
+    """
+    _VALID_ESCAPES = frozenset('"\\/bfnrtu')
+    result: list[str] = []
+    in_string = False
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if not in_string:
+            result.append(ch)
+            if ch == '"':
+                in_string = True
+            i += 1
+            continue
+        # Inside a JSON string
+        if ch != "\\":
+            result.append(ch)
+            if ch == '"':
+                in_string = False
+            i += 1
+            continue
+        # ch is a backslash inside a string — check what follows
+        if i + 1 < n:
+            next_ch = text[i + 1]
+            if next_ch in _VALID_ESCAPES:
+                # Valid escape — pass through both characters unchanged
+                result.append(ch)
+                result.append(next_ch)
+            else:
+                # Invalid escape — double-escape the backslash so json.loads
+                # interprets it as a literal backslash followed by the char
+                result.append("\\\\")
+                result.append(next_ch)
+            i += 2
+        else:
+            # Lone trailing backslash — pass through as-is
+            result.append(ch)
+            i += 1
+    return "".join(result)
+
+
 def _strip_trailing_commas(text: str) -> str:
     """Remove trailing commas before ``}`` or ``]``.
 
@@ -243,7 +302,7 @@ def _try_parse_json(text: str) -> dict | None:
     except json.JSONDecodeError:
         pass
     # Apply repairs incrementally so we can see which one helped
-    for repair in (_strip_trailing_commas, _fix_double_braces):
+    for repair in (_strip_trailing_commas, _fix_double_braces, _fix_invalid_escapes):
         repaired = repair(text)
         if repaired != text:
             try:
@@ -252,8 +311,8 @@ def _try_parse_json(text: str) -> dict | None:
                     return result
             except json.JSONDecodeError:
                 pass
-    # Apply both repairs together as a last resort
-    repaired = _fix_double_braces(_strip_trailing_commas(text))
+    # Apply all repairs together as a last resort
+    repaired = _fix_invalid_escapes(_fix_double_braces(_strip_trailing_commas(text)))
     if repaired != text:
         try:
             result = json.loads(repaired)
@@ -288,6 +347,10 @@ def _parse_json_object(text: str) -> dict:
     # Repair literal control characters inside JSON string values.
     # No-op on valid JSON; fixes broken JSON from quantized models.
     text = _fix_json_control_chars(text)
+    # Repair invalid escape sequences (e.g. \sim, \psi from LaTeX).
+    # No-op on valid JSON; fixes broken JSON from models that forget to
+    # double-escape backslashes inside string values.
+    text = _fix_invalid_escapes(text)
 
     # Strategy 1: direct parse
     parsed = _try_parse_json(text)

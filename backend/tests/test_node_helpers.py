@@ -213,3 +213,104 @@ class TestParseJsonObject:
         # because the {{ }} is inside a string value.
         result = _fix_double_braces(text)
         assert result == text
+
+
+class TestFixInvalidEscapes:
+    """Unit tests for the invalid-escape-sequence repair utility."""
+
+    def test_noop_on_valid_json(self):
+        """Already-valid JSON should pass through unchanged."""
+        from moira.workflow.nodes._helpers import _fix_invalid_escapes
+
+        valid = '{"answer": "hello\\nworld", "x": 1}'
+        assert _fix_invalid_escapes(valid) == valid
+
+    def test_preserves_valid_escape_sequences(self):
+        """All RFC 8259 escape sequences must be preserved."""
+        from moira.workflow.nodes._helpers import _fix_invalid_escapes
+
+        valid = '{"a": "\\t\\n\\r\\b\\f\\\\\\"\\/", "b": "\\u0041"}'
+        assert _fix_invalid_escapes(valid) == valid
+
+    def test_preserves_escaped_backslash(self):
+        r"""An escaped backslash (\\) must not be double-treated."""
+        from moira.workflow.nodes._helpers import _fix_invalid_escapes
+
+        # \\s in JSON means a literal backslash followed by s.
+        # The function must leave it as-is.
+        valid = '{"a": "\\\\sim"}'
+        assert _fix_invalid_escapes(valid) == valid
+
+    def test_repairs_latex_sim(self):
+        r"""\sim (invalid escape \s) becomes \\sim."""
+        from moira.workflow.nodes._helpers import _fix_invalid_escapes
+
+        broken = '{"a": "\\sim"}'
+        fixed = _fix_invalid_escapes(broken)
+        assert fixed == '{"a": "\\\\sim"}'
+
+    def test_repairs_latex_psi(self):
+        r"""\psi (invalid escape \p) becomes \\psi."""
+        from moira.workflow.nodes._helpers import _fix_invalid_escapes
+
+        broken = '{"a": "\\psi_0(x)"}'
+        fixed = _fix_invalid_escapes(broken)
+        assert fixed == '{"a": "\\\\psi_0(x)"}'
+
+    def test_repairs_latex_infty(self):
+        r"""\infty (invalid escape \i) becomes \\infty."""
+        from moira.workflow.nodes._helpers import _fix_invalid_escapes
+
+        broken = '{"a": "x \\to \\infty"}'
+        fixed = _fix_invalid_escapes(broken)
+        # \t is valid (tab), so \to passes through; \i is invalid, becomes \\i
+        assert fixed == '{"a": "x \\to \\\\infty"}'
+
+    def test_does_not_touch_outside_strings(self):
+        """Backslashes outside JSON strings should not be modified."""
+        from moira.workflow.nodes._helpers import _fix_invalid_escapes
+
+        # No string context here — just structural text
+        text = '{"regex": "pattern"}'
+        assert _fix_invalid_escapes(text) == text
+
+    def test_parse_succeeds_after_repair(self):
+        """End-to-end: json.loads should succeed after repair."""
+
+        from moira.workflow.nodes._helpers import _fix_invalid_escapes
+
+        broken = '{"answer": "$x \\sim y$", "n": 1}'
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(broken)
+        fixed = _fix_invalid_escapes(broken)
+        result = json.loads(fixed)
+        assert result["answer"] == "$x \\sim y$"
+        assert result["n"] == 1
+
+    def test_parse_json_object_with_latex(self):
+        """Full pipeline: _parse_json_object must handle LaTeX escapes."""
+        from moira.workflow.nodes._helpers import _parse_json_object
+
+        text = '{"answer": "The function $\\psi_0(x) \\sim x$ decays as $x \\to \\infty$", "n": 1}'
+        result = _parse_json_object(text)
+        assert result["n"] == 1
+        assert "\\sim" in result["answer"]
+        assert "\\infty" in result["answer"]
+
+    def test_multiple_invalid_escapes(self):
+        """Multiple invalid escapes in the same string are all fixed."""
+        from moira.workflow.nodes._helpers import _fix_invalid_escapes
+
+        broken = '{"a": "\\sim \\psi \\infty \\zeta"}'
+        fixed = _fix_invalid_escapes(broken)
+        # Re-parse to verify validity
+        result = json.loads(fixed)
+        assert result["a"] == "\\sim \\psi \\infty \\zeta"
+
+    def test_backslash_at_end_of_string_value(self):
+        r"""A backslash just before the closing quote (\") is a valid escape
+        and must not be double-escaped."""
+        from moira.workflow.nodes._helpers import _fix_invalid_escapes
+
+        valid = '{"a": "say \\""}'
+        assert _fix_invalid_escapes(valid) == valid
