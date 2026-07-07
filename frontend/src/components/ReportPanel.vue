@@ -2,8 +2,6 @@
 import { ref, computed } from "vue";
 import { NButton } from "naive-ui";
 import {
-  IconCopy,
-  IconCircleCheck,
   IconMarkdown,
   IconFileTypography,
   IconAlertTriangle,
@@ -13,6 +11,7 @@ import {
 import type { ResearchReport } from "../api/client";
 import MarkdownContent from "./MarkdownContent.vue";
 import CitationMarkdown from "./CitationMarkdown.vue";
+import CopyButton from "./CopyButton.vue";
 import "./workflow-artifacts.css";
 
 const props = defineProps<{ report: ResearchReport }>();
@@ -50,8 +49,6 @@ const warningMessage = computed(() => {
   }
   return null;
 });
-const copiedAnswer = ref(false);
-const copiedFull = ref(false);
 const showRaw = ref(false);
 
 const hoveredCitation = ref<{ index: number; x: number; y: number } | null>(
@@ -81,14 +78,6 @@ const activeCitation = computed(() => {
   if (!hoveredCitation.value) return null;
   return report.value.citations[hoveredCitation.value.index] ?? null;
 });
-
-async function copyAnswer() {
-  await navigator.clipboard.writeText(report.value.answer);
-  copiedAnswer.value = true;
-  setTimeout(() => {
-    copiedAnswer.value = false;
-  }, 1500);
-}
 
 function buildFullReport(): string {
   const parts: string[] = [report.value.answer];
@@ -141,14 +130,6 @@ function buildFullReport(): string {
       parts.push(`- ${f.subject}: ${f.fact_needed}`);
   }
   return parts.join("\n");
-}
-
-async function copyFullReport() {
-  await navigator.clipboard.writeText(buildFullReport());
-  copiedFull.value = true;
-  setTimeout(() => {
-    copiedFull.value = false;
-  }, 1500);
 }
 
 function handleAnswerMouseOver(e: MouseEvent) {
@@ -222,18 +203,7 @@ function handleTooltipLeave() {
           <IconMarkdown v-else :size="14" />
         </template>
       </NButton>
-      <NButton
-        quaternary
-        circle
-        size="tiny"
-        class="icon-action-btn"
-        @click="showRaw ? copyFullReport() : copyAnswer()"
-      >
-        <template #icon>
-          <IconCopy v-if="!(showRaw ? copiedFull : copiedAnswer)" :size="14" />
-          <IconCircleCheck v-else :size="14" />
-        </template>
-      </NButton>
+      <CopyButton :text="showRaw ? buildFullReport() : report.answer" />
     </div>
 
     <div v-if="report.citations.length > 0" class="report-secondary-section">
@@ -404,18 +374,7 @@ function handleTooltipLeave() {
       <span class="budget-consumed">
         Budget consumed: {{ report.total_cost.toFixed(0) }}
       </span>
-      <NButton
-        quaternary
-        circle
-        size="tiny"
-        class="icon-action-btn"
-        @click="copyFullReport"
-      >
-        <template #icon>
-          <IconCopy v-if="!copiedFull" :size="14" />
-          <IconCircleCheck v-else :size="14" />
-        </template>
-      </NButton>
+      <CopyButton :text="buildFullReport()" />
     </div>
 
     <div

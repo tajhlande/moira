@@ -1,13 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from "vue";
 import { NInput, NButton, NAlert, NScrollbar, NText, NSlider } from "naive-ui";
-import {
-  IconCircleCheck,
-  IconCopy,
-  IconAdjustments,
-  IconHandStop,
-  IconRefresh,
-} from "@tabler/icons-vue";
+import { IconAdjustments, IconHandStop, IconRefresh } from "@tabler/icons-vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   DEFAULT_BUDGET,
@@ -19,6 +13,7 @@ import { useDialog } from "naive-ui";
 import RunArtifacts from "./RunArtifacts.vue";
 import MarkdownContent from "./MarkdownContent.vue";
 import ModelSelector from "./ModelSelector.vue";
+import CopyButton from "./CopyButton.vue";
 import "./workflow-artifacts.css";
 
 const store = useChatStore();
@@ -126,16 +121,6 @@ function runForMessage(messageId: number | undefined) {
   return store.getRunForMessage(messageId);
 }
 
-const copiedMsgIndex = ref<number | null>(null);
-
-async function copyMessage(content: string, index: number) {
-  await navigator.clipboard.writeText(content);
-  copiedMsgIndex.value = index;
-  setTimeout(() => {
-    copiedMsgIndex.value = null;
-  }, 1500);
-}
-
 function confirmRerun(msgId: number) {
   const hasSubsequent =
     store.messages.findIndex((m) => m.id === msgId) < store.messages.length - 1;
@@ -187,18 +172,7 @@ function confirmRerun(msgId: number) {
                   <IconRefresh :size="14" />
                 </template>
               </NButton>
-              <NButton
-                quaternary
-                circle
-                size="tiny"
-                class="icon-action-btn"
-                @click="copyMessage(msg.content, i)"
-              >
-                <template #icon>
-                  <IconCopy v-if="copiedMsgIndex !== i" :size="14" />
-                  <IconCircleCheck v-else :size="14" />
-                </template>
-              </NButton>
+              <CopyButton :text="msg.content" />
             </div>
           </div>
 
@@ -368,14 +342,6 @@ function confirmRerun(msgId: number) {
   display: flex;
   justify-content: flex-end;
   margin-top: 4px;
-}
-
-.icon-action-btn {
-  color: var(--n-text-color-3, #999);
-}
-
-.icon-action-btn:hover {
-  color: var(--n-primary-color, #18a058);
 }
 
 .input-area {
