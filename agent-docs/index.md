@@ -59,6 +59,7 @@ have not been fully completed yet.
 | **claim-validation.md** | Plan for adversarial claim validation — enrich citations with source content, flow evidence into evaluation/review prompts, detect overclaims via LLM cross-examination rather than mechanical pattern matching. Includes structural sanity check for supporting fact IDs at research_review. |
 | **inference-settings-migration.md** | Plan for moving inference provider configuration and model selection from YAML config into database-backed system settings, with runtime model discovery, encrypted API key storage, and UI management. |
 | **conversation-model-selection.md** | Plan for per-conversation intelligence model selection via a header pill + popover, with overrides layered on top of global defaults stored in a dedicated `conversation_models` table. |
+| **evaluation-harness.md** | Plan for a repeatable evaluation harness — capture completed runs, compute mechanical metrics from the knowledge snapshot, score via a frontier-model judge against a general + Pokemon rubric, and diff results across commits. Implements the harness described in `claude-assessment.md`. |
 
 ## Completed (in `completed/`)
 

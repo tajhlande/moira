@@ -42,3 +42,27 @@ always run evaluation even with minimal budget, or pass conclusions to
 report_generation regardless of verification status)? This is arguably a
 separate issue from claim validation but intersects with Phase 7's
 report-handling work.
+
+---
+
+## Evaluation harness — open questions
+
+**Discovered during:** planning for
+[`evaluation-harness.md`](./evaluation-harness.md).
+
+### Stable question set beyond the Tyranitar canary
+
+The harness ships 4 starter questions (see `evaluation-harness.md` Iteration 3).
+`tyranitar-ou` is fixed (the existing canary). The other three need user
+input — they should be questions that have actually exercised distinct
+failure modes:
+
+- `oversearch-bait` — a question where the agent historically burned
+  `web_search`.
+- `synthesis-trap` — a question where individually-true facts tempt an
+  unsupported conclusion.
+- `multi-entity` — a question requiring many named entities with
+  interacting facts.
+
+**Question:** Which real questions from past MOiRA usage should fill these
+slots? Placeholder text will land with Iteration 3; user picks the final set.
