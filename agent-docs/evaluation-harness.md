@@ -446,6 +446,15 @@ uv run python -m moira_eval.run --db backend/moira.db --run-id <uuid>
    criteria, 1–5 scale anchors, "unsupported != contradicted" distinction,
    output JSON schema.
 
+   **Include the available tool catalog in the user message.** Both the
+   Pokemon and general judge prompts should list the tools that were
+   available to the agent during the run (name + brief description). Without
+   this, the judge guesses about tools it *thinks* should exist and penalizes
+   the agent for not using tools it never had access to. The tool list can
+   be captured from the run's config or a static catalog in `capture.py`.
+   This applies retroactively to the Pokemon prompt from Iteration 2 as
+   well — add it there when implementing.
+
 3. **New `questions.py`** — `Question` dataclass (`id`, `text`, `rubric`,
    `tags`, `notes`) and the starter question set. Ship 4 to start:
 

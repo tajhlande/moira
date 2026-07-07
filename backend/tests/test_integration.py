@@ -244,7 +244,7 @@ _STREAM_WRITER_MODULES = [
     "moira.workflow.nodes.research_review",
     "moira.workflow.nodes.evaluation",
     "moira.workflow.nodes.report_generation",
-    "moira.workflow.nodes._helpers",
+    "moira.workflow.nodes._helpers_deps",
 ]
 
 

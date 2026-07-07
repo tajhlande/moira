@@ -227,12 +227,12 @@ See the notional list at [roadmap.md](roadmap.md).
 
 ## Evaluation
 
-MOiRA includes a standalone evaluation harness (`moira_eval`) that computes
-deterministic metrics from completed research runs stored in SQLite. It reads
-the knowledge snapshot, tool trace, and verification outputs without making
-live tool calls or LLM requests.
+MOiRA includes a standalone evaluation harness (`moira_eval`) that scores
+completed research runs stored in SQLite. It computes deterministic metrics
+from the knowledge snapshot, tool trace, and verification outputs, and can
+optionally call a frontier-model judge for rubric-based scoring.
 
-**Score a run:**
+### Metrics-only (no judge)
 
 ```bash
 ./run.sh eval --db data/moira.db --run-id <uuid>
@@ -260,14 +260,61 @@ unsupported=1 | halluc_ids=0 | budget=48/60 (80%)
 | `budget_consumed_ratio` | Efficiency |
 | `review_count` / `evaluation_count` | Verification retry fragility |
 
-**Run eval tests:**
+### Judge scoring
+
+To score a run against a rubric with a frontier-model judge, set these
+environment variables in a local `.env-eval` file (gitignored) at the repo
+root, then pass `--question-id`:
+
+| Env var | Required | Description |
+|---|---|---|
+| `MOIRA_EVAL_JUDGE_ENDPOINT` | Yes | Base URL of an OpenAI-compatible API (e.g. `https://api.openai.com/v1`) |
+| `MOIRA_EVAL_JUDGE_MODEL` | Yes | Model ID to use as the judge (e.g. `gpt-4o`) |
+| `MOIRA_EVAL_JUDGE_API_KEY` | No | Bearer token for the API (omit for local endpoints that don't require auth) |
+
+`.env-eval` example:
+
+```
+MOIRA_EVAL_JUDGE_ENDPOINT=https://api.openai.com/v1
+MOIRA_EVAL_JUDGE_MODEL=gpt-4o
+MOIRA_EVAL_JUDGE_API_KEY=sk-...
+```
+
+`./run.sh eval` automatically loads `.env-eval` via `uv run --env-file`,
+so the judge picks up the values without exporting them in your shell:
+
+```bash
+./run.sh eval --db data/moira.db --run-id <uuid> --question-id tyranitar-ou
+```
+
+**Example output:**
+
+```
+tyranitar-ou: 15/16 (PASS) | web_search=6, unsupported=0, halluc_ids=0
+    Tool choice: 2/2 — Used Pokemon tools first.
+    Search discipline: 2/2 — Generic search limited.
+    Type correctness: 2/2 — No type matchup errors.
+    ...
+  -> moira_eval/results/<commit-sha>/tyranitar-ou.json
+```
+
+Result files are written to `moira_eval/results/<commit-sha-short>/\
+<question-id>.json` and are gitignored — they are local working data.
+
+If `--question-id` is given but judge env vars are not set (or vice versa),
+the harness falls back to metrics-only mode with a `WARNING:` on stderr.
+
+**Available question IDs:** `tyranitar-ou` (Pokemon Gen9 OU canary). More
+questions arriving in future iterations.
+
+### Run eval tests
 
 ```bash
 ./run.sh test:eval
 ```
 
-Future iterations will add a frontier-model judge, result storage, diffing,
-and a question set. See [agent-docs/evaluation-harness.md](agent-docs/evaluation-harness.md)
+Future iterations will add a general rubric, a question set, diffing, and
+a tracked score log. See [agent-docs/evaluation-harness.md](agent-docs/evaluation-harness.md)
 for the full plan.
 
 ## License

@@ -16,7 +16,8 @@ from langgraph.config import get_stream_writer
 from moira.models.knowledge import ResearchState
 from moira.tools.base import ToolDefinition
 from moira.workflow.budget import deduct_cost
-from moira.workflow.nodes._helpers import _check_stop, _now
+from moira.workflow.nodes._helpers import _now
+from moira.workflow.nodes._helpers_deps import _check_stop
 
 logger = logging.getLogger(__name__)
 

@@ -17,12 +17,14 @@ from moira.models.knowledge import Fact, ResearchState, ReviewOutcome
 from moira.prompts import render_prompt
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
-    _call_for_json,
-    _check_stop,
     _format_citation_content,
     _now,
-    _resolve_intelligence,
     _response_meta,
+)
+from moira.workflow.nodes._helpers_deps import (
+    _call_for_json,
+    _check_stop,
+    _resolve_intelligence,
 )
 
 logger = logging.getLogger(__name__)

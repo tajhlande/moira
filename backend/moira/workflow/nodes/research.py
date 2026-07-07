@@ -33,14 +33,16 @@ from moira.tools.executor import ToolExecutor
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
     _SNIPPET_MAX_LENGTH,
-    _check_stop,
     _format_established_facts,
     _format_prior_citations,
     _format_prior_conclusions,
     _now,
     _parse_json_object,
-    _resolve_intelligence,
     _response_meta,
+)
+from moira.workflow.nodes._helpers_deps import (
+    _check_stop,
+    _resolve_intelligence,
 )
 
 logger = logging.getLogger(__name__)

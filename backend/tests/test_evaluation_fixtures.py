@@ -46,7 +46,7 @@ def mock_writer():
         patch("moira.workflow.nodes.research.get_stream_writer", return_value=write),
         patch("moira.workflow.nodes.report_generation.get_stream_writer", return_value=write),
         patch("moira.workflow.nodes.tool_identification.get_stream_writer", return_value=write),
-        patch("moira.workflow.nodes._helpers.get_stream_writer", return_value=write),
+        patch("moira.workflow.nodes._helpers_deps.get_stream_writer", return_value=write),
     ):
         yield events
 

@@ -108,7 +108,7 @@ cmd_prod() {
 }
 
 cmd_eval() {
-    uv run --project "$REPO_ROOT/backend" python -m moira_eval.run "${@:2}"
+    uv run --project "$REPO_ROOT/backend" --env-file "$REPO_ROOT/.env-eval" python -m moira_eval.run "${@:2}"
 }
 
 cmd_test() {

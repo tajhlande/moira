@@ -44,3 +44,7 @@ data/
 
 # Session files
 session*.md
+
+# Evaluation results (local working data; tracked history lives in EVAL_LOG.md)
+backend/moira_eval/results/
+**/.env-eval
