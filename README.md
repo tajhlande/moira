@@ -225,6 +225,50 @@ The following environment variables are optional:
 Lots of work remains to be done for MOiRA to be fully usable!  
 See the notional list at [roadmap.md](roadmap.md).
 
+## Evaluation
+
+MOiRA includes a standalone evaluation harness (`moira_eval`) that computes
+deterministic metrics from completed research runs stored in SQLite. It reads
+the knowledge snapshot, tool trace, and verification outputs without making
+live tool calls or LLM requests.
+
+**Score a run:**
+
+```bash
+./run.sh eval --db data/moira.db --run-id <uuid>
+# or omit --run-id to score the latest completed run
+./run.sh eval --db data/moira.db
+```
+
+**Example output:**
+
+```
+run <uuid>: web_search=14 | total_tools=22 | unknown_facts=3
+unsupported=1 | halluc_ids=0 | budget=48/60 (80%)
+```
+
+**What the metrics tell you:**
+
+| Metric | What it catches |
+|---|---|
+| `web_search_calls` | Overuse of generic search vs specialized tools |
+| `specialized_tool_use_ratio` | Tool-routing health (fraction of non-generic calls) |
+| `unknown_fact_count` | Decomposition/research gaps |
+| `unsupported_conclusion_count` | Synthesis overreach |
+| `hallucinated_fact_id_count` | Conclusions referencing facts that don't exist |
+| `uncited_conclusion_count` | Conclusions without grounding citations |
+| `budget_consumed_ratio` | Efficiency |
+| `review_count` / `evaluation_count` | Verification retry fragility |
+
+**Run eval tests:**
+
+```bash
+./run.sh test:eval
+```
+
+Future iterations will add a frontier-model judge, result storage, diffing,
+and a question set. See [agent-docs/evaluation-harness.md](agent-docs/evaluation-harness.md)
+for the full plan.
 
 ## License
 

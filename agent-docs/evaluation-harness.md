@@ -17,11 +17,11 @@ ones.
 
 What exists today is partial:
 
-- `backend/evaluation/capture.py` — pulls tool trace and search counts from
+- `backend/moira_eval/capture.py` — pulls tool trace and search counts from
   SQLite into `artifacts/<run_id>.json`. **Stale:** it still queries a
   `verification` node, but the verification split landed (`research_review` +
   `evaluation`), and it does not extract the knowledge snapshot.
-- `backend/evaluation/rubric.py` — the **Pokemon-specific** 8-category rubric
+- `backend/moira_eval/rubric_pokemon.py` — the **Pokemon-specific** 8-category rubric
   (0/1/2, hard-fail categories) for the Tyranitar canary from
   `completed/research-loop-critique.md`. This is *not* the general rubric
   `claude-assessment.md` describes.
@@ -156,15 +156,15 @@ The intended rhythm:
 2. **Seed runs** for the question set — either via the UI as normal, or via
    the thin `invoke.py` script that POSTs questions to a running backend.
 3. **Score the runs** with `run.py`, which writes one result file per question
-   under `evaluation/results/<commit-sha>/`.
-4. **Diff against the previous commit's results** with `diff.py` to see
+   under `moira_eval/results/<commit-sha>/`.
+   4. **Diff against the previous commit's results** with `diff.py` to see
    whether the change moved the scores.
-5. **Log meaningful advances** with `log.py`, which appends a structured
+   5. **Log meaningful advances** with `log.py`, which appends a structured
    entry to a tracked `EVAL_LOG.md`. Most runs are not worth logging; this
    is a deliberate "this result matters" act, not an automatic step.
 
 Result files are **not** committed — see Iteration 4. They live under
-`evaluation/results/` which is gitignored. The `EVAL_LOG.md` file *is*
+`moira_eval/results/` which is gitignored. The `EVAL_LOG.md` file *is*
 committed — it's the durable score history, one entry per meaningful run.
 
 ## Design decisions
@@ -187,6 +187,21 @@ These were resolved upfront; they fall out of the conceptual design above.
 4. **MOiRA-only baselines.** Commit-to-commit diff within MOiRA. The storage
    shape leaves room to import external baseline answers (OpenAI DR, Claude
    Research) later without rework, but that is out of scope now.
+5. **`--question-id` is always optional.** The question text is available in
+   the knowledge snapshot (`knowledge.question`), so the judge can score any
+   run without a predefined question. Rubric resolution:
+
+   | Invocation | Question text | Rubric |
+   |---|---|---|
+   | `--question-id tyranitar-ou` | From `questions.py` | Pokemon (declared by question) |
+   | `--question-id multi-entity` | From `questions.py` | General (declared by question) |
+   | No `--question-id` (ad hoc run) | From `knowledge.question` | General |
+
+   In Iteration 2 (only the Pokemon rubric exists), ad hoc runs without
+   `--question-id` fall back to metrics-only. Once the general rubric lands
+   in Iteration 3, ad hoc runs get full judge scoring with the general
+   rubric. Result files for ad hoc runs use `adhoc-<run-id-short>` as the
+   question-id slot in the filename.
 
 ## File layout
 
@@ -194,14 +209,14 @@ The pipeline stages map directly to modules. Each stage is one file plus its
 tests.
 
 ```
-backend/evaluation/
+backend/moira_eval/
   __init__.py
   capture.py          # REFACTOR (Iter 1) — stage 1: artifacts extraction
   metrics.py          # NEW (Iter 1) — stage 2: deterministic metrics
   run.py              # NEW (Iter 1, extended in Iter 2-3) — orchestrator CLI
   judge.py            # NEW (Iter 2) — stage 3: frontier-model judge
   prompts.py          # NEW (Iter 2) — POKEMON_JUDGE_SYSTEM; GENERAL added in Iter 3
-  rubric.py           # EXISTING — Pokemon 8-category rubric (used in Iter 2)
+  rubric_pokemon.py           # EXISTING — Pokemon 8-category rubric (used in Iter 2)
   rubric_general.py   # NEW (Iter 3) — general 5-criterion rubric
   questions.py        # NEW (Iter 3) — stable question set
   diff.py             # NEW (Iter 4) — compare two result-set directories
@@ -209,9 +224,20 @@ backend/evaluation/
   EVAL_LOG.md         # NEW (Iter 4) — tracked score history
   invoke.py           # NEW (Iter 5) — convenience: POST questions to a running backend
   results/            # NEW (Iter 2, formalized in Iter 4) — gitignored per-commit results
+
+backend/moira_eval_tests/
+  test_evaluation_capture.py    # (Iter 1)
+  test_evaluation_metrics.py    # (Iter 1)
+  test_evaluation_judge.py      # (Iter 2)
+  test_evaluation_run.py        # (Iter 2)
+  test_evaluation_rubric_general.py  # (Iter 3)
+  test_evaluation_questions.py  # (Iter 3)
+  test_evaluation_diff.py       # (Iter 4)
+  test_evaluation_log.py        # (Iter 4)
+  test_evaluation_invoke.py     # (Iter 5)
 ```
 
-`rubric.py` and `rubric_general.py` are siblings rather than one file because
+`rubric_pokemon.py` and `rubric_general.py` are siblings rather than one file because
 they have different category counts, different scales (0/1/2 vs 1–5), and
 different hard-fail semantics. They share a dataclass shape so the rest of
 the pipeline is rubric-agnostic.
@@ -236,7 +262,7 @@ structured input — available as a scoring surface for the first time.
 **What you can do after this iteration:**
 
 ```
-uv run python -m evaluation.run --db backend/moira.db --run-id <uuid>
+uv run python -m moira_eval.run --db backend/moira.db --run-id <uuid>
 ```
 
 Output (example):
@@ -292,9 +318,9 @@ hallucinated fact IDs appear.
    is the seed of the orchestrator; later iterations extend it with judge
    scoring, storage, and batch modes.
 
-**Tests:** `test_evaluation_capture.py` (fixture DB with knowledge snapshot
+**Tests:** `moira_eval_tests/test_evaluation_capture.py` (fixture DB with knowledge snapshot
 + review/eval steps -> assert enriched dict, all retry attempts captured);
-`test_evaluation_metrics.py` (pure-function tests over fixture artifacts,
+`moira_eval_tests/test_evaluation_metrics.py` (pure-function tests over fixture artifacts,
 including the hallucinated-ID case explicitly).
 
 ### Iteration 2 — First judged score (the canary, end-to-end)
@@ -303,27 +329,32 @@ including the hallucinated-ID case explicitly).
 Pokemon rubric, write the result to disk.
 
 **Why this next:** this is the first "did the score move?" moment. Uses the
-existing Tyranitar canary (`CANARY_QUESTION` in `rubric.py`) and the existing
+existing Tyranitar canary (`CANARY_QUESTION` in `rubric_pokemon.py`) and the existing
 8-category Pokemon rubric — no new rubric needed yet. Proves the judge +
 storage path end-to-end before generalizing.
 
 **What you can do after this iteration:**
 
 ```
-# judge env vars set
-uv run python -m evaluation.run --db backend/moira.db --run-id <uuid> \
+# judge env vars set, canary question
+uv run python -m moira_eval.run --db backend/moira.db --run-id <uuid> \
     --question-id tyranitar-ou
+
+# ad hoc run (no --question-id) — metrics only in Iter 2,
+# full judge scoring with general rubric from Iter 3 onwards
+uv run python -m moira_eval.run --db backend/moira.db --run-id <uuid>
 ```
 
-Output:
+Output (with question-id):
 
 ```
 tyranitar-ou: 12/16 (PASS) | web_search=14, unsupported=1, halluc_ids=0
-  -> evaluation/results/<commit>/tyranitar-ou.json
+  -> moira_eval/results/<commit>/tyranitar-ou.json
 ```
 
-If judge env vars are not set, falls back to metrics-only mode (Iteration 1
-behavior) with a warning.
+If judge env vars are not set, or if no `--question-id` is given (no general
+rubric exists yet in this iteration), falls back to metrics-only mode
+(Iteration 1 behavior) with a warning.
 
 **What's built:**
 
@@ -343,7 +374,7 @@ behavior) with a warning.
 
 2. **New `prompts.py`** — starts with just `POKEMON_JUDGE_SYSTEM`, wrapping
    the existing 8-category rubric with 0/1/2 anchors and hard-fail
-   categories from `rubric.py`. The user message includes: question, report
+   categories from `rubric_pokemon.py`. The user message includes: question, report
    answer, full fact/conclusion/citation graph, verification outputs,
    mechanical metrics, and a strict "grade the rubric, don't re-answer"
    instruction. The "unsupported != contradicted" distinction is preserved
@@ -358,9 +389,9 @@ behavior) with a warning.
    appropriately on what was actually weak in that specific run.
 
 3. **Storage (minimal)** — `run.py` writes
-   `evaluation/results/<commit-sha-short>/<question-id>.json` containing
+   `moira_eval/results/<commit-sha-short>/<question-id>.json` containing
    question, run_id, metrics, judge scores, timestamp, model info. Add
-   `evaluation/results/` to `.gitignore` now (see Iteration 4 for the full
+   `moira_eval/results/` to `.gitignore` now (see Iteration 4 for the full
    storage rationale).
 
 4. **Extend `run.py`** — after metrics, conditionally call the judge (if
@@ -372,33 +403,41 @@ reasoning/grounding regressions reliably; it misses subtle factual errors
 where the judge doesn't know the domain. For domains MOiRA cares most
 about, a periodic hand-graded pass keeps the LLM judge honest.
 
-**Tests:** `test_evaluation_judge.py` (mock `InferenceClient`; assert prompt
+**Tests:** `moira_eval_tests/test_evaluation_judge.py` (mock `InferenceClient`; assert prompt
 construction, JSON parsing, malformed-JSON tolerance); extend
-`test_evaluation_run.py` with end-to-end test using mocked judge, assert
+`moira_eval_tests/test_evaluation_run.py` with end-to-end test using mocked judge, assert
 result file written, metrics-only fallback works without env vars.
 
 ### Iteration 3 — General rubric + question set
 
 **Goal:** score *any* question, not just the canary, with a rubric
-appropriate to the question.
+appropriate to the question. Ad hoc runs (no `--question-id`) now get full
+judge scoring with the general rubric.
 
 **Why this next:** the canary proved the path. Now generalize so the
 question set can grow beyond Pokemon and so non-domain-specific questions
-get the discipline-based scoring the assessment calls for.
+get the discipline-based scoring the assessment calls for. This also
+unlocks ad hoc run scoring — any workflow run can be judged, not just
+predefined questions.
 
 **What you can do after this iteration:**
 
 ```
-uv run python -m evaluation.run --db backend/moira.db --run-id <uuid> \
+# predefined question with general rubric
+uv run python -m moira_eval.run --db backend/moira.db --run-id <uuid> \
     --question-id multi-entity
 # run.py resolves the question's rubric (general) and scores accordingly
+
+# ad hoc run — question text from knowledge snapshot, general rubric
+uv run python -m moira_eval.run --db backend/moira.db --run-id <uuid>
+# output uses adhoc-<run-id-short> as the question label
 ```
 
 **What's built:**
 
 1. **New `rubric_general.py`** — five criteria from `claude-assessment.md`,
    each scored 1–5: grounding, fact atomicity, citation support, critique
-   quality, goal alignment. Mirrors the dataclass shape of `rubric.py`
+   quality, goal alignment. Mirrors the dataclass shape of `rubric_pokemon.py`
    (`CategoryScore`, `RunScore`, `create_empty_scorecard`,
    `CATEGORY_DESCRIPTIONS`) so the judge and runner are rubric-agnostic.
    No hard-fail categories (those are Pokemon-specific).
@@ -422,12 +461,15 @@ uv run python -m evaluation.run --db backend/moira.db --run-id <uuid> \
 
 4. **Extend `run.py`** — `--question-id` resolves the question definition
    and its rubric; the runner picks the right judge prompt based on rubric
-   type. The Pokemon and general rubrics flow through the same judge +
-   storage path.
+   type. Without `--question-id`, the question text comes from
+   `knowledge.question` in the snapshot and the general rubric is used.
+   The Pokemon and general rubrics flow through the same judge +
+   storage path. Result files for ad hoc runs use `adhoc-<run-id-short>`
+   as the question-id slot.
 
-**Tests:** `test_evaluation_rubric_general.py` (dataclass shape parity with
-`rubric.py`; scorecard factory; no hard-fail categories);
-`test_evaluation_questions.py` (question set loads, rubric assignment
+**Tests:** `moira_eval_tests/test_evaluation_rubric_general.py` (dataclass shape parity with
+`rubric_pokemon.py`; scorecard factory; no hard-fail categories);
+`moira_eval_tests/test_evaluation_questions.py` (question set loads, rubric assignment
 resolves, `tyranitar-ou` text matches `CANARY_QUESTION`).
 
 ### Iteration 4 — Diff + log (the comparison and tracking layer)
@@ -443,13 +485,13 @@ meaningful results disappear when you wipe local results/.
 
 ```
 # diff two commits' results
-uv run python -m evaluation.diff \
-    --a evaluation/results/<commit-1> \
-    --b evaluation/results/<commit-2>
+uv run python -m moira_eval.diff \
+    --a moira_eval/results/<commit-1> \
+    --b moira_eval/results/<commit-2>
 
 # log a meaningful result to the tracked log
-uv run python -m evaluation.log \
-    --result evaluation/results/<commit>/tyranitar-ou.json \
+uv run python -m moira_eval.log \
+    --result moira_eval/results/<commit>/tyranitar-ou.json \
     --note "tightened synthesis prompt; type-correctness 1->2"
 ```
 
@@ -489,7 +531,7 @@ uv run python -m evaluation.log \
    here:
 
    ```
-   backend/evaluation/results/        # gitignored
+   backend/moira_eval/results/        # gitignored
      <commit-sha-short>/
        meta.json                      # {commit, branch, timestamp, judge_model}
        <question-id>.json             # {question, run_id, metrics, judge_scores, ...}
@@ -511,11 +553,11 @@ uv run python -m evaluation.log \
 
    Add to `backend/.gitignore`:
    ```
-   evaluation/results/
+   moira_eval/results/
    ```
 
-**Tests:** `test_evaluation_diff.py` (two fixture result dirs -> assert
-table output, +/- deltas); `test_evaluation_log.py` (fixture result file +
+**Tests:** `moira_eval_tests/test_evaluation_diff.py` (two fixture result dirs -> assert
+table output, +/- deltas); `moira_eval_tests/test_evaluation_log.py` (fixture result file +
 temp log file; assert entry shape, duplicate detection, `--force` override).
 
 ### Iteration 5 — Invoke + docs (convenience + polish)
@@ -531,7 +573,7 @@ the harness shape is stable by this point.
 
 ```
 # seed a run from the command line
-uv run python -m evaluation.invoke \
+uv run python -m moira_eval.invoke \
     --base-url http://localhost:8000 \
     --question tyranitar-ou \
     --wait
@@ -553,13 +595,13 @@ uv run python -m evaluation.invoke \
    metrics and what each signals, the LLM-judge caveat, how to add a
    question, how to interpret a diff. Update `agent-docs/index.md`.
 
-**Tests:** `test_evaluation_invoke.py` (mocked HTTP; assert conversation
+**Tests:** `moira_eval_tests/test_evaluation_invoke.py` (mocked HTTP; assert conversation
 creation, message POST, polling loop, run_id output).
 
 ## Test coverage summary
 
 Organized by iteration. All tests runnable via
-`uv run pytest tests/test_evaluation_*.py -q`.
+`uv run pytest moira_eval_tests/ -q`.
 
 | Iteration | Module | Tests |
 |---|---|---|
@@ -567,7 +609,7 @@ Organized by iteration. All tests runnable via
 | 1 | `metrics.py` | pure-function tests over fixture artifacts (incl. hallucinated-ID case, unknown/unsupported counts) |
 | 2 | `judge.py` | mock `InferenceClient`; assert prompt construction, JSON parsing, malformed-JSON tolerance |
 | 2 | `run.py` | end-to-end with mocked judge; assert result file written; metrics-only fallback without env vars |
-| 3 | `rubric_general.py` | dataclass shape parity with `rubric.py`; scorecard factory; no hard-fail categories |
+| 3 | `rubric_general.py` | dataclass shape parity with `rubric_pokemon.py`; scorecard factory; no hard-fail categories |
 | 3 | `questions.py` | question set loads, rubric assignment resolves, `tyranitar-ou` text matches `CANARY_QUESTION` |
 | 4 | `diff.py` | two fixture result dirs -> assert table output, +/- deltas |
 | 4 | `log.py` | fixture result file + temp log file; assert entry shape, duplicate detection, `--force` override |
@@ -578,7 +620,8 @@ Organized by iteration. All tests runnable via
 After each iteration:
 
 ```
-uv run pytest tests/ -q -x --ignore=tests/test_url_content.py
+uv run pytest tests/ -q -x --ignore=tests/test_url_content.py   # backend
+uv run pytest moira_eval_tests/ -q                               # eval harness
 .venv/bin/ruff check
 .venv/bin/ruff format --check
 ```

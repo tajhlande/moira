@@ -10,6 +10,7 @@ import {
   IconTool,
   IconRestore,
   IconHandStop,
+  IconCopy,
 } from "@tabler/icons-vue";
 import type { WorkflowRunInfo, ExecutionStep } from "../api/client";
 import { useChatStore } from "../stores/chat";
@@ -47,6 +48,20 @@ type TimelineRow =
 
 function stepRunId(step: ExecutionStep): string {
   return step.detail_run_id || props.run.id;
+}
+
+const copiedRunId = ref(false);
+
+async function copyRunId() {
+  try {
+    await navigator.clipboard.writeText(props.run.id);
+    copiedRunId.value = true;
+    setTimeout(() => {
+      copiedRunId.value = false;
+    }, 1500);
+  } catch {
+    // Clipboard API may be unavailable (non-secure context); fail silently.
+  }
 }
 
 function boundaryLabel(previousRunId: string): string {
@@ -334,6 +349,22 @@ function fmt(n: number): string {
     <KnowledgePanel v-if="run.knowledge" :knowledge="run.knowledge" />
 
     <ReportPanel v-if="run.report" :report="run.report" />
+
+    <div v-if="run.id" class="run-id-label">
+      Workflow Run ID: {{ run.id }}
+      <NButton
+        quaternary
+        circle
+        size="tiny"
+        class="icon-action-btn"
+        @click="copyRunId"
+      >
+        <template #icon>
+          <IconCopy v-if="!copiedRunId" :size="14" />
+          <IconCircleCheck v-else :size="14" />
+        </template>
+      </NButton>
+    </div>
 
     <div v-if="run.total_elapsed_ms != null" class="total-elapsed">
       Time: {{ formatElapsed(run.total_elapsed_ms) }}

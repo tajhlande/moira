@@ -15,8 +15,10 @@ usage() {
     echo "  dev:frontend    Start frontend only"
     echo "  build           Build frontend for production"
     echo "  prod            Build frontend + start backend serving everything"
+    echo "  eval            Run the evaluation harness (args passed to moira_eval.run)"
     echo "  test            Run all tests"
     echo "  test:backend    Run backend tests"
+    echo "  test:eval       Run evaluation harness tests"
     echo "  test:frontend   Run frontend tests"
     echo "  lint            Run all linters"
     echo "  lint:backend    Run backend linter"
@@ -105,14 +107,24 @@ cmd_prod() {
         uv run python -m uvicorn moira.main:app --host 0.0.0.0 --port 8000
 }
 
+cmd_eval() {
+    uv run --project "$REPO_ROOT/backend" python -m moira_eval.run "${@:2}"
+}
+
 cmd_test() {
     cmd_test_backend
+    cmd_test_eval
     cmd_test_frontend
 }
 
 cmd_test_backend() {
     cd "$REPO_ROOT/backend"
     uv run python -m pytest tests/ -v
+}
+
+cmd_test_eval() {
+    cd "$REPO_ROOT/backend"
+    uv run python -m pytest moira_eval_tests/ -v
 }
 
 cmd_test_frontend() {
@@ -159,8 +171,10 @@ case "${1:-}" in
     dev:frontend)    cmd_dev_frontend ;;
     build)           cmd_build ;;
     prod)            cmd_prod ;;
+    eval)            cmd_eval "$@" ;;
     test)            cmd_test ;;
     test:backend)    cmd_test_backend ;;
+    test:eval)       cmd_test_eval ;;
     test:frontend)   cmd_test_frontend ;;
     lint)            cmd_lint ;;
     lint:backend)    cmd_lint_backend ;;

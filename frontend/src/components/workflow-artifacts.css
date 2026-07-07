@@ -795,6 +795,25 @@
   color: var(--n-primary-color, #18a058);
 }
 
+.run-id-label {
+  margin-top: 8px;
+  margin-left: 12px;
+  font-family: monospace;
+  font-size: 0.8em;
+  opacity: 0.6;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.run-id-label .icon-action-btn {
+  color: var(--n-text-color-3, #999);
+}
+
+.run-id-label .icon-action-btn:hover {
+  color: var(--n-primary-color, #18a058);
+}
+
 .total-elapsed {
   margin-top: 8px;
   margin-left: 12px;
