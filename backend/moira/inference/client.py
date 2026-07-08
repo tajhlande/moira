@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -150,6 +151,12 @@ class InferenceClient:
                 response=resp,
             )
         data = resp.json()
+        if "choices" not in data or not data["choices"]:
+            raise httpx.HTTPStatusError(
+                message=(f"Response missing 'choices' key. Body: {json.dumps(data)[:500]}"),
+                request=resp.request,
+                response=resp,
+            )
         choice = data["choices"][0]
         message = choice["message"]
         thinking = message.get("reasoning_content", "")

@@ -47,6 +47,9 @@ class RunScore:
         return len(self.hard_fail_categories_failed) == 0
 
 
+# Maximum score per category (0-2 scale).
+SCALE_MAX = 2
+
 # Category names as constants for reference in fixtures and scripts.
 CATEGORY_TOOL_CHOICE = "Tool choice"
 CATEGORY_SEARCH_DISCIPLINE = "Search discipline"

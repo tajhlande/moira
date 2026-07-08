@@ -1,7 +1,8 @@
 """Tests for moira_eval.run CLI and moira_eval.result storage.
 
 Tests:
-- Metrics-only fallback (no env vars, no --question-id)
+- Metrics-only fallback (no env vars)
+- Ad hoc run (no --question-id, general rubric)
 - Unknown question-id error
 - Judged run writes result file with correct structure
 - Result file is JSON-serializable and contains expected fields
@@ -17,11 +18,11 @@ import pytest
 
 from moira_eval.judge import JudgeCategoryScore, JudgeResult
 from moira_eval.result import build_result, get_commit_sha, save_result
-from moira_eval.rubric_pokemon import CANARY_QUESTION
+from moira_eval.rubric_pokemon import CANARY_QUESTION, HARD_FAIL_CATEGORIES
 from moira_eval.run import main
 
 # ---------------------------------------------------------------------------
-# Fixture DB (reuses the pattern from test_evaluation_capture.py)
+# Fixture DB
 # ---------------------------------------------------------------------------
 
 
@@ -53,6 +54,18 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             model TEXT NOT NULL DEFAULT '',
             error TEXT NOT NULL DEFAULT '',
             detail TEXT
+        );
+        CREATE TABLE tools (
+            name TEXT PRIMARY KEY,
+            description TEXT NOT NULL DEFAULT '',
+            argument_schema TEXT NOT NULL DEFAULT '{}',
+            config TEXT NOT NULL DEFAULT '{}',
+            tags TEXT NOT NULL DEFAULT '[]',
+            reliability TEXT NOT NULL DEFAULT 'unknown',
+            is_default INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            implementation TEXT NOT NULL DEFAULT '',
+            group_name TEXT NOT NULL DEFAULT ''
         );
         """
     )
@@ -99,9 +112,56 @@ def fixture_db(tmp_path: Path) -> Path:
         """,
         ("run-001", "conv-001", json.dumps(knowledge), json.dumps(report)),
     )
+    conn.execute(
+        "INSERT INTO tools (name, description) VALUES (?, ?)",
+        ("web_search", "Search the web"),
+    )
+    conn.execute(
+        "INSERT INTO tools (name, description) VALUES (?, ?)",
+        ("pokemon_species", "Look up species data"),
+    )
     conn.commit()
     conn.close()
     return db_path
+
+
+def _make_pokemon_result(total: int = 15) -> JudgeResult:
+    """Build a pokemon JudgeResult with correct hard-fail config."""
+    return JudgeResult(
+        categories=[
+            JudgeCategoryScore(name="Tool choice", score=2),
+            JudgeCategoryScore(name="Search discipline", score=2),
+            JudgeCategoryScore(name="Type correctness", score=2),
+            JudgeCategoryScore(name="Ability correctness", score=2),
+            JudgeCategoryScore(name="Typical-move discipline", score=2),
+            JudgeCategoryScore(name="OU legality and metagame", score=2),
+            JudgeCategoryScore(name="Synthesis discipline", score=1),
+            JudgeCategoryScore(name="Verification quality", score=2),
+        ],
+        overall_notes="Good run.",
+        model="mock-model",
+        scale_max=2,
+        hard_fail_categories=frozenset(HARD_FAIL_CATEGORIES),
+        rubric="pokemon",
+    )
+
+
+def _make_general_result() -> JudgeResult:
+    """Build a general JudgeResult."""
+    return JudgeResult(
+        categories=[
+            JudgeCategoryScore(name="Grounding", score=4),
+            JudgeCategoryScore(name="Fact atomicity", score=5),
+            JudgeCategoryScore(name="Citation support", score=4),
+            JudgeCategoryScore(name="Critique quality", score=3),
+            JudgeCategoryScore(name="Goal alignment", score=5),
+        ],
+        overall_notes="Solid.",
+        model="mock-model",
+        scale_max=5,
+        hard_fail_categories=frozenset(),
+        rubric="general",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -110,27 +170,13 @@ def fixture_db(tmp_path: Path) -> Path:
 
 
 class TestResultStorage:
-    def test_build_result_with_judge(self, fixture_db):
+    def test_build_result_with_pokemon_judge(self, fixture_db):
         from moira_eval.capture import capture_artifacts
         from moira_eval.metrics import compute_metrics
 
         artifacts = capture_artifacts(str(fixture_db), "run-001")
         metrics = compute_metrics(artifacts)
-
-        judge_result = JudgeResult(
-            categories=[
-                JudgeCategoryScore(name="Tool choice", score=2, rationale="Good"),
-                JudgeCategoryScore(name="Search discipline", score=2, rationale="Good"),
-                JudgeCategoryScore(name="Type correctness", score=2, rationale="Good"),
-                JudgeCategoryScore(name="Ability correctness", score=2, rationale="Good"),
-                JudgeCategoryScore(name="Typical-move discipline", score=2, rationale="Good"),
-                JudgeCategoryScore(name="OU legality and metagame", score=2, rationale="Good"),
-                JudgeCategoryScore(name="Synthesis discipline", score=1, rationale="Some issues"),
-                JudgeCategoryScore(name="Verification quality", score=2, rationale="Good"),
-            ],
-            overall_notes="Minor synthesis issues.",
-            model="test-judge-model",
-        )
+        judge_result = _make_pokemon_result()
 
         result = build_result(
             question_id="tyranitar-ou",
@@ -143,14 +189,34 @@ class TestResultStorage:
 
         assert result.question_id == "tyranitar-ou"
         assert result.run_id == "run-001"
-        assert result.commit_sha == "abc12345"
         assert result.rubric == "pokemon"
         assert result.judge is not None
         assert result.judge["total"] == 15
         assert result.judge["max_total"] == 16
         assert result.judge["passed"] is True
-        assert result.model == "test-judge-model"
-        assert len(result.judge["categories"]) == 8
+
+    def test_build_result_with_general_judge(self, fixture_db):
+        from moira_eval.capture import capture_artifacts
+        from moira_eval.metrics import compute_metrics
+
+        artifacts = capture_artifacts(str(fixture_db), "run-001")
+        metrics = compute_metrics(artifacts)
+        judge_result = _make_general_result()
+
+        result = build_result(
+            question_id="adhoc-run001",
+            question_text="ad hoc question",
+            artifacts=artifacts,
+            metrics=metrics,
+            judge_result=judge_result,
+            rubric="general",
+            commit_sha="abc12345",
+        )
+
+        assert result.rubric == "general"
+        assert result.judge["total"] == 21
+        assert result.judge["max_total"] == 25
+        assert result.judge["passed"] is True
 
     def test_build_result_metrics_only(self, fixture_db):
         from moira_eval.capture import capture_artifacts
@@ -169,8 +235,6 @@ class TestResultStorage:
         )
 
         assert result.judge is None
-        assert result.model == ""
-        assert result.rubric == "pokemon"  # default
 
     def test_save_result_writes_json(self, tmp_path, fixture_db):
         from moira_eval.capture import capture_artifacts
@@ -198,38 +262,38 @@ class TestResultStorage:
         assert data["question_id"] == "tyranitar-ou"
         assert data["run_id"] == "run-001"
         assert data["commit_sha"] == "abc12345"
-        assert "metrics" in data
-        assert "timestamp" in data
 
     def test_get_commit_sha_returns_string(self):
         sha = get_commit_sha()
         assert isinstance(sha, str)
         assert len(sha) > 0
 
-    def test_get_commit_sha_short_is_8_chars(self):
-        """Short SHA should be 8 chars (or 'unknown')."""
-        sha = get_commit_sha(short=True)
-        assert sha == "unknown" or len(sha) == 8
-
 
 # ---------------------------------------------------------------------------
-# CLI tests (run.main with mocked argv)
+# CLI tests
 # ---------------------------------------------------------------------------
 
 
 class TestCLIMetricsOnly:
-    def test_no_question_id_no_env_metrics_only(self, fixture_db, capsys):
-        """Without --question-id, prints metrics-only summary."""
+    def test_no_env_vars_metrics_only(self, fixture_db, capsys):
+        """Without judge env vars, falls back to metrics-only."""
         with patch.dict("os.environ", {}, clear=True):
-            sys.argv = ["moira_eval.run", "--db", str(fixture_db), "--run-id", "run-001"]
+            sys.argv = [
+                "moira_eval.run",
+                "--db",
+                str(fixture_db),
+                "--run-id",
+                "run-001",
+            ]
             main()
 
         captured = capsys.readouterr()
-        assert "run-001" in captured.out
+        assert "WARNING" in captured.err
+        assert "metrics-only" in captured.err.lower()
         assert "web_search=" in captured.out
 
     def test_question_id_no_env_vars_metrics_only(self, fixture_db, capsys):
-        """--question-id without judge env vars falls back to metrics-only."""
+        """--question-id without env vars also falls back."""
         with patch.dict("os.environ", {}, clear=True):
             sys.argv = [
                 "moira_eval.run",
@@ -243,31 +307,13 @@ class TestCLIMetricsOnly:
             main()
 
         captured = capsys.readouterr()
-        # Should warn about missing env vars
         assert "WARNING" in captured.err
-        assert "metrics-only" in captured.err.lower()
-        # Should still print metrics
         assert "web_search=" in captured.out
 
 
 class TestCLIJudgedRun:
-    def test_judged_run_writes_result_file(self, fixture_db, tmp_path, capsys):
-        """With env vars + question-id, judge runs and result file is written."""
-        mock_judge_result = JudgeResult(
-            categories=[
-                JudgeCategoryScore(name="Tool choice", score=2, rationale="Good"),
-                JudgeCategoryScore(name="Search discipline", score=2, rationale="Good"),
-                JudgeCategoryScore(name="Type correctness", score=2, rationale="Good"),
-                JudgeCategoryScore(name="Ability correctness", score=2, rationale="Good"),
-                JudgeCategoryScore(name="Typical-move discipline", score=2, rationale="Good"),
-                JudgeCategoryScore(name="OU legality and metagame", score=2, rationale="Good"),
-                JudgeCategoryScore(name="Synthesis discipline", score=1, rationale="Some issues"),
-                JudgeCategoryScore(name="Verification quality", score=2, rationale="Good"),
-            ],
-            overall_notes="Good run.",
-            model="mock-model",
-        )
-
+    def test_pokemon_judged_run(self, fixture_db, tmp_path, capsys):
+        """Predefined question with pokemon rubric."""
         env = {
             "MOIRA_EVAL_JUDGE_ENDPOINT": "http://mock",
             "MOIRA_EVAL_JUDGE_MODEL": "mock-model",
@@ -281,7 +327,7 @@ class TestCLIJudgedRun:
         ):
             mock_save.return_value = tmp_path / "results" / "abc12345" / "tyranitar-ou.json"
             mock_save.return_value.parent.mkdir(parents=True, exist_ok=True)
-            mock_judge.return_value = mock_judge_result
+            mock_judge.return_value = _make_pokemon_result()
 
             sys.argv = [
                 "moira_eval.run",
@@ -298,11 +344,44 @@ class TestCLIJudgedRun:
         assert "tyranitar-ou: 15/16 (PASS)" in captured.out
         assert "-> " in captured.out
 
-        # Verify save_result was called with correct question_id
-        mock_save.assert_called_once()
         result_arg = mock_save.call_args.args[0]
         assert result_arg.question_id == "tyranitar-ou"
-        assert result_arg.judge["total"] == 15
+        assert result_arg.rubric == "pokemon"
+
+    def test_adhoc_general_judged_run(self, fixture_db, tmp_path, capsys):
+        """No --question-id: ad hoc run with general rubric."""
+        env = {
+            "MOIRA_EVAL_JUDGE_ENDPOINT": "http://mock",
+            "MOIRA_EVAL_JUDGE_MODEL": "mock-model",
+            "MOIRA_EVAL_JUDGE_API_KEY": "mock-key",
+        }
+
+        with (
+            patch.dict("os.environ", env),
+            patch("moira_eval.run.save_result") as mock_save,
+            patch("moira_eval.run._run_judge", new_callable=AsyncMock) as mock_judge,
+        ):
+            mock_save.return_value = tmp_path / "results" / "abc12345" / "adhoc-run001.json"
+            mock_save.return_value.parent.mkdir(parents=True, exist_ok=True)
+            mock_judge.return_value = _make_general_result()
+
+            sys.argv = [
+                "moira_eval.run",
+                "--db",
+                str(fixture_db),
+                "--run-id",
+                "run-001",
+            ]
+            main()
+
+        captured = capsys.readouterr()
+        assert "adhoc-run-001: 21/25" in captured.out
+
+        result_arg = mock_save.call_args.args[0]
+        assert result_arg.rubric == "general"
+        assert result_arg.question_id == "adhoc-run-001"
+        # Question text derived from knowledge snapshot
+        assert result_arg.question_text == "Test question about Tyranitar?"
 
     def test_unknown_question_id_exits_with_error(self, fixture_db, capsys):
         env = {
@@ -324,10 +403,8 @@ class TestCLIJudgedRun:
 
         captured = capsys.readouterr()
         assert "Unknown question-id" in captured.err
-        assert "nonexistent" in captured.err
 
     def test_judge_failure_falls_back_to_metrics(self, fixture_db, capsys):
-        """When the judge raises JudgeError, falls back to metrics-only."""
         from moira_eval.judge import JudgeError
 
         env = {

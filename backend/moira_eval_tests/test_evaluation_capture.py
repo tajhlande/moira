@@ -474,3 +474,54 @@ class TestCaptureArtifacts:
         assert len(knowledge["facts"]) == 2
         assert isinstance(knowledge["conclusions"], list)
         assert len(knowledge["conclusions"]) == 1
+
+
+def test_tool_catalog_extraction(tmp_path):
+    """Tool catalog is extracted from the tools table when it exists."""
+    db_path = str(tmp_path / "test.db")
+    conn = sqlite3.connect(db_path)
+    _create_schema(conn)
+    conn.executescript(
+        """
+        CREATE TABLE tools (
+            name TEXT PRIMARY KEY,
+            description TEXT NOT NULL DEFAULT '',
+            argument_schema TEXT NOT NULL DEFAULT '{}',
+            config TEXT NOT NULL DEFAULT '{}',
+            tags TEXT NOT NULL DEFAULT '[]',
+            reliability TEXT NOT NULL DEFAULT 'unknown',
+            is_default INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            implementation TEXT NOT NULL DEFAULT '',
+            group_name TEXT NOT NULL DEFAULT ''
+        );
+        INSERT INTO tools (name, description) VALUES ('web_search', 'Search the web');
+        INSERT INTO tools (name, description) VALUES ('pokeapi', 'Pokemon API');
+        INSERT INTO tools (name, description, enabled) VALUES ('disabled_tool', 'Off', 0);
+        """
+    )
+    _insert_run(conn)
+    conn.commit()
+    conn.close()
+
+    artifacts = capture_artifacts(db_path, run_id="run-1")
+    catalog = artifacts["tool_catalog"]
+    # Disabled tools should be excluded
+    assert len(catalog) == 2
+    names = [t["name"] for t in catalog]
+    assert "web_search" in names
+    assert "pokeapi" in names
+    assert "disabled_tool" not in names
+
+
+def test_tool_catalog_missing_table(tmp_path):
+    """When no tools table exists, tool_catalog is an empty list."""
+    db_path = str(tmp_path / "test.db")
+    conn = sqlite3.connect(db_path)
+    _create_schema(conn)
+    _insert_run(conn)
+    conn.commit()
+    conn.close()
+
+    artifacts = capture_artifacts(db_path, run_id="run-1")
+    assert artifacts["tool_catalog"] == []

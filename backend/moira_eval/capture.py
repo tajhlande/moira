@@ -109,6 +109,24 @@ def _extract_tool_trace(steps: list[dict]) -> list[dict]:
     return trace
 
 
+
+def _get_tool_catalog(conn: sqlite3.Connection) -> list[dict]:
+    """Read the tool catalog from the ``tools`` table.
+
+    Returns a list of ``{"name": ..., "description": ...}`` dicts for
+    every enabled tool. This is included in the judge prompt so the
+    judge knows what tools the agent actually had access to.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT name, description FROM tools WHERE enabled = 1 ORDER BY name"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        # Table may not exist in older databases.
+        return []
+    return [{"name": r["name"], "description": r["description"]} for r in rows]
+
+
 # ---------------------------------------------------------------------------
 # Review / evaluation extraction
 # ---------------------------------------------------------------------------
@@ -280,6 +298,7 @@ def capture_artifacts(db_path: str, run_id: str | None = None) -> dict:
         steps = _get_steps(conn, actual_run_id)
 
         tool_trace = _extract_tool_trace(steps)
+        tool_catalog = _get_tool_catalog(conn)
         report = _extract_report(run)
         knowledge = _extract_knowledge(run)
 
@@ -301,6 +320,7 @@ def capture_artifacts(db_path: str, run_id: str | None = None) -> dict:
             "url_content_calls": _count_tool_calls(steps, "url_content"),
             "tools_used": sorted({t["tool"] for t in tool_trace}),
             "tool_trace": tool_trace,
+            "tool_catalog": tool_catalog,
             "knowledge": knowledge,
             "review_attempts": _extract_review_attempts(steps),
             "evaluation_attempts": _extract_evaluation_attempts(steps),

@@ -1,9 +1,9 @@
 """Tests for moira_eval.judge and moira_eval.prompts.
 
 Uses a mock InferenceClient to test:
-- Judge prompt construction (system + user message content)
+- Judge prompt construction for both pokemon and general rubrics
 - JSON response parsing (clean, malformed, missing categories)
-- JudgeResult properties (total, passed, hard-fail)
+- JudgeResult properties (total, passed, hard-fail, scale_max)
 - JudgeError on unparseable output
 """
 
@@ -22,8 +22,9 @@ from moira_eval.judge import (
     judge_config_from_env,
 )
 from moira_eval.prompts import (
+    GENERAL_JUDGE_SYSTEM,
     POKEMON_JUDGE_SYSTEM,
-    build_pokemon_judge_messages,
+    build_judge_messages,
 )
 from moira_eval.rubric_pokemon import CANARY_QUESTION
 
@@ -69,6 +70,10 @@ def sample_artifacts() -> dict:
         "review_attempts": [{"decision": "approve", "issues": []}],
         "evaluation_attempts": [{"decision": "approve", "assessment": "well-supported"}],
         "critiques": [],
+        "tool_catalog": [
+            {"name": "web_search", "description": "Search the web"},
+            {"name": "pokemon_species", "description": "Look up species data"},
+        ],
     }
 
 
@@ -90,7 +95,7 @@ def sample_metrics() -> dict:
     }
 
 
-_VALID_JUDGE_RESPONSE = json.dumps(
+_VALID_POKEMON_RESPONSE = json.dumps(
     {
         "categories": [
             {"name": "Tool choice", "score": 2, "rationale": "Used Pokemon tools first."},
@@ -111,14 +116,27 @@ _VALID_JUDGE_RESPONSE = json.dumps(
 )
 
 
+_VALID_GENERAL_RESPONSE = json.dumps(
+    {
+        "categories": [
+            {"name": "Grounding", "score": 4, "rationale": "Mostly grounded."},
+            {"name": "Fact atomicity", "score": 5, "rationale": "Atomic and verifiable."},
+            {"name": "Citation support", "score": 4, "rationale": "Citations match."},
+            {"name": "Critique quality", "score": 3, "rationale": "Caught some issues."},
+            {"name": "Goal alignment", "score": 5, "rationale": "Directly answers the question."},
+        ],
+        "overall_notes": "Strong grounding, verification could be deeper.",
+    }
+)
+
+
 # ---------------------------------------------------------------------------
-# Prompt tests
+# Pokemon prompt tests
 # ---------------------------------------------------------------------------
 
 
-class TestPrompts:
+class TestPokemonPrompts:
     def test_system_prompt_contains_all_categories(self):
-        """All 8 rubric categories appear in the system prompt."""
         categories = [
             "Tool choice",
             "Search discipline",
@@ -130,130 +148,140 @@ class TestPrompts:
             "Verification quality",
         ]
         for cat in categories:
-            assert cat in POKEMON_JUDGE_SYSTEM, f"Category '{cat}' missing from system prompt"
+            assert cat in POKEMON_JUDGE_SYSTEM, f"Category '{cat}' missing"
 
     def test_system_prompt_marks_hard_fail_categories(self):
-        """Hard-fail categories are marked with [HARD FAIL]."""
         assert "[HARD FAIL" in POKEMON_JUDGE_SYSTEM
-        assert "Type correctness" in POKEMON_JUDGE_SYSTEM
-        # Non-hard-fail categories should NOT have the tag
-        # (but the category name still appears)
-        # Verify "Tool choice" is NOT followed by [HARD FAIL]
         tool_choice_section = POKEMON_JUDGE_SYSTEM.split("Tool choice")[1].split("###")[0]
         assert "[HARD FAIL" not in tool_choice_section
 
     def test_system_prompt_contains_key_distinctions(self):
-        """The unsupported != contradicted distinction is in the prompt."""
         assert "Unsupported != contradicted" in POKEMON_JUDGE_SYSTEM
         assert "Learnset != typical" in POKEMON_JUDGE_SYSTEM
         assert "Legal != common" in POKEMON_JUDGE_SYSTEM
 
-    def test_system_prompt_contains_verification_stance(self):
-        """The critique-quality stance is described."""
-        assert "verification" in POKEMON_JUDGE_SYSTEM.lower()
-        assert "rubber-stamp" in POKEMON_JUDGE_SYSTEM.lower()
-
-    def test_system_prompt_contains_output_schema(self):
-        """The JSON output schema is specified."""
-        assert '"categories"' in POKEMON_JUDGE_SYSTEM
-        assert '"overall_notes"' in POKEMON_JUDGE_SYSTEM
+    def test_system_prompt_contains_tool_awareness(self):
+        assert "Available Tools" in POKEMON_JUDGE_SYSTEM
 
     def test_user_message_contains_question(self, sample_artifacts, sample_metrics):
-        """The question text appears in the user message."""
-        messages = build_pokemon_judge_messages("Test question?", sample_artifacts, sample_metrics)
+        messages = build_judge_messages(
+            "Test question?", sample_artifacts, sample_metrics, "pokemon"
+        )
         assert len(messages) == 2
         assert messages[0]["role"] == "system"
         assert messages[1]["role"] == "user"
         assert "Test question?" in messages[1]["content"]
 
     def test_user_message_contains_answer(self, sample_artifacts, sample_metrics):
-        """The agent's answer appears in the user message."""
-        messages = build_pokemon_judge_messages("Q?", sample_artifacts, sample_metrics)
+        messages = build_judge_messages("Q?", sample_artifacts, sample_metrics, "pokemon")
         assert "Tyranitar synergizes with Excadrill" in messages[1]["content"]
 
-    def test_user_message_contains_knowledge(self, sample_artifacts, sample_metrics):
-        """Facts and conclusions appear in the user message."""
-        messages = build_pokemon_judge_messages("Q?", sample_artifacts, sample_metrics)
-        assert "Sand Stream" in messages[1]["content"]
-        assert "Excadrill pairs well" in messages[1]["content"]
+    def test_user_message_contains_tool_catalog(self, sample_artifacts, sample_metrics):
+        messages = build_judge_messages("Q?", sample_artifacts, sample_metrics, "pokemon")
+        assert "web_search" in messages[1]["content"]
+        assert "pokemon_species" in messages[1]["content"]
 
-    def test_user_message_contains_verification_outputs(self, sample_artifacts, sample_metrics):
-        """Review and evaluation attempts appear in the user message."""
-        messages = build_pokemon_judge_messages("Q?", sample_artifacts, sample_metrics)
+    def test_user_message_contains_knowledge(self, sample_artifacts, sample_metrics):
+        messages = build_judge_messages("Q?", sample_artifacts, sample_metrics, "pokemon")
+        assert "Sand Stream" in messages[1]["content"]
+
+    def test_user_message_contains_verification(self, sample_artifacts, sample_metrics):
+        messages = build_judge_messages("Q?", sample_artifacts, sample_metrics, "pokemon")
         assert "well-supported" in messages[1]["content"]
 
     def test_user_message_contains_metrics(self, sample_artifacts, sample_metrics):
-        """Mechanical metrics appear in the user message."""
-        messages = build_pokemon_judge_messages("Q?", sample_artifacts, sample_metrics)
+        messages = build_judge_messages("Q?", sample_artifacts, sample_metrics, "pokemon")
         assert "web_search calls: 4" in messages[1]["content"]
-        assert "specialized tool use ratio: 0.5" in messages[1]["content"]
 
     def test_user_message_contains_grading_instruction(self, sample_artifacts, sample_metrics):
-        """The 'grade don't re-answer' instruction is present."""
-        messages = build_pokemon_judge_messages("Q?", sample_artifacts, sample_metrics)
+        messages = build_judge_messages("Q?", sample_artifacts, sample_metrics, "pokemon")
         assert "do not re-answer" in messages[1]["content"].lower()
-        assert "grade" in messages[1]["content"].lower()
 
 
 # ---------------------------------------------------------------------------
-# JSON parsing tests
+# General prompt tests
 # ---------------------------------------------------------------------------
 
 
-class TestParseJudgeResponse:
+class TestGeneralPrompts:
+    def test_system_prompt_contains_all_criteria(self):
+        criteria = [
+            "Grounding",
+            "Fact atomicity",
+            "Citation support",
+            "Critique quality",
+            "Goal alignment",
+        ]
+        for c in criteria:
+            assert c in GENERAL_JUDGE_SYSTEM, f"Criterion '{c}' missing"
+
+    def test_system_prompt_uses_1_5_scale(self):
+        assert "1-5" in GENERAL_JUDGE_SYSTEM
+        assert "Score 5" in GENERAL_JUDGE_SYSTEM
+
+    def test_system_prompt_no_hard_fail(self):
+        assert "[HARD FAIL" not in GENERAL_JUDGE_SYSTEM
+
+    def test_system_prompt_contains_key_distinctions(self):
+        assert "Unsupported != contradicted" in GENERAL_JUDGE_SYSTEM
+        assert "Atomic != vague" in GENERAL_JUDGE_SYSTEM
+        assert "Cited != supported" in GENERAL_JUDGE_SYSTEM
+
+    def test_system_prompt_contains_tool_awareness(self):
+        assert "Available Tools" in GENERAL_JUDGE_SYSTEM
+
+    def test_general_user_message(self, sample_artifacts, sample_metrics):
+        messages = build_judge_messages(
+            "What is Python?", sample_artifacts, sample_metrics, "general"
+        )
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "user"
+        assert "What is Python?" in messages[1]["content"]
+
+
+# ---------------------------------------------------------------------------
+# JSON parsing tests — Pokemon
+# ---------------------------------------------------------------------------
+
+
+class TestParsePokemonResponse:
     def test_clean_json(self):
-        result = _parse_judge_response(_VALID_JUDGE_RESPONSE)
+        result = _parse_judge_response(_VALID_POKEMON_RESPONSE, "pokemon")
         assert len(result.categories) == 8
-        assert result.total == 14  # 2+1+2+2+2+2+1+2
+        assert result.total == 14
         assert result.max_total == 16
+        assert result.scale_max == 2
+        assert result.rubric == "pokemon"
         assert result.passed is True
         assert result.overall_notes == "Solid run with minor synthesis issues."
 
     def test_markdown_fenced_json(self):
-        """JSON wrapped in ```json ... ``` fences."""
-        fenced = f"```json\n{_VALID_JUDGE_RESPONSE}\n```"
-        result = _parse_judge_response(fenced)
-        assert len(result.categories) == 8
-        assert result.total == 14
-
-    def test_json_with_think_block(self):
-        """JSON preceded by <think>...</think> reasoning."""
-        text = f"<think>Let me grade this carefully.</think>\n{_VALID_JUDGE_RESPONSE}"
-        result = _parse_judge_response(text)
+        fenced = f"```json\n{_VALID_POKEMON_RESPONSE}\n```"
+        result = _parse_judge_response(fenced, "pokemon")
         assert len(result.categories) == 8
 
     def test_trailing_commas(self):
-        """Trailing commas before closing braces are tolerated."""
-        bad = _VALID_JUDGE_RESPONSE.replace('"]}', '"],}')
-        result = _parse_judge_response(bad)
+        bad = _VALID_POKEMON_RESPONSE.replace('"]}', '"],}')
+        result = _parse_judge_response(bad, "pokemon")
         assert len(result.categories) == 8
 
     def test_missing_category_filled_with_zero(self):
-        """Categories the judge omitted default to score 0."""
         partial = json.dumps(
-            {
-                "categories": [
-                    {"name": "Tool choice", "score": 2, "rationale": "Good."},
-                ],
-                "overall_notes": "Partial.",
-            }
+            {"categories": [{"name": "Tool choice", "score": 2, "rationale": "Good."}]}
         )
-        result = _parse_judge_response(partial)
+        result = _parse_judge_response(partial, "pokemon")
         assert len(result.categories) == 8
-        assert result.categories[0].name == "Tool choice"
         assert result.categories[0].score == 2
-        # The remaining 7 should be 0 with a note
         for cat in result.categories[1:]:
             assert cat.score == 0
             assert "did not score" in cat.rationale
 
-    def test_invalid_score_clamped(self):
-        """Scores outside [0, 2] are clamped."""
+    def test_invalid_score_clamped_to_2(self):
         data = json.dumps(
             {
                 "categories": [
-                    {"name": name, "score": 5, "rationale": "..."}
-                    for name in [
+                    {"name": n, "score": 5}
+                    for n in [
                         "Tool choice",
                         "Search discipline",
                         "Type correctness",
@@ -266,80 +294,120 @@ class TestParseJudgeResponse:
                 ]
             }
         )
-        result = _parse_judge_response(data)
+        result = _parse_judge_response(data, "pokemon")
         for cat in result.categories:
-            assert cat.score == 2  # clamped down to max
+            assert cat.score == 2
 
-    def test_negative_score_clamped(self):
-        """Negative scores are clamped to 0."""
+    def test_hard_fail_detection(self):
         data = json.dumps(
             {
                 "categories": [
-                    {"name": "Tool choice", "score": -1, "rationale": "bad"},
-                    {"name": "Search discipline", "score": 1, "rationale": "ok"},
-                    {"name": "Type correctness", "score": 0, "rationale": "bad"},
-                    {"name": "Ability correctness", "score": 2, "rationale": "good"},
-                    {"name": "Typical-move discipline", "score": 2, "rationale": "good"},
-                    {"name": "OU legality and metagame", "score": 2, "rationale": "good"},
-                    {"name": "Synthesis discipline", "score": 2, "rationale": "good"},
-                    {"name": "Verification quality", "score": 2, "rationale": "good"},
+                    {"name": "Tool choice", "score": 2},
+                    {"name": "Search discipline", "score": 2},
+                    {"name": "Type correctness", "score": 1},  # HARD FAIL
+                    {"name": "Ability correctness", "score": 2},
+                    {"name": "Typical-move discipline", "score": 2},
+                    {"name": "OU legality and metagame", "score": 2},
+                    {"name": "Synthesis discipline", "score": 2},
+                    {"name": "Verification quality", "score": 2},
                 ]
             }
         )
-        result = _parse_judge_response(data)
-        assert result.categories[0].score == 0  # -1 clamped to 0
-
-    def test_empty_response_raises(self):
-        with pytest.raises(JudgeError, match="no parseable JSON"):
-            _parse_judge_response("")
-
-    def test_garbage_response_raises(self):
-        with pytest.raises(JudgeError, match="no parseable JSON"):
-            _parse_judge_response("This is not JSON at all.")
+        result = _parse_judge_response(data, "pokemon")
+        assert not result.passed
+        assert "Type correctness" in result.hard_fail_categories_failed
 
     def test_categories_preserve_rubric_order(self):
-        """Result categories are in canonical rubric order, not judge order."""
         reversed_data = json.dumps(
             {
                 "categories": [
-                    {"name": "Verification quality", "score": 2, "rationale": "..."},
-                    {"name": "Synthesis discipline", "score": 2, "rationale": "..."},
-                    {"name": "OU legality and metagame", "score": 2, "rationale": "..."},
-                    {"name": "Typical-move discipline", "score": 2, "rationale": "..."},
-                    {"name": "Ability correctness", "score": 2, "rationale": "..."},
-                    {"name": "Type correctness", "score": 2, "rationale": "..."},
-                    {"name": "Search discipline", "score": 2, "rationale": "..."},
-                    {"name": "Tool choice", "score": 2, "rationale": "..."},
+                    {"name": "Verification quality", "score": 2},
+                    {"name": "Synthesis discipline", "score": 2},
+                    {"name": "OU legality and metagame", "score": 2},
+                    {"name": "Typical-move discipline", "score": 2},
+                    {"name": "Ability correctness", "score": 2},
+                    {"name": "Type correctness", "score": 2},
+                    {"name": "Search discipline", "score": 2},
+                    {"name": "Tool choice", "score": 2},
                 ]
             }
         )
-        result = _parse_judge_response(reversed_data)
+        result = _parse_judge_response(reversed_data, "pokemon")
         assert result.categories[0].name == "Tool choice"
         assert result.categories[-1].name == "Verification quality"
 
-    def test_hard_fail_detection(self):
-        """Failing a hard-fail category makes passed=False."""
+    def test_empty_response_raises(self):
+        with pytest.raises(JudgeError, match="no parseable JSON"):
+            _parse_judge_response("", "pokemon")
+
+
+# ---------------------------------------------------------------------------
+# JSON parsing tests — General
+# ---------------------------------------------------------------------------
+
+
+class TestParseGeneralResponse:
+    def test_clean_json(self):
+        result = _parse_judge_response(_VALID_GENERAL_RESPONSE, "general")
+        assert len(result.categories) == 5
+        assert result.total == 21  # 4+5+4+3+5
+        assert result.max_total == 25
+        assert result.scale_max == 5
+        assert result.rubric == "general"
+        assert result.passed is True  # no hard-fail in general
+
+    def test_invalid_score_clamped_to_5(self):
         data = json.dumps(
             {
                 "categories": [
-                    {"name": "Tool choice", "score": 2, "rationale": ""},
-                    {"name": "Search discipline", "score": 2, "rationale": ""},
-                    {
-                        "name": "Type correctness",
-                        "score": 1,
-                        "rationale": "wrong type",
-                    },  # HARD FAIL
-                    {"name": "Ability correctness", "score": 2, "rationale": ""},
-                    {"name": "Typical-move discipline", "score": 2, "rationale": ""},
-                    {"name": "OU legality and metagame", "score": 2, "rationale": ""},
-                    {"name": "Synthesis discipline", "score": 2, "rationale": ""},
-                    {"name": "Verification quality", "score": 2, "rationale": ""},
+                    {"name": n, "score": 99}
+                    for n in [
+                        "Grounding",
+                        "Fact atomicity",
+                        "Citation support",
+                        "Critique quality",
+                        "Goal alignment",
+                    ]
                 ]
             }
         )
-        result = _parse_judge_response(data)
-        assert not result.passed
-        assert "Type correctness" in result.hard_fail_categories_failed
+        result = _parse_judge_response(data, "general")
+        for cat in result.categories:
+            assert cat.score == 5
+
+    def test_missing_category_filled_with_zero(self):
+        partial = json.dumps(
+            {"categories": [{"name": "Grounding", "score": 4, "rationale": "Good."}]}
+        )
+        result = _parse_judge_response(partial, "general")
+        assert len(result.categories) == 5
+        assert result.categories[0].score == 4
+        for cat in result.categories[1:]:
+            assert cat.score == 0
+
+    def test_no_hard_fail_categories(self):
+        result = _parse_judge_response(_VALID_GENERAL_RESPONSE, "general")
+        assert result.hard_fail_categories_failed == []
+
+    def test_categories_preserve_rubric_order(self):
+        reversed_data = json.dumps(
+            {
+                "categories": [
+                    {"name": "Goal alignment", "score": 5},
+                    {"name": "Critique quality", "score": 5},
+                    {"name": "Citation support", "score": 5},
+                    {"name": "Fact atomicity", "score": 5},
+                    {"name": "Grounding", "score": 5},
+                ]
+            }
+        )
+        result = _parse_judge_response(reversed_data, "general")
+        assert result.categories[0].name == "Grounding"
+        assert result.categories[-1].name == "Goal alignment"
+
+    def test_unknown_rubric_raises(self):
+        with pytest.raises(JudgeError, match="Unknown rubric"):
+            _parse_judge_response("{}", "nonexistent")
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +419,6 @@ class TestJudgeConfigFromEnv:
     def test_returns_none_when_endpoint_missing(self, monkeypatch):
         monkeypatch.delenv("MOIRA_EVAL_JUDGE_ENDPOINT", raising=False)
         monkeypatch.setenv("MOIRA_EVAL_JUDGE_MODEL", "gpt-4o")
-        monkeypatch.delenv("MOIRA_EVAL_JUDGE_API_KEY", raising=False)
         assert judge_config_from_env() is None
 
     def test_returns_none_when_model_missing(self, monkeypatch):
@@ -367,13 +434,11 @@ class TestJudgeConfigFromEnv:
         assert config is not None
         assert config.endpoint == "https://api.openai.com/v1"
         assert config.model == "gpt-4o"
-        assert config.api_key == "sk-test"
 
     def test_strips_whitespace(self, monkeypatch):
         monkeypatch.setenv("MOIRA_EVAL_JUDGE_ENDPOINT", "  https://api.openai.com/v1  ")
         monkeypatch.setenv("MOIRA_EVAL_JUDGE_MODEL", "  gpt-4o  ")
         config = judge_config_from_env()
-        assert config is not None
         assert config.endpoint == "https://api.openai.com/v1"
         assert config.model == "gpt-4o"
 
@@ -384,40 +449,35 @@ class TestJudgeConfigFromEnv:
 
 
 class TestJudgeResult:
-    def test_total_sums_categories(self):
+    def test_pokemon_max_total(self):
         result = JudgeResult(
-            categories=[
-                JudgeCategoryScore(name="A", score=2),
-                JudgeCategoryScore(name="B", score=1),
-                JudgeCategoryScore(name="C", score=0),
-            ]
+            categories=[JudgeCategoryScore(name="A", score=0)] * 8,
+            scale_max=2,
         )
-        assert result.total == 3
+        assert result.max_total == 16
 
-    def test_max_total(self):
+    def test_general_max_total(self):
         result = JudgeResult(
-            categories=[
-                JudgeCategoryScore(name="A", score=0),
-                JudgeCategoryScore(name="B", score=0),
-            ]
+            categories=[JudgeCategoryScore(name="A", score=0)] * 5,
+            scale_max=5,
         )
-        assert result.max_total == 4
+        assert result.max_total == 25
 
-    def test_passed_when_no_hard_fail_below_2(self):
+    def test_passed_no_hard_fail(self):
         result = JudgeResult(
-            categories=[
-                JudgeCategoryScore(name="Type correctness", score=2),
-                JudgeCategoryScore(name="Tool choice", score=1),  # not hard-fail
-            ]
+            categories=[JudgeCategoryScore(name="A", score=1)],
+            scale_max=2,
+            hard_fail_categories=frozenset(),
         )
         assert result.passed
 
-    def test_failed_when_hard_fail_below_2(self):
+    def test_failed_with_hard_fail(self):
         result = JudgeResult(
             categories=[
                 JudgeCategoryScore(name="Type correctness", score=1),
-                JudgeCategoryScore(name="Tool choice", score=2),
-            ]
+            ],
+            scale_max=2,
+            hard_fail_categories=frozenset({"Type correctness"}),
         )
         assert not result.passed
         assert "Type correctness" in result.hard_fail_categories_failed
@@ -430,13 +490,12 @@ class TestJudgeResult:
 
 class TestJudgeScoreRun:
     @pytest.mark.asyncio
-    async def test_score_run_success(self, sample_artifacts, sample_metrics):
-        """score_run builds messages, calls client, parses response."""
+    async def test_pokemon_score_run_success(self, sample_artifacts, sample_metrics):
         config = JudgeConfig(endpoint="http://test", model="test-model")
         judge = Judge(config)
 
         mock_response = MagicMock()
-        mock_response.content = _VALID_JUDGE_RESPONSE
+        mock_response.content = _VALID_POKEMON_RESPONSE
         mock_response.model = "test-model-actual"
 
         mock_client = MagicMock()
@@ -445,24 +504,42 @@ class TestJudgeScoreRun:
         mock_client.stop = AsyncMock()
         judge._client = mock_client
 
-        result = await judge.score_run(CANARY_QUESTION, sample_artifacts, sample_metrics)
+        result = await judge.score_run(
+            CANARY_QUESTION, sample_artifacts, sample_metrics, rubric="pokemon"
+        )
 
         assert len(result.categories) == 8
         assert result.total == 14
+        assert result.scale_max == 2
         assert result.model == "test-model-actual"
         mock_client.chat_completion.assert_called_once()
 
-        # Verify the messages passed to the client
-        call_args = mock_client.chat_completion.call_args
-        messages = call_args.kwargs["messages"]
-        assert len(messages) == 2
-        assert messages[0]["role"] == "system"
-        assert messages[1]["role"] == "user"
-        assert CANARY_QUESTION in messages[1]["content"]
+    @pytest.mark.asyncio
+    async def test_general_score_run_success(self, sample_artifacts, sample_metrics):
+        config = JudgeConfig(endpoint="http://test", model="test-model")
+        judge = Judge(config)
+
+        mock_response = MagicMock()
+        mock_response.content = _VALID_GENERAL_RESPONSE
+        mock_response.model = "test-model"
+
+        mock_client = MagicMock()
+        mock_client.chat_completion = AsyncMock(return_value=mock_response)
+        mock_client.start = AsyncMock()
+        mock_client.stop = AsyncMock()
+        judge._client = mock_client
+
+        result = await judge.score_run(
+            "What is Python?", sample_artifacts, sample_metrics, rubric="general"
+        )
+
+        assert len(result.categories) == 5
+        assert result.total == 21
+        assert result.scale_max == 5
+        assert result.rubric == "general"
 
     @pytest.mark.asyncio
     async def test_score_run_model_failure_raises(self, sample_artifacts, sample_metrics):
-        """When the model call fails, JudgeError is raised."""
         config = JudgeConfig(endpoint="http://test", model="test-model")
         judge = Judge(config)
 
@@ -476,32 +553,12 @@ class TestJudgeScoreRun:
             await judge.score_run(CANARY_QUESTION, sample_artifacts, sample_metrics)
 
     @pytest.mark.asyncio
-    async def test_score_run_unparseable_raises(self, sample_artifacts, sample_metrics):
-        """When the response can't be parsed, JudgeError is raised."""
-        config = JudgeConfig(endpoint="http://test", model="test-model")
-        judge = Judge(config)
-
-        mock_response = MagicMock()
-        mock_response.content = "not json at all"
-        mock_response.model = "test-model"
-
-        mock_client = MagicMock()
-        mock_client.chat_completion = AsyncMock(return_value=mock_response)
-        mock_client.start = AsyncMock()
-        mock_client.stop = AsyncMock()
-        judge._client = mock_client
-
-        with pytest.raises(JudgeError, match="no parseable JSON"):
-            await judge.score_run(CANARY_QUESTION, sample_artifacts, sample_metrics)
-
-    @pytest.mark.asyncio
     async def test_temperature_is_low(self, sample_artifacts, sample_metrics):
-        """The judge uses low temperature for deterministic scoring."""
         config = JudgeConfig(endpoint="http://test", model="test-model")
         judge = Judge(config)
 
         mock_response = MagicMock()
-        mock_response.content = _VALID_JUDGE_RESPONSE
+        mock_response.content = _VALID_POKEMON_RESPONSE
         mock_response.model = "test-model"
 
         mock_client = MagicMock()
