@@ -25,6 +25,13 @@ _MAX_RESPONSE_SIZE = 5 * 1024 * 1024
 # beginning of the content, which is typically the most useful part.
 _MAX_OUTPUT_LENGTH = 100_000
 
+# Snippet and content lengths carried in metadata["results"] for citation
+# creation downstream. These mirror _SNIPPET_MAX_LENGTH (500) and
+# _CITATION_CONTENT_LIMIT (5000) in research.py — the tool provides the
+# data, the pipeline enforces its own limits.
+_METADATA_SNIPPET_LENGTH = 500
+_METADATA_CONTENT_LENGTH = 5_000
+
 
 class UrlContentTool(BaseTool):
     """Fetches a URL and returns its content via trafilatura extraction.
@@ -87,12 +94,23 @@ class UrlContentTool(BaseTool):
             return self._fail(start, f"Failed to parse content from {url}: {e}")
 
         content = content[:_MAX_OUTPUT_LENGTH]
+        title = self._extract_title(html)
         elapsed_ms = int((time.monotonic() - start) * 1000)
         return ToolResult(
             tool_name=self.name,
             output=content,
             success=True,
             duration_ms=elapsed_ms,
+            metadata={
+                "results": [
+                    {
+                        "url": url,
+                        "title": title,
+                        "snippet": content[:_METADATA_SNIPPET_LENGTH],
+                        "content": content[:_METADATA_CONTENT_LENGTH],
+                    }
+                ]
+            },
         )
 
     async def _fetch(self, url: str) -> str:
@@ -196,3 +214,20 @@ class UrlContentTool(BaseTool):
             duration_ms=elapsed_ms,
             error=error,
         )
+
+    def _extract_title(self, html: str) -> str:
+        """Extract the ``<title>`` element text from HTML.
+
+        Used to populate citation metadata so the knowledge store records
+        which page was fetched, not just its body text. Returns an empty
+        string when no ``<title>`` is present (some pages lack one).
+        """
+        try:
+            tree = etree.HTML(html)
+            if tree is not None:
+                titles = tree.xpath("//title/text()")
+                if titles:
+                    return titles[0].strip()
+        except Exception:
+            logger.debug("Title extraction failed", exc_info=True)
+        return ""

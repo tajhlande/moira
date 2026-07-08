@@ -330,7 +330,7 @@ def _process_execution_results(
                     url=sr.get("url") or None,
                     title=sr.get("title") or None,
                     snippet=sr.get("snippet") or None,
-                    content=sr.get("snippet") or None,
+                    content=sr.get("content") or sr.get("snippet") or None,
                 )
                 status = "SUCCESS" if result.success else "FAILED"
                 recurring = "" if is_new else " (recurring source)"

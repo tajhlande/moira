@@ -208,6 +208,86 @@ class TestUrlContentErrors:
             assert "404" in r.error or "Not Found" in r.error
 
 
+class TestUrlContentMetadata:
+    """Tests for citation metadata (url, title, snippet, content) in
+    the ToolResult returned by url_content."""
+
+    @pytest.mark.asyncio
+    async def test_metadata_has_url_and_title(self, tool):
+        transport = httpx.MockTransport(_make_handler(SAMPLE_HTML))
+        async with httpx.AsyncClient(transport=transport) as client:
+
+            async def mock_fetch(url):
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return resp.text
+
+            tool._fetch = mock_fetch
+            r = await tool.execute({"url": "https://example.com/page"})
+            assert r.success
+            assert r.metadata is not None
+            results = r.metadata["results"]
+            assert len(results) == 1
+            assert results[0]["url"] == "https://example.com/page"
+            assert results[0]["title"] == "Test Page"
+
+    @pytest.mark.asyncio
+    async def test_metadata_snippet_and_content_present(self, tool):
+        transport = httpx.MockTransport(_make_handler(SAMPLE_HTML))
+        async with httpx.AsyncClient(transport=transport) as client:
+
+            async def mock_fetch(url):
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return resp.text
+
+            tool._fetch = mock_fetch
+            r = await tool.execute({"url": "https://example.com"})
+            assert r.success
+            entry = r.metadata["results"][0]
+            assert "snippet" in entry
+            assert "content" in entry
+            assert len(entry["content"]) >= len(entry["snippet"])
+
+    @pytest.mark.asyncio
+    async def test_metadata_title_empty_when_missing(self, tool):
+        html_without_title = "<html><body><p>No title here</p></body></html>"
+        transport = httpx.MockTransport(_make_handler(html_without_title))
+        async with httpx.AsyncClient(transport=transport) as client:
+
+            async def mock_fetch(url):
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return resp.text
+
+            tool._fetch = mock_fetch
+            r = await tool.execute({"url": "https://example.com"})
+            assert r.success
+            assert r.metadata["results"][0]["title"] == ""
+
+    @pytest.mark.asyncio
+    async def test_metadata_url_reflects_requested_url(self, tool):
+        transport = httpx.MockTransport(_make_handler(SAMPLE_HTML))
+        async with httpx.AsyncClient(transport=transport) as client:
+
+            async def mock_fetch(url):
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return resp.text
+
+            tool._fetch = mock_fetch
+            r = await tool.execute({"url": "https://wiki.example.com/Article"})
+            assert r.success
+            assert r.metadata["results"][0]["url"] == "https://wiki.example.com/Article"
+
+    def test_extract_title_from_html(self, tool):
+        assert tool._extract_title(SAMPLE_HTML) == "Test Page"
+
+    def test_extract_title_missing_returns_empty(self, tool):
+        html = "<html><body><p>no title</p></body></html>"
+        assert tool._extract_title(html) == ""
+
+
 class TestUrlContentExtractUnit:
     """Unit tests for the _extract method without HTTP."""
 

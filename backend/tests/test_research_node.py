@@ -434,10 +434,10 @@ class TestResearch:
         assert citations[2]["url"] == "https://c.com"
 
     @pytest.mark.asyncio
-    async def test_no_metadata_falls_back_to_single_citation(
+    async def test_metadata_less_tool_falls_back_to_single_citation(
         self, config, mock_writer, mock_model
     ):
-        """Tools without metadata (e.g., url_content, calculator) still
+        """Tools without structured metadata (e.g., calculator) still
         get a single citation with text excerpt."""
         _inject_services(config, mock_model)
 
@@ -445,8 +445,8 @@ class TestResearch:
         mock_executor.execute_batch = AsyncMock(
             return_value=[
                 ToolResult(
-                    tool_name="url_content",
-                    output="# Some Page\n\nLots of content here.",
+                    tool_name="calculator",
+                    output="42",
                     success=True,
                     duration_ms=100,
                 ),
@@ -458,7 +458,90 @@ class TestResearch:
             ChatResponse(
                 content=json.dumps(
                     {
-                        "tool_calls": [{"tool": "url_content", "args": {"url": "https://x.com"}}],
+                        "tool_calls": [{"tool": "calculator", "args": {"expression": "6*7"}}],
+                        "discovered_facts": [],
+                        "sources": [],
+                    }
+                )
+            ),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [
+                            {"fact_id": "f001", "claim": "found it", "citation_ids": ["cit001"]},
+                        ],
+                        "sources": [],
+                    }
+                )
+            ),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(
+                tool="calculator",
+                args={"expression": "6*7"},
+                target_fact_ids=["f001"],
+                cost=1.0,
+            ),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="calculator", description="Calculator"),
+        ]
+
+        result = await research(state, _make_run_config(config))
+
+        citations = result["knowledge"]["citations"]
+        assert len(citations) == 1
+        assert citations[0]["id"] == "cit001"
+        assert "url" not in citations[0] or citations[0].get("url") is None
+        assert "42" in citations[0].get("excerpt", "")
+
+    @pytest.mark.asyncio
+    async def test_url_content_metadata_creates_citation_with_url_and_title(
+        self, config, mock_writer, mock_model
+    ):
+        """url_content metadata populates citation with url, title, and
+        a content body larger than the snippet."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="url_content",
+                    output="# Some Page\n\nLots of content here.",
+                    success=True,
+                    duration_ms=100,
+                    metadata={
+                        "results": [
+                            {
+                                "url": "https://example.com/article",
+                                "title": "Some Page",
+                                "snippet": "# Some Page",
+                                "content": "# Some Page\n\nLots of content here." * 50,
+                            }
+                        ]
+                    },
+                ),
+            ]
+        )
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [
+                            {"tool": "url_content", "args": {"url": "https://example.com/article"}}
+                        ],
                         "discovered_facts": [],
                         "sources": [],
                     }
@@ -487,7 +570,7 @@ class TestResearch:
         state["execution_state"]["tool_call_plan"] = [
             ToolCallPlan(
                 tool="url_content",
-                args={"url": "https://x.com"},
+                args={"url": "https://example.com/article"},
                 target_fact_ids=["f001"],
                 cost=1.0,
             ),
@@ -500,9 +583,14 @@ class TestResearch:
 
         citations = result["knowledge"]["citations"]
         assert len(citations) == 1
-        assert citations[0]["id"] == "cit001"
-        assert "url" not in citations[0] or citations[0].get("url") is None
-        assert "Some Page" in citations[0].get("excerpt", "")
+        cit = citations[0]
+        assert cit["id"] == "cit001"
+        assert cit["url"] == "https://example.com/article"
+        assert cit["title"] == "Some Page"
+        assert cit["source"] == "url_content"
+        assert "Some Page" in cit.get("excerpt", "")
+        # Content should be the richer body, not just the snippet
+        assert len(cit.get("content", "")) > len(cit.get("excerpt", ""))
 
     @pytest.mark.asyncio
     async def test_tool_result_display_truncation_note(self, config, mock_writer, mock_model):
