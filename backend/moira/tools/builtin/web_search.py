@@ -160,13 +160,25 @@ class WebSearchTool(BaseTool):
             return self._fail(start, f"SearXNG request failed: {e}")
 
         results = data.get("results", [])
+        unresponsive_engines = data.get("unresponsive_engines", [])
+
         if not results:
             elapsed_ms = int((time.monotonic() - start) * 1000)
+            if unresponsive_engines:
+                logger.warning(
+                    "web_search: no results for '%s'; unresponsive engines: %s",
+                    query[:80],
+                    unresponsive_engines,
+                )
             return ToolResult(
                 tool_name=self.name,
                 output="No search results found.",
                 success=True,
                 duration_ms=elapsed_ms,
+                metadata={
+                    "results": [],
+                    "unresponsive_engines": unresponsive_engines,
+                },
             )
 
         trimmed = results[:max_results]
@@ -177,6 +189,12 @@ class WebSearchTool(BaseTool):
             len(trimmed),
             query[:80],
         )
+        if unresponsive_engines:
+            logger.info(
+                "web_search: unresponsive engines for '%s': %s",
+                query[:80],
+                unresponsive_engines,
+            )
 
         # Carry structured per-result data so downstream nodes can create
         # citations with proper url/title without re-parsing the text output.
@@ -194,7 +212,10 @@ class WebSearchTool(BaseTool):
             output=output,
             success=True,
             duration_ms=elapsed_ms,
-            metadata={"results": structured_results},
+            metadata={
+                "results": structured_results,
+                "unresponsive_engines": unresponsive_engines,
+            },
         )
 
     @staticmethod

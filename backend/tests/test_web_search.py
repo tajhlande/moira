@@ -141,13 +141,56 @@ class TestWebSearchUnit:
         assert len(r.metadata["results"]) == 2
 
     @pytest.mark.asyncio
-    async def test_metadata_empty_on_no_results(self):
+    async def test_metadata_empty_results_on_no_results(self):
+        """When search returns no results, metadata carries an empty results
+        list (not None) so the pipeline can distinguish '0 hits' from
+        'tool has no metadata'."""
         tool = _make_tool(
             handler=_searxng_handler({"query": "obscure", "results": []}),
         )
         r = await tool.execute({"query": "obscure"})
         assert r.success
-        assert r.metadata == {}
+        assert r.metadata is not None
+        assert r.metadata["results"] == []
+        assert r.metadata["unresponsive_engines"] == []
+
+    @pytest.mark.asyncio
+    async def test_metadata_carries_unresponsive_engines(self):
+        """SearXNG reports engines that are suspended or rate-limited.
+        These should be carried in metadata for diagnostics."""
+        tool = _make_tool(
+            handler=_searxng_handler(
+                {
+                    "query": "test",
+                    "results": [],
+                    "unresponsive_engines": [
+                        ["brave", "too many requests"],
+                        ["startpage", "Suspended: CAPTCHA"],
+                    ],
+                }
+            ),
+        )
+        r = await tool.execute({"query": "test"})
+        assert r.success
+        assert r.metadata["results"] == []
+        assert len(r.metadata["unresponsive_engines"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_unresponsive_engines_on_successful_search(self):
+        """Even when results are returned, unresponsive engines should
+        be carried in metadata for diagnostics."""
+        tool = _make_tool(
+            handler=_searxng_handler(
+                {
+                    **SEARXNG_RESPONSE,
+                    "unresponsive_engines": [["startpage", "Suspended: CAPTCHA"]],
+                }
+            ),
+        )
+        r = await tool.execute({"query": "test"})
+        assert r.success
+        assert len(r.metadata["results"]) == 3
+        assert len(r.metadata["unresponsive_engines"]) == 1
 
     @pytest.mark.asyncio
     async def test_max_results_limits_output(self):

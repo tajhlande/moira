@@ -320,8 +320,12 @@ def _process_execution_results(
             }
         )
 
-        structured = result.metadata.get("results")
-        if structured:
+        # Tools that provide structured metadata (web_search, url_content)
+        # always carry a "results" key — even when empty.  This distinguishes
+        # "search returned 0 hits" (skip citation creation) from "tool has
+        # no metadata at all" (calculator — fall to Path B).
+        structured = result.metadata.get("results") if result.metadata else None
+        if structured is not None:
             for sr in structured:
                 cit_id, is_new = _find_or_merge_citation(
                     citations,
@@ -339,6 +343,15 @@ def _process_execution_results(
                     f"Title: {sr.get('title', '')}\n"
                     f"URL: {sr.get('url', '')}\n"
                     f"Snippet: {sr.get('snippet', '')}"
+                )
+            if not structured:
+                # Tool returned structured metadata but zero results (e.g.,
+                # web_search with all engines suspended).  Log the call
+                # without creating a noise citation.
+                status = "SUCCESS" if result.success else "FAILED"
+                tool_summary_parts.append(
+                    f"Tool: {name}\nStatus: {status}\n"
+                    f"Result: {result.output[:_SNIPPET_MAX_LENGTH] if result.output else ''}"
                 )
         else:
             cit_id = next_id("cit", citations)

@@ -434,6 +434,74 @@ class TestResearch:
         assert citations[2]["url"] == "https://c.com"
 
     @pytest.mark.asyncio
+    async def test_empty_search_results_create_no_citation(self, config, mock_writer, mock_model):
+        """When web_search returns 0 results (metadata has empty results
+        list), no citation should be created. The tool call is still
+        logged in tool_results."""
+        _inject_services(config, mock_model)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search",
+                    output="No search results found.",
+                    success=True,
+                    duration_ms=100,
+                    metadata={
+                        "results": [],
+                        "unresponsive_engines": [["brave", "too many requests"]],
+                    },
+                ),
+            ]
+        )
+        _services["tool_executor"] = mock_executor
+
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [{"tool": "web_search", "args": {"query": "obscure"}}],
+                        "discovered_facts": [],
+                        "sources": [],
+                    }
+                )
+            ),
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "tool_calls": [],
+                        "discovered_facts": [
+                            {"fact_id": "f001", "claim": "nothing found", "citation_ids": []},
+                        ],
+                        "sources": [],
+                    }
+                )
+            ),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["user_goal"] = "Find info"
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(
+                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+            ),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search the web"),
+        ]
+
+        result = await research(state, _make_run_config(config))
+
+        citations = result["knowledge"]["citations"]
+        assert len(citations) == 0
+
+    @pytest.mark.asyncio
     async def test_metadata_less_tool_falls_back_to_single_citation(
         self, config, mock_writer, mock_model
     ):
