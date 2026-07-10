@@ -9,8 +9,11 @@ from moira_eval.rubric_pokemon import CANARY_QUESTION
 
 
 class TestQuestionSet:
-    def test_has_four_starter_questions(self):
-        assert len(QUESTIONS) == 4
+    def test_has_expected_question_count(self):
+        # 7 questions: tyranitar-ou, flaming-hot-cheetos, jazz-trumpeters,
+        # telescope-mount-cost, trade-policy-manufacturing, future-nostalgia,
+        # water-blood-pressure
+        assert len(QUESTIONS) == 7
 
     def test_tyranitar_ou_exists(self):
         assert "tyranitar-ou" in QUESTIONS
@@ -28,11 +31,20 @@ class TestQuestionSet:
         q = get_question("tyranitar-ou")
         assert q.placeholder is False
 
-    def test_placeholder_questions_exist(self):
-        for qid in ("oversearch-bait", "synthesis-trap", "multi-entity"):
+    def test_no_placeholders_remain(self):
+        """All shipped questions should have real text (no placeholders)."""
+        for qid, q in QUESTIONS.items():
+            assert q.placeholder is False, f"{qid} is still a placeholder"
+
+    def test_benchmark_questions_exist(self):
+        for qid in (
+            "telescope-mount-cost",
+            "trade-policy-manufacturing",
+            "future-nostalgia",
+            "water-blood-pressure",
+        ):
             q = get_question(qid)
             assert q is not None, f"Missing question: {qid}"
-            assert q.placeholder is True
             assert q.rubric == "general"
 
     def test_get_question_returns_none_for_unknown(self):

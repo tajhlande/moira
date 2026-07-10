@@ -35,7 +35,7 @@ from moira_eval.judge import (
 )
 from moira_eval.metrics import compute_metrics
 from moira_eval.questions import get_question
-from moira_eval.result import build_result, save_result
+from moira_eval.result import build_meta, build_result, save_meta, save_result
 
 
 def _format_metrics_summary(run_id: str, metrics: dict) -> str:
@@ -205,6 +205,12 @@ def main() -> None:
                 rubric=rubric,
             )
             result_path = save_result(result)
+
+            # Write/update meta.json for this commit directory.
+            judge_model = getattr(judge_config, "model", "")
+            meta = build_meta(commit_sha=result.commit_sha, judge_model=judge_model)
+            save_meta(meta)
+
             try:
                 result_path_rel = result_path.relative_to(Path.cwd())
             except ValueError:

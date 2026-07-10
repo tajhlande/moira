@@ -4,6 +4,10 @@ Result files are written to ``moira_eval/results/<commit-sha-short>/\
 <question-id>.json`` and contain the full scored result: question, run_id,
 metrics, judge scores, timestamp, and model info.
 
+A ``meta.json`` is written alongside the result files in each commit
+directory, capturing the evaluation environment context (commit, branch,
+timestamp, judge model).
+
 The ``results/`` directory is gitignored — it's local working data. The
 tracked history lives in ``EVAL_LOG.md`` (Iteration 4).
 
@@ -58,6 +62,74 @@ def get_commit_sha(short: bool = True) -> str:
         return sha[:8] if short else sha
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
         return "unknown"
+
+
+def get_branch() -> str:
+    """Get the current git branch name, or ``"unknown"``."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        return "unknown"
+
+
+@dataclass
+class MetaData:
+    """Environment context written as ``meta.json`` alongside results.
+
+    Multiple results in the same commit directory share one ``meta.json``.
+    If the file already exists, it is updated (e.g., if the judge model
+    changes between runs on the same commit).
+    """
+
+    commit: str
+    branch: str
+    timestamp: str
+    judge_model: str
+
+
+def build_meta(
+    commit_sha: str | None = None,
+    judge_model: str = "",
+) -> MetaData:
+    """Build a ``MetaData`` record for the current environment."""
+    return MetaData(
+        commit=commit_sha or get_commit_sha(),
+        branch=get_branch(),
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        judge_model=judge_model,
+    )
+
+
+def save_meta(
+    meta: MetaData,
+    results_dir: Path | str | None = None,
+) -> Path:
+    """Write or update ``meta.json`` in a commit directory.
+
+    Returns the path to the written file.
+    """
+    if results_dir is None:
+        package_dir = Path(__file__).resolve().parent
+        results_dir = package_dir / "results"
+    else:
+        results_dir = Path(results_dir)
+
+    out_dir = results_dir / meta.commit
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    out_path = out_dir / "meta.json"
+    out_path.write_text(
+        json.dumps(asdict(meta), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return out_path
 
 
 def build_result(

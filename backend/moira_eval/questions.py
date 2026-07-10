@@ -3,10 +3,11 @@
 Each question declares its rubric type ("pokemon" or "general") so the
 runner knows which judge prompt and scale to use.
 
-The starter set ships 4 questions. ``tyranitar-ou`` is the existing
-canary. The other three are placeholders — their text needs user input
-(see ``agent-docs/QUESTIONS.md``). Placeholders are marked with
-``placeholder=True`` so the runner can warn if used.
+The question set is designed to exercise different failure modes identified
+in ``agent-docs/claude-assessment.md``: tool-routing/search discipline,
+synthesis overreach, grounding under source ambiguity, and multi-entity
+decomposition.  See the notes on each question for the specific failure
+mode it targets.
 """
 
 from dataclasses import dataclass, field
@@ -44,38 +45,83 @@ QUESTIONS: dict[str, Question] = {
         tags=["pokemon", "gen9-ou"],
         notes="Existing canary from rubric_pokemon.py",
     ),
-    "oversearch-bait": Question(
-        id="oversearch-bait",
-        text=(
-            "[PLACEHOLDER] A question where the agent historically burned "
-            "web_search instead of using specialized tools. "
-            "Needs user input — see agent-docs/QUESTIONS.md."
-        ),
+    "flaming-hot-cheetos": Question(
+        id="flaming-hot-cheetos",
+        text="How were flaming hot Cheetos created?",
         rubric="general",
-        tags=["search-discipline", "tool-routing"],
-        placeholder=True,
+        tags=["search-discipline", "competing-narratives"],
+        notes=(
+            "Creator's narrative and corporate narrative differ, "
+            "but evidence preponderates one way"
+        ),
     ),
-    "synthesis-trap": Question(
-        id="synthesis-trap",
-        text=(
-            "[PLACEHOLDER] A question where individually-true facts tempt "
-            "an unsupported conclusion. "
-            "Needs user input — see agent-docs/QUESTIONS.md."
-        ),
+    "jazz-trumpeters": Question(
+        id="jazz-trumpeters",
+        text="Who are the most influential jazz trumpeters of the 1960s?",
         rubric="general",
-        tags=["synthesis-overreach", "verification"],
-        placeholder=True,
+        tags=["consensus-opinion", "information-availability"],
+        notes="Some artists are hard to find information",
     ),
-    "multi-entity": Question(
-        id="multi-entity",
+    # ------------------------------------------------------------------
+    # Benchmark questions targeting specific failure modes
+    # (selected from recent workflow runs based on claude-assessment.md)
+    # ------------------------------------------------------------------
+    "telescope-mount-cost": Question(
+        id="telescope-mount-cost",
         text=(
-            "[PLACEHOLDER] A question requiring many named entities with "
-            "interacting facts. "
-            "Needs user input — see agent-docs/QUESTIONS.md."
+            "Why are telescopes with equatorial mounts so much more expensive "
+            "than telescopes with alt-azimuth mounts?"
         ),
         rubric="general",
-        tags=["decomposition", "id-discipline"],
-        placeholder=True,
+        tags=["search-discipline", "tool-routing", "niche-technical"],
+        notes=(
+            "Run 8a876feb: 22 web_search calls, 1/9 facts verified. "
+            "Classic tool-routing failure — agent burned budget on generic "
+            "search instead of finding specific technical specs."
+        ),
+    ),
+    "trade-policy-manufacturing": Question(
+        id="trade-policy-manufacturing",
+        text=("How does international trade policy affect domestic manufacturing employment?"),
+        rubric="general",
+        tags=["synthesis-overreach", "causal-reasoning", "economics"],
+        notes=(
+            "Causal economic claim where correlation != causation. "
+            "Tests synthesis discipline — easy to overreach from "
+            "correlational data."
+        ),
+    ),
+    "future-nostalgia": Question(
+        id="future-nostalgia",
+        text=(
+            "Investigate the psychological phenomenon of 'Future Nostalgia' "
+            "— the experience of feeling nostalgic for a time or moment that "
+            "hasn't yet occurred. Provide a thorough investigation into its "
+            "possible neurological underpinnings, historical precedents, "
+            "potential psychological effects, cultural manifestations, and "
+            "implications for future well-being. Clearly characterize your "
+            "sources, distinguishing between peer-reviewed scientific "
+            "literature, credible cultural analyses, historical accounts, "
+            "and speculative hypotheses."
+        ),
+        rubric="general",
+        tags=["grounding-discipline", "source-ambiguity", "speculative"],
+        notes=(
+            "Speculative topic that blurs science and speculation. "
+            "Demands source characterization — directly tests citation "
+            "support and fact atomicity under source ambiguity."
+        ),
+    ),
+    "water-blood-pressure": Question(
+        id="water-blood-pressure",
+        text=("How does daily water consumption correlate with blood pressure levels in adults?"),
+        rubric="general",
+        tags=["medical-grounding", "health-science"],
+        notes=(
+            "Clean health-science question. Tests medical grounding "
+            "precision — health claims need strong support and precise "
+            "characterization of study findings."
+        ),
     ),
 }
 
