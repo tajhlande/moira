@@ -232,22 +232,66 @@ completed research runs stored in SQLite. It computes deterministic metrics
 from the knowledge snapshot, tool trace, and verification outputs, and can
 optionally call a frontier-model judge for rubric-based scoring.
 
-### Metrics-only (no judge)
+The full workflow is: **seed runs** (`eval:invoke`) → **score them**
+(`eval:batch` or `eval`) → **diff and log** results.
+
+### Seeding runs
+
+`eval:invoke` triggers workflow runs through the running backend's API,
+without clicking through the UI:
 
 ```bash
-./run.sh eval --db data/moira.db --run-id <uuid>
-# or omit --run-id to score the latest completed run
+# single question
+./run.sh eval:invoke --question tyranitar-ou
+
+# all benchmark questions, with a budget cap
+./run.sh eval:invoke --all --budget 80
+
+# custom text
+./run.sh eval:invoke --text "What is the airspeed of an unladen swallow?"
+```
+
+Requires the backend to be running (`./run.sh dev:backend`). Prints
+`run_id` for each question.
+
+### Evaluating runs
+
+**Batch mode** — evaluate all predefined questions at once:
+
+```bash
+./run.sh eval:batch --db data/moira.db
+```
+
+Finds the latest completed run matching each question, scores it, and
+prints a summary table:
+
+```
+Question                        Rubric    Score       web_search  unsupported  Status
+------------------------------------------------------------------------------------------
+tyranitar-ou                    pokemon   15/16 FAIL          6            0  FAIL
+flaming-hot-cheetos             general   21/25 PASS          8            0  PASS
+telescope-mount-cost            general   17/25 PASS         22            3  PASS
+...
+Total: 7 evaluated, 0 skipped, 0 error(s)
+```
+
+**Single-question mode** — score one run at a time:
+
+```bash
+# latest completed run
 ./run.sh eval --db data/moira.db
+
+# specific run + rubric
+./run.sh eval --db data/moira.db --run-id <uuid> --question-id tyranitar-ou
+
+# ad hoc (no --question-id; derives question from knowledge snapshot, general rubric)
+./run.sh eval --db data/moira.db --run-id <uuid>
 ```
 
-**Example output:**
+### Metrics
 
-```
-run <uuid>: web_search=14 | total_tools=22 | unknown_facts=3
-unsupported=1 | halluc_ids=0 | budget=48/60 (80%)
-```
-
-**What the metrics tell you:**
+When the judge is not configured (or fails), the harness falls back to
+metrics-only mode:
 
 | Metric | What it catches |
 |---|---|
@@ -262,9 +306,9 @@ unsupported=1 | halluc_ids=0 | budget=48/60 (80%)
 
 ### Judge scoring
 
-To score a run against a rubric with a frontier-model judge, set these
+To score runs against a rubric with a frontier-model judge, set these
 environment variables in a local `.env-eval` file (gitignored) at the repo
-root, then pass `--question-id`:
+root:
 
 | Env var | Required | Description |
 |---|---|---|
@@ -280,32 +324,51 @@ MOIRA_EVAL_JUDGE_MODEL=gpt-4o
 MOIRA_EVAL_JUDGE_API_KEY=sk-...
 ```
 
-`./run.sh eval` automatically loads `.env-eval` via `uv run --env-file`,
-so the judge picks up the values without exporting them in your shell:
+`./run.sh eval` and `./run.sh eval:batch` automatically load `.env-eval`
+via `uv run --env-file`.
 
-```bash
-./run.sh eval --db data/moira.db --run-id <uuid> --question-id tyranitar-ou
-```
+**Two rubrics:**
 
-**Example output:**
+- **Pokemon rubric** (8 categories, 0–2 each, hard-fail categories) — used
+  for the Tyranitar Gen9 OU canary. Domain-specific correctness checks
+  (type matchups, ability, OU legality).
+- **General rubric** (5 criteria, 1–5 each, no hard-fail) — used for all
+  other questions. Scores grounding, fact atomicity, citation support,
+  critique quality, and goal alignment.
 
-```
-tyranitar-ou: 15/16 (PASS) | web_search=6, unsupported=0, halluc_ids=0
-    Tool choice: 2/2 — Used Pokemon tools first.
-    Search discipline: 2/2 — Generic search limited.
-    Type correctness: 2/2 — No type matchup errors.
-    ...
-  -> moira_eval/results/<commit-sha>/tyranitar-ou.json
-```
+Each question declares which rubric applies.
+
+**Benchmark question set:**
+
+| Question ID | Rubric | What it tests |
+|---|---|---|
+| `tyranitar-ou` | pokemon | Pokemon correctness, tool routing |
+| `flaming-hot-cheetos` | general | Competing narratives, search discipline |
+| `jazz-trumpeters` | general | Consensus/opinion, information availability |
+| `telescope-mount-cost` | general | Niche technical, tool-routing failure |
+| `trade-policy-manufacturing` | general | Causal reasoning, synthesis overreach |
+| `future-nostalgia` | general | Source ambiguity, speculative grounding |
+| `water-blood-pressure` | general | Medical grounding precision |
+
+### Comparing results
 
 Result files are written to `moira_eval/results/<commit-sha-short>/\
 <question-id>.json` and are gitignored — they are local working data.
 
-If `--question-id` is given but judge env vars are not set (or vice versa),
-the harness falls back to metrics-only mode with a `WARNING:` on stderr.
+To diff two commits' results:
 
-**Available question IDs:** `tyranitar-ou` (Pokemon Gen9 OU canary). More
-questions arriving in future iterations.
+```bash
+uv run python -m moira_eval.diff \
+    moira_eval/results/<old-sha> moira_eval/results/<new-sha>
+```
+
+To log a meaningful result to the tracked score history:
+
+```bash
+uv run python -m moira_eval.log moira_eval/results/<sha>/<question>.json
+```
+
+This appends a structured entry to `EVAL_LOG.md` (tracked in git).
 
 ### Run eval tests
 
@@ -313,9 +376,8 @@ questions arriving in future iterations.
 ./run.sh test:eval
 ```
 
-Future iterations will add a general rubric, a question set, diffing, and
-a tracked score log. See [agent-docs/evaluation-harness.md](agent-docs/evaluation-harness.md)
-for the full plan.
+See [agent-docs/evaluation-harness.md](agent-docs/evaluation-harness.md)
+for the full design document.
 
 ## License
 

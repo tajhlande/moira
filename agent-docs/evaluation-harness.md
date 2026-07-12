@@ -154,12 +154,23 @@ The intended rhythm:
 
 1. **Make a change** to MOiRA (prompt edit, node logic, budget tuning, etc.).
 2. **Seed runs** for the question set — either via the UI as normal, or via
-   the thin `invoke.py` script that POSTs questions to a running backend.
-3. **Score the runs** with `run.py`, which writes one result file per question
-   under `moira_eval/results/<commit-sha>/`.
-   4. **Diff against the previous commit's results** with `diff.py` to see
+   `invoke.py` which POSTs questions to a running backend:
+   ```
+   ./run.sh eval:invoke --all
+   ```
+3. **Score the runs** — either one at a time with `run.py`, or all at once
+   with `batch.py`:
+   ```
+   # single question
+   ./run.sh eval --db backend/moira.db --question-id tyranitar-ou
+
+   # all questions at once
+   ./run.sh eval:batch --db backend/moira.db
+   ```
+   Both write result files under `moira_eval/results/<commit-sha>/`.
+4. **Diff against the previous commit's results** with `diff.py` to see
    whether the change moved the scores.
-   5. **Log meaningful advances** with `log.py`, which appends a structured
+5. **Log meaningful advances** with `log.py`, which appends a structured
    entry to a tracked `EVAL_LOG.md`. Most runs are not worth logging; this
    is a deliberate "this result matters" act, not an automatic step.
 
@@ -223,6 +234,7 @@ backend/moira_eval/
   log.py              # NEW (Iter 4) — append meaningful results to tracked EVAL_LOG.md
   EVAL_LOG.md         # NEW (Iter 4) — tracked score history
   invoke.py           # NEW (Iter 5) — convenience: POST questions to a running backend
+  batch.py            # NEW (Iter 5) — batch-evaluate all predefined questions
   results/            # NEW (Iter 2, formalized in Iter 4) — gitignored per-commit results
 
 backend/moira_eval_tests/
@@ -235,6 +247,7 @@ backend/moira_eval_tests/
   test_evaluation_diff.py       # (Iter 4)
   test_evaluation_log.py        # (Iter 4)
   test_evaluation_invoke.py     # (Iter 5)
+  test_evaluation_batch.py      # (Iter 5)
 ```
 
 `rubric_pokemon.py` and `rubric_general.py` are siblings rather than one file because
@@ -569,43 +582,61 @@ uv run python -m moira_eval.log \
 table output, +/- deltas); `moira_eval_tests/test_evaluation_log.py` (fixture result file +
 temp log file; assert entry shape, duplicate detection, `--force` override).
 
-### Iteration 5 — Invoke + docs (convenience + polish)
+### Iteration 5 — Invoke + batch + docs (convenience + polish)
 
-**Goal:** seed runs programmatically without clicking through the UI, and
-document the harness.
+**Goal:** seed runs programmatically without clicking through the UI,
+batch-evaluate the full question set, and document the harness.
 
-**Why this last:** `invoke.py` is pure convenience — it doesn't add scoring
-capability, just removes the UI-click bottleneck. Docs land here because
-the harness shape is stable by this point.
+**Why this last:** `invoke.py` and `batch.py` are pure convenience — they
+don't add scoring capability, just remove the UI-click bottleneck and
+the manual-per-question evaluation overhead.
 
 **What you can do after this iteration:**
 
 ```
 # seed a run from the command line
-uv run python -m moira_eval.invoke \
-    --base-url http://localhost:8000 \
-    --question tyranitar-ou \
-    --wait
+./run.sh eval:invoke --question tyranitar-ou
 # prints run_id; then score it with run.py as usual
+
+# seed all benchmark questions at once
+./run.sh eval:invoke --all --budget 80
+
+# evaluate all benchmark questions against their latest completed runs
+./run.sh eval:batch --db backend/moira.db
+
+# evaluate only specific questions
+./run.sh eval:batch --db backend/moira.db \
+    --only tyranitar-ou,telescope-mount-cost
 ```
 
 **What's built:**
 
-1. **New `invoke.py`** — thin CLI. Creates a conversation via
-   `POST /api/conversations`, POSTs the message to the streaming endpoint
-   that starts the run (`api/streaming.py:193` builds the `initial_state`),
-   optionally polls `GET /api/conversations/{id}` until the run completes.
-   Does **not** score — that's `run.py`'s job. Separation keeps the scoring
-   path clean and free of live-tool-call concerns.
+1. **`invoke.py`** — thin CLI. Creates a conversation via
+   `POST /api/conversations`, POSTs the message that starts the run
+   (`POST /api/conversations/{id}/messages`), then polls
+   `GET /api/conversations/{id}` until the run completes.
+   Does **not** score — that's `run.py`'s job. Supports `--question`,
+   `--text`, `--all`, `--timeout`, `--budget`. Each run completes
+   before the next starts (strictly serial). Aborts immediately on
+   timeout, run error, or stopped status.
 
-2. **Docs** — new `agent-docs/completed/evaluation-harness.md` (moved from
-   active plans once shipped): how to run a benchmark (invoke -> run ->
-   diff -> log), the two rubrics and what they measure, the mechanical
-   metrics and what each signals, the LLM-judge caveat, how to add a
-   question, how to interpret a diff. Update `agent-docs/index.md`.
+2. **`batch.py`** — batch evaluation CLI. For each predefined question,
+   finds the most recent completed run matching the question text (via
+   prefix matching on the user message), then runs the full pipeline
+   (capture → metrics → judge → save). Prints a summary table with
+   scores, web_search counts, and status per question. Supports
+   `--db`, `--only`.
 
-**Tests:** `moira_eval_tests/test_evaluation_invoke.py` (mocked HTTP; assert conversation
-creation, message POST, polling loop, run_id output).
+3. **Docs** — this section. Plus `run.sh` commands `eval:invoke` and
+   `eval:batch`.
+
+**Tests:** `moira_eval_tests/test_evaluation_invoke.py` (17 tests: mocked
+HTTP; assert conversation creation, message POST, polling loop, budget
+passthrough, CLI modes, HTTP error handling);
+`moira_eval_tests/test_evaluation_batch.py` (18 tests: DB fixture with all
+questions, run-finding prefix tolerance, latest-match, non-completed
+filtering, evaluate_one with/without judge, judge error fallback, summary
+table formats, CLI `--only` filter, full batch run).
 
 ## Test coverage summary
 
@@ -622,7 +653,8 @@ Organized by iteration. All tests runnable via
 | 3 | `questions.py` | question set loads, rubric assignment resolves, `tyranitar-ou` text matches `CANARY_QUESTION` |
 | 4 | `diff.py` | two fixture result dirs -> assert table output, +/- deltas |
 | 4 | `log.py` | fixture result file + temp log file; assert entry shape, duplicate detection, `--force` override |
-| 5 | `invoke.py` | mocked HTTP; assert conversation creation, message POST, polling, run_id output |
+| 5 | `invoke.py` | mocked HTTP; assert conversation creation, message POST, polling, budget passthrough, CLI modes, HTTP error handling |
+| 5 | `batch.py` | DB fixture with all questions, run-finding prefix tolerance, latest-match, evaluate_one with/without judge, summary table, CLI `--only` filter |
 
 ## Verification
 

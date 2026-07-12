@@ -1,8 +1,18 @@
 """General-purpose scoring rubric for research loop evaluation.
 
 Five criteria derived from ``claude-assessment.md``, each scored 1-5
-(total 5-25). No hard-fail categories — this rubric measures grounding
-and reasoning discipline, not domain-specific correctness.
+(total 5-25).
+
+Pass/fail policy (all three must pass):
+
+- **Category threshold**: any single category scoring 2/5 or below
+  triggers a hard fail. A run with one broken dimension is not
+  acceptable even if the overall total is high.
+- **Minimum total**: a total below 15/25 triggers a hard fail. This
+  catches uniformly mediocre runs that avoid the category threshold
+  but don't excel anywhere.
+- **Named hard-fail categories**: none (the general rubric does not
+  designate any individual category as mandatory-perfect).
 
 The five criteria:
 - **Grounding** — conclusions follow from cited facts
@@ -51,12 +61,20 @@ class RunScore:
 
     @property
     def passed(self) -> bool:
-        """General rubric has no hard-fail categories — always passes."""
-        return True
+        """General rubric passes if no category is ≤2 and total ≥15."""
+        if any(c.score <= HARD_FAIL_CATEGORY_MAX for c in self.categories):
+            return False
+        return self.total >= HARD_FAIL_MIN_TOTAL
 
 
 # Maximum score per category (1-5 scale).
 SCALE_MAX = 5
+
+# Any category at or below this score triggers a hard fail.
+HARD_FAIL_CATEGORY_MAX = 2
+
+# Total score below this triggers a hard fail.
+HARD_FAIL_MIN_TOTAL = 15
 
 # Category names as constants.
 CATEGORY_GROUNDING = "Grounding"
@@ -65,7 +83,8 @@ CATEGORY_CITATION_SUPPORT = "Citation support"
 CATEGORY_CRITIQUE_QUALITY = "Critique quality"
 CATEGORY_GOAL_ALIGNMENT = "Goal alignment"
 
-# No hard-fail categories in the general rubric.
+# No named hard-fail categories in the general rubric; pass/fail is
+# driven by HARD_FAIL_CATEGORY_MAX and HARD_FAIL_MIN_TOTAL instead.
 HARD_FAIL_CATEGORIES: set[str] = set()
 
 

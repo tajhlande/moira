@@ -57,10 +57,23 @@ def _format_judged_summary(
     judge_result: JudgeResult,
     metrics: dict,
 ) -> str:
-    """Format the judged one-line summary with score."""
+    """Format the judged one-line summary with score and fail reasons."""
     status = "PASS" if judge_result.passed else "FAIL"
+    reasons: list[str] = []
+    if judge_result.hard_fail_categories_failed:
+        names = ", ".join(judge_result.hard_fail_categories_failed)
+        reasons.append(f"hard_fail: {names}")
+    if judge_result.categories_below_threshold:
+        names = ", ".join(judge_result.categories_below_threshold)
+        max_s = judge_result.hard_fail_category_max
+        reasons.append(f"category≤{max_s}: {names}")
+    if judge_result.total_below_minimum:
+        min_t = judge_result.hard_fail_min_total
+        reasons.append(f"total<{min_t}")
+    reason_str = f" ({'; '.join(reasons)})" if reasons else ""
     return (
-        f"{question_id}: {judge_result.total}/{judge_result.max_total} ({status}) | "
+        f"{question_id}: {judge_result.total}/{judge_result.max_total} "
+        f"({status}){reason_str} | "
         f"web_search={metrics['web_search_calls']}, "
         f"unsupported={metrics['unsupported_conclusion_count']}, "
         f"halluc_ids={metrics['hallucinated_fact_id_count']}"
@@ -219,12 +232,18 @@ def main() -> None:
             print(_format_judged_summary(question_id, judge_result, metrics))
 
             for cat in judge_result.categories:
-                marker = (
-                    "!"
-                    if cat.name in judge_result.hard_fail_categories
+                # Mark categories that contributed to the fail: named
+                # hard-fail categories below scale_max, or any category
+                # at or below the threshold.
+                is_named_fail = (
+                    cat.name in judge_result.hard_fail_categories
                     and cat.score < judge_result.scale_max
-                    else " "
                 )
+                is_threshold_fail = (
+                    judge_result.hard_fail_category_max is not None
+                    and cat.score <= judge_result.hard_fail_category_max
+                )
+                marker = "!" if (is_named_fail or is_threshold_fail) else " "
                 print(
                     f"  {marker} {cat.name}: {cat.score}/{judge_result.scale_max} "
                     f"— {cat.rationale}"

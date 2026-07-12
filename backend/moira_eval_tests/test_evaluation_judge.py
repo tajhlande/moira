@@ -354,7 +354,7 @@ class TestParseGeneralResponse:
         assert result.max_total == 25
         assert result.scale_max == 5
         assert result.rubric == "general"
-        assert result.passed is True  # no hard-fail in general
+        assert result.passed is True  # all categories ≥3, total 21 ≥ 15
 
     def test_invalid_score_clamped_to_5(self):
         data = json.dumps(
@@ -388,6 +388,46 @@ class TestParseGeneralResponse:
     def test_no_hard_fail_categories(self):
         result = _parse_judge_response(_VALID_GENERAL_RESPONSE, "general")
         assert result.hard_fail_categories_failed == []
+
+    def test_threshold_fields_set_from_rubric_spec(self):
+        """Parsed general result carries the threshold fields from _RubricSpec."""
+        result = _parse_judge_response(_VALID_GENERAL_RESPONSE, "general")
+        assert result.hard_fail_category_max == 2
+        assert result.hard_fail_min_total == 15
+
+    def test_fail_when_category_below_threshold(self):
+        """A general response with a score ≤2 should fail."""
+        data = json.dumps(
+            {
+                "categories": [
+                    {"name": "Grounding", "score": 4},
+                    {"name": "Fact atomicity", "score": 4},
+                    {"name": "Citation support", "score": 1},  # ≤ threshold
+                    {"name": "Critique quality", "score": 3},
+                    {"name": "Goal alignment", "score": 3},
+                ]
+            }
+        )
+        result = _parse_judge_response(data, "general")
+        assert not result.passed
+        assert "Citation support" in result.categories_below_threshold
+
+    def test_fail_when_total_below_minimum(self):
+        """A general response with total <15 should fail."""
+        data = json.dumps(
+            {
+                "categories": [
+                    {"name": "Grounding", "score": 3},
+                    {"name": "Fact atomicity", "score": 3},
+                    {"name": "Citation support", "score": 3},
+                    {"name": "Critique quality", "score": 3},
+                    {"name": "Goal alignment", "score": 2},
+                ]
+            }
+        )
+        result = _parse_judge_response(data, "general")
+        assert not result.passed
+        assert result.total_below_minimum  # 14 < 15
 
     def test_categories_preserve_rubric_order(self):
         reversed_data = json.dumps(
@@ -481,6 +521,90 @@ class TestJudgeResult:
         )
         assert not result.passed
         assert "Type correctness" in result.hard_fail_categories_failed
+
+    # --- general rubric threshold tests ---
+
+    def test_general_fail_on_low_category(self):
+        """Any category ≤2 triggers a fail even if total is high."""
+        result = JudgeResult(
+            categories=[
+                JudgeCategoryScore(name="Grounding", score=5),
+                JudgeCategoryScore(name="Fact atomicity", score=5),
+                JudgeCategoryScore(name="Citation support", score=2),  # ≤ threshold
+                JudgeCategoryScore(name="Critique quality", score=5),
+                JudgeCategoryScore(name="Goal alignment", score=5),
+            ],
+            scale_max=5,
+            hard_fail_category_max=2,
+            hard_fail_min_total=15,
+        )
+        assert not result.passed
+        assert "Citation support" in result.categories_below_threshold
+        assert not result.total_below_minimum  # total is 22
+
+    def test_general_fail_on_low_total(self):
+        """Total <15 triggers a fail even if all categories >2."""
+        result = JudgeResult(
+            categories=[
+                JudgeCategoryScore(name="Grounding", score=3),
+                JudgeCategoryScore(name="Fact atomicity", score=3),
+                JudgeCategoryScore(name="Citation support", score=3),
+                JudgeCategoryScore(name="Critique quality", score=3),
+                JudgeCategoryScore(name="Goal alignment", score=2),  # ≤ threshold too
+            ],
+            scale_max=5,
+            hard_fail_category_max=2,
+            hard_fail_min_total=15,
+        )
+        assert not result.passed
+        assert result.total_below_minimum  # total is 14
+
+    def test_general_pass_when_all_above_threshold(self):
+        result = JudgeResult(
+            categories=[
+                JudgeCategoryScore(name="Grounding", score=3),
+                JudgeCategoryScore(name="Fact atomicity", score=3),
+                JudgeCategoryScore(name="Citation support", score=3),
+                JudgeCategoryScore(name="Critique quality", score=3),
+                JudgeCategoryScore(name="Goal alignment", score=3),
+            ],
+            scale_max=5,
+            hard_fail_category_max=2,
+            hard_fail_min_total=15,
+        )
+        assert result.passed
+        assert result.categories_below_threshold == []
+        assert not result.total_below_minimum
+
+    def test_general_categories_below_threshold_empty_when_no_max(self):
+        """No threshold configured → categories_below_threshold is always empty."""
+        result = JudgeResult(
+            categories=[JudgeCategoryScore(name="A", score=1)],
+            scale_max=5,
+        )
+        assert result.categories_below_threshold == []
+
+    # --- pokemon rubric min_total test ---
+
+    def test_pokemon_fail_on_low_total(self):
+        """Pokemon rubric: total <12 triggers a fail."""
+        result = JudgeResult(
+            categories=[
+                JudgeCategoryScore(name="Tool choice", score=1),
+                JudgeCategoryScore(name="Search discipline", score=1),
+                JudgeCategoryScore(name="Type correctness", score=2),
+                JudgeCategoryScore(name="Ability correctness", score=2),
+                JudgeCategoryScore(name="Typical-move discipline", score=0),
+                JudgeCategoryScore(name="OU legality and metagame", score=2),
+                JudgeCategoryScore(name="Synthesis discipline", score=0),
+                JudgeCategoryScore(name="Verification quality", score=2),
+            ],
+            scale_max=2,
+            hard_fail_categories=frozenset(),
+            hard_fail_min_total=12,
+        )
+        assert not result.passed
+        assert result.total_below_minimum  # total is 10 < 12
 
 
 # ---------------------------------------------------------------------------

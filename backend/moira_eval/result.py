@@ -169,6 +169,8 @@ def build_result(
             "max_total": judge_result.max_total,
             "passed": judge_result.passed,
             "hard_fail_categories_failed": judge_result.hard_fail_categories_failed,
+            "categories_below_threshold": judge_result.categories_below_threshold,
+            "total_below_minimum": judge_result.total_below_minimum,
         }
         model = judge_result.model
 

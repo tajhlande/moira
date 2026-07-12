@@ -109,7 +109,6 @@ def _extract_tool_trace(steps: list[dict]) -> list[dict]:
     return trace
 
 
-
 def _get_tool_catalog(conn: sqlite3.Connection) -> list[dict]:
     """Read the tool catalog from the ``tools`` table.
 

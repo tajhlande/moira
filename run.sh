@@ -16,6 +16,8 @@ usage() {
     echo "  build           Build frontend for production"
     echo "  prod            Build frontend + start backend serving everything"
     echo "  eval            Run the evaluation harness (args passed to moira_eval.run)"
+    echo "  eval:invoke     Trigger workflow runs without the UI (moira_eval.invoke)"
+    echo "  eval:batch      Batch-evaluate all benchmark questions (moira_eval.batch)"
     echo "  test            Run all tests"
     echo "  test:backend    Run backend tests"
     echo "  test:eval       Run evaluation harness tests"
@@ -111,6 +113,14 @@ cmd_eval() {
     uv run --project "$REPO_ROOT/backend" --env-file "$REPO_ROOT/.env-eval" python -m moira_eval.run "${@:2}"
 }
 
+cmd_eval_invoke() {
+    uv run --project "$REPO_ROOT/backend" --env-file "$REPO_ROOT/.env-eval" python -m moira_eval.invoke "${@:2}"
+}
+
+cmd_eval_batch() {
+    uv run --project "$REPO_ROOT/backend" --env-file "$REPO_ROOT/.env-eval" python -m moira_eval.batch "${@:2}"
+}
+
 cmd_test() {
     cmd_test_backend
     cmd_test_eval
@@ -172,6 +182,8 @@ case "${1:-}" in
     build)           cmd_build ;;
     prod)            cmd_prod ;;
     eval)            cmd_eval "$@" ;;
+    eval:invoke)     cmd_eval_invoke "$@" ;;
+    eval:batch)      cmd_eval_batch "$@" ;;
     test)            cmd_test ;;
     test:backend)    cmd_test_backend ;;
     test:eval)       cmd_test_eval ;;

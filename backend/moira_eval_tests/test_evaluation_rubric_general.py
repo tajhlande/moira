@@ -1,7 +1,7 @@
 """Tests for moira_eval.rubric_general.
 
 Verifies shape parity with rubric_pokemon: same dataclass structure,
-scale, scorecard factory, and no hard-fail categories.
+scale, scorecard factory, and pass/fail threshold logic.
 """
 
 from moira_eval.rubric_general import (
@@ -12,6 +12,8 @@ from moira_eval.rubric_general import (
     CATEGORY_GOAL_ALIGNMENT,
     CATEGORY_GROUNDING,
     HARD_FAIL_CATEGORIES,
+    HARD_FAIL_CATEGORY_MAX,
+    HARD_FAIL_MIN_TOTAL,
     SCALE_MAX,
     RunScore,
     create_empty_scorecard,
@@ -26,8 +28,14 @@ class TestRubricShape:
         scorecard = create_empty_scorecard()
         assert len(scorecard) == 5
 
-    def test_no_hard_fail_categories(self):
+    def test_no_named_hard_fail_categories(self):
         assert HARD_FAIL_CATEGORIES == set()
+
+    def test_hard_fail_category_max_is_2(self):
+        assert HARD_FAIL_CATEGORY_MAX == 2
+
+    def test_hard_fail_min_total_is_15(self):
+        assert HARD_FAIL_MIN_TOTAL == 15
 
     def test_all_categories_have_descriptions(self):
         scorecard = create_empty_scorecard()
@@ -75,10 +83,31 @@ class TestRunScore:
         rs = RunScore(categories=scorecard)
         assert rs.total == 15
 
-    def test_passed_always_true_no_hard_fail(self):
+    def test_passed_fails_when_any_category_at_or_below_threshold(self):
+        """Any single category scoring ≤2 should trigger a fail."""
         scorecard = create_empty_scorecard()
         for cat in scorecard:
-            cat.score = 1  # minimum score
+            cat.score = 4
+        scorecard[2].score = 2  # one category at threshold
+        rs = RunScore(categories=scorecard)
+        assert rs.passed is False
+
+    def test_passed_fails_when_total_below_minimum(self):
+        """Total below 15 should trigger a fail even if all categories >2."""
+        scorecard = create_empty_scorecard()
+        for cat in scorecard:
+            cat.score = 3  # total = 15, passes
+        rs = RunScore(categories=scorecard)
+        assert rs.passed is True
+
+        scorecard[0].score = 2  # total drops to 14, and category ≤2
+        rs = RunScore(categories=scorecard)
+        assert rs.passed is False
+
+    def test_passed_when_all_above_threshold_and_total_ok(self):
+        scorecard = create_empty_scorecard()
+        for cat in scorecard:
+            cat.score = 3
         rs = RunScore(categories=scorecard)
         assert rs.passed is True
         assert rs.hard_fail_categories_failed == []
