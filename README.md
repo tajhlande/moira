@@ -362,10 +362,17 @@ uv run python -m moira_eval.diff \
     moira_eval/results/<old-sha> moira_eval/results/<new-sha>
 ```
 
-To log a meaningful result to the tracked score history:
+To log results to the tracked score history:
 
 ```bash
-uv run python -m moira_eval.log moira_eval/results/<sha>/<question>.json
+# Log the most recent batch (default — reads latest results/<commit>/)
+./run.sh eval:log --note "what changed and why"
+
+# Log a specific commit's results
+./run.sh eval:log --commit cefe112f --note "..."
+
+# Log a single question
+./run.sh eval:log --result backend/moira_eval/results/<sha>/<question>.json
 ```
 
 This appends a structured entry to `EVAL_LOG.md` (tracked in git).

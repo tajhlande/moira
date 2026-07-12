@@ -232,7 +232,6 @@ backend/moira_eval/
   questions.py        # NEW (Iter 3) — stable question set
   diff.py             # NEW (Iter 4) — compare two result-set directories
   log.py              # NEW (Iter 4) — append meaningful results to tracked EVAL_LOG.md
-  EVAL_LOG.md         # NEW (Iter 4) — tracked score history
   invoke.py           # NEW (Iter 5) — convenience: POST questions to a running backend
   batch.py            # NEW (Iter 5) — batch-evaluate all predefined questions
   results/            # NEW (Iter 2, formalized in Iter 4) — gitignored per-commit results
@@ -453,7 +452,10 @@ uv run python -m moira_eval.run --db backend/moira.db --run-id <uuid>
    quality, goal alignment. Mirrors the dataclass shape of `rubric_pokemon.py`
    (`CategoryScore`, `RunScore`, `create_empty_scorecard`,
    `CATEGORY_DESCRIPTIONS`) so the judge and runner are rubric-agnostic.
-   No hard-fail categories (those are Pokemon-specific).
+   Pass/fail is driven by three mechanisms (see judge.py `_RubricSpec`):
+   any category scoring ≤2 triggers a hard fail, a total below 15 triggers
+   a hard fail, and there are no named hard-fail categories (those are
+   Pokemon-specific).
 
 2. **Add `GENERAL_JUDGE_SYSTEM`** to `prompts.py` — describes the 5
    criteria, 1–5 scale anchors, "unsupported != contradicted" distinction,
@@ -490,7 +492,7 @@ uv run python -m moira_eval.run --db backend/moira.db --run-id <uuid>
    as the question-id slot.
 
 **Tests:** `moira_eval_tests/test_evaluation_rubric_general.py` (dataclass shape parity with
-`rubric_pokemon.py`; scorecard factory; no hard-fail categories);
+`rubric_pokemon.py`; scorecard factory; hard-fail threshold logic);
 `moira_eval_tests/test_evaluation_questions.py` (question set loads, rubric assignment
 resolves, `tyranitar-ou` text matches `CANARY_QUESTION`).
 
@@ -525,28 +527,35 @@ uv run python -m moira_eval.log \
    the "did the score move?" view the whole harness exists to produce.
 
 2. **New `log.py`** — deliberate, manual step. Takes an existing result file
-   and appends a structured entry to tracked `EVAL_LOG.md`. This is the
-   only path by which a result enters version control. The log file is
-   markdown, append-only, chronological (newest at bottom). Each entry:
-   timestamp, commit SHA (short) + branch, question ID, rubric, score/max +
-   pass/fail, key metrics, judge model, optional `--note`.
+   (or a whole `results/<commit>/` directory in batch mode) and appends a
+   structured entry to tracked `EVAL_LOG.md`. This is the only path by which
+   a result enters version control. The log file is markdown, append-only,
+   chronological (newest at bottom). Each entry: timestamp, commit SHA
+   (short) + branch, question ID, rubric, score/max + pass/fail, key
+   metrics, judge model, optional `--note`.
 
-   Example entry:
+   In batch mode (default when `--result` is omitted), reads all result
+   JSONs from the most recently modified `results/<commit>/` directory and
+   formats them as a single summary table entry:
 
    ```markdown
-   ## 2026-07-06 tyranitar-ou (commit a1b2c3d, feature/synthesis-tighten)
+   ## 2026-07-12 batch (commit cefe112f, main)
 
-   - Score: 14/16 (PASS)
-   - web_search_calls: 6 | unsupported_conclusions: 0 | hallucinated_ids: 0
-   - Judge: anthropic/claude-sonnet-4.5
-   - Note: tightened synthesis prompt to require explicit support for each
-     conclusion; type-correctness category moved 1 -> 2.
+   | Question | Rubric | Score | web_search | Status |
+   |----------|--------|-------|------------|--------|
+   | flaming-hot-cheetos | general | 19/25 | 8 | PASS |
+   | tyranitar-ou | pokemon | 6/16 | 11 | FAIL |
+
+   - Agent model: z-ai/glm-5.2-20260616
+   - Note: searxng en-US fix baseline
    ```
 
-   `EVAL_LOG.md` is committed; `results/` is not. This split keeps the
-   durable score history small and reviewable while bulky per-run artifacts
-   stay local. **Idempotency:** `log.py` refuses duplicate entries (same
-   commit + question ID) unless `--force` is passed.
+   `EVAL_LOG.md` lives at the repository root (not `backend/moira_eval/`);
+   it is committed while `results/` is not. This split keeps the durable
+   score history small and reviewable while bulky per-run artifacts stay
+   local. **Idempotency:** `log.py` refuses duplicate entries (same
+   commit + question ID for single mode, same commit for batch mode)
+   unless `--force` is passed.
 
 3. **Formalize storage shape + .gitignore** — the directory structure
    `run.py` already writes to (since Iteration 2) gets its full rationale
@@ -630,9 +639,10 @@ the manual-per-question evaluation overhead.
 3. **Docs** — this section. Plus `run.sh` commands `eval:invoke` and
    `eval:batch`.
 
-**Tests:** `moira_eval_tests/test_evaluation_invoke.py` (17 tests: mocked
+**Tests:** `moira_eval_tests/test_evaluation_invoke.py` (25 tests: mocked
 HTTP; assert conversation creation, message POST, polling loop, budget
-passthrough, CLI modes, HTTP error handling);
+passthrough, CLI modes, HTTP error handling, serial execution,
+abort-on-failure);
 `moira_eval_tests/test_evaluation_batch.py` (18 tests: DB fixture with all
 questions, run-finding prefix tolerance, latest-match, non-completed
 filtering, evaluate_one with/without judge, judge error fallback, summary
@@ -649,7 +659,7 @@ Organized by iteration. All tests runnable via
 | 1 | `metrics.py` | pure-function tests over fixture artifacts (incl. hallucinated-ID case, unknown/unsupported counts) |
 | 2 | `judge.py` | mock `InferenceClient`; assert prompt construction, JSON parsing, malformed-JSON tolerance |
 | 2 | `run.py` | end-to-end with mocked judge; assert result file written; metrics-only fallback without env vars |
-| 3 | `rubric_general.py` | dataclass shape parity with `rubric_pokemon.py`; scorecard factory; no hard-fail categories |
+| 3 | `rubric_general.py` | dataclass shape parity with `rubric_pokemon.py`; scorecard factory; hard-fail threshold logic (category ≤2, total <15) |
 | 3 | `questions.py` | question set loads, rubric assignment resolves, `tyranitar-ou` text matches `CANARY_QUESTION` |
 | 4 | `diff.py` | two fixture result dirs -> assert table output, +/- deltas |
 | 4 | `log.py` | fixture result file + temp log file; assert entry shape, duplicate detection, `--force` override |
