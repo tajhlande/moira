@@ -50,11 +50,18 @@ def _searxng_handler(body: dict, status_code: int = 200):
 def _make_tool(
     base_url: str = "http://localhost:8888",
     handler=None,
+    config: dict | None = None,
 ) -> WebSearchTool:
-    """Create a WebSearchTool with the given base URL and optional mock handler."""
-    defn = WebSearchTool.make_definition(
-        config={"searxng_base_url": base_url},
-    )
+    """Create a WebSearchTool with the given base URL and optional mock handler.
+
+    Caching is disabled by default so tests can verify HTTP call behavior
+    without cache side effects. Pass cache_enabled=True in config to test
+    caching.
+    """
+    cfg = {"searxng_base_url": base_url, "cache_enabled": False}
+    if config:
+        cfg.update(config)
+    defn = WebSearchTool.make_definition(config=cfg)
     client = None
     if handler:
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -64,7 +71,7 @@ def _make_tool(
 @pytest.fixture
 def tool():
     defn = WebSearchTool.make_definition(
-        config={"searxng_base_url": "http://localhost:8888"},
+        config={"searxng_base_url": "http://localhost:8888", "cache_enabled": False},
     )
     return WebSearchTool(defn)
 
@@ -382,3 +389,262 @@ class TestWebSearchUnit:
         assert "Missing:" not in r.output
         assert "Show results" not in r.output
         assert "Some content here" in r.output
+
+
+class TestSearchCache:
+    """Tests for the SQLite-backed search result cache."""
+
+    def _make_cached_tool(
+        self,
+        tmp_path,
+        handler=None,
+        ttl_seconds: int = 604800,
+    ) -> WebSearchTool:
+        """Create a WebSearchTool with caching enabled and a temp DB.
+
+        Cache settings are injected via the tool config dict, which
+        _read_cache_settings falls back to when the settings service
+        is unavailable (as in unit tests).
+        """
+        cache_db = str(tmp_path / "test_cache.db")
+        cfg = {
+            "searxng_base_url": "http://localhost:8888",
+            "cache_enabled": True,
+            "cache_ttl_seconds": ttl_seconds,
+            "cache_db_path": cache_db,
+        }
+        return _make_tool(handler=handler, config=cfg)
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_then_hit(self, tmp_path):
+        """First call hits SearXNG and stores in cache; second call is a
+        cache hit with no HTTP request."""
+        call_count = 0
+
+        def counting_handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(200, json=SEARXNG_RESPONSE)
+
+        tool = self._make_cached_tool(tmp_path, handler=counting_handler)
+
+        # First call — cache miss, HTTP happens
+        r1 = await tool.execute({"query": "test query"})
+        assert r1.success
+        assert r1.metadata["cache_hit"] is False
+        assert call_count == 1
+
+        # Second call — cache hit, no HTTP
+        r2 = await tool.execute({"query": "test query"})
+        assert r2.success
+        assert r2.metadata["cache_hit"] is True
+        assert call_count == 1  # no additional HTTP call
+
+        # Same results
+        assert r1.output == r2.output
+
+    @pytest.mark.asyncio
+    async def test_different_max_results_shares_cache(self, tmp_path):
+        """max_results is excluded from the cache key, so different values
+        share the same cached response."""
+        call_count = 0
+
+        def counting_handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(200, json=SEARXNG_RESPONSE)
+
+        tool = self._make_cached_tool(tmp_path, handler=counting_handler)
+
+        r1 = await tool.execute({"query": "test", "max_results": 2})
+        assert r1.success
+        assert len(r1.metadata["results"]) == 2
+        assert call_count == 1
+
+        # Same query, different max_results — cache hit, trimmed differently
+        r2 = await tool.execute({"query": "test", "max_results": 1})
+        assert r2.success
+        assert r2.metadata["cache_hit"] is True
+        assert len(r2.metadata["results"]) == 1
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_different_query_is_cache_miss(self, tmp_path):
+        call_count = 0
+
+        def counting_handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(200, json=SEARXNG_RESPONSE)
+
+        tool = self._make_cached_tool(tmp_path, handler=counting_handler)
+
+        await tool.execute({"query": "alpha"})
+        await tool.execute({"query": "beta"})
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_cache_expiry(self, tmp_path):
+        """After TTL expires, the cache entry is treated as a miss."""
+        import time as time_mod
+
+        call_count = 0
+
+        def counting_handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(200, json=SEARXNG_RESPONSE)
+
+        # TTL = 0 seconds → immediately expired
+        tool = self._make_cached_tool(tmp_path, handler=counting_handler, ttl_seconds=0)
+
+        r1 = await tool.execute({"query": "test"})
+        assert r1.metadata["cache_hit"] is False
+        assert call_count == 1
+
+        # Sleep 0.01s to ensure expiry
+        time_mod.sleep(0.01)
+
+        r2 = await tool.execute({"query": "test"})
+        assert r2.metadata["cache_hit"] is False
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_cache_disabled_no_storage(self, tmp_path):
+        """When cache_enabled is false, no caching occurs."""
+        call_count = 0
+
+        def counting_handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(200, json=SEARXNG_RESPONSE)
+
+        tool = _make_tool(handler=counting_handler)  # cache_enabled=False by default
+
+        await tool.execute({"query": "test"})
+        await tool.execute({"query": "test"})
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_on_empty_results(self, tmp_path):
+        """Empty results are cached too — saves wasted HTTP for queries
+        that genuinely have no results."""
+        call_count = 0
+
+        def counting_handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(200, json={"query": "obscure", "results": []})
+
+        tool = self._make_cached_tool(tmp_path, handler=counting_handler)
+
+        r1 = await tool.execute({"query": "obscure"})
+        assert r1.success
+        assert r1.metadata["cache_hit"] is False
+        assert call_count == 1
+
+        r2 = await tool.execute({"query": "obscure"})
+        assert r2.success
+        assert r2.metadata["cache_hit"] is True
+        assert r2.output == "No search results found."
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_http_error_not_cached(self, tmp_path):
+        """Failed HTTP responses must not be cached."""
+        call_count = 0
+
+        def error_then_success(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return httpx.Response(500, json={})
+            return httpx.Response(200, json=SEARXNG_RESPONSE)
+
+        tool = self._make_cached_tool(tmp_path, handler=error_then_success)
+
+        r1 = await tool.execute({"query": "test"})
+        assert not r1.success
+
+        r2 = await tool.execute({"query": "test"})
+        assert r2.success
+        assert r2.metadata["cache_hit"] is False
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_cache_normalizes_query_case(self, tmp_path):
+        """Query case differences should not cause cache misses."""
+        call_count = 0
+
+        def counting_handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(200, json=SEARXNG_RESPONSE)
+
+        tool = self._make_cached_tool(tmp_path, handler=counting_handler)
+
+        await tool.execute({"query": "Test Query"})
+        r2 = await tool.execute({"query": "test query"})
+        assert r2.metadata["cache_hit"] is True
+        assert call_count == 1
+
+    def test_cleanup_removes_expired_entries(self, tmp_path):
+        """cleanup() deletes expired rows and vacuums the DB."""
+        import time as time_mod
+
+        from moira.tools.builtin.web_search import SearchCache
+
+        cache_db = str(tmp_path / "test_cache.db")
+
+        # Insert 3 entries with TTL=0 so they expire immediately
+        cache = SearchCache(cache_db, ttl_seconds=0)
+        cache.put("alpha", None, None, None, {"results": []})
+        cache.put("beta", None, None, None, {"results": []})
+        cache.put("gamma", None, None, None, {"results": []})
+        time_mod.sleep(0.01)
+
+        deleted = cache.cleanup()
+        assert deleted == 3
+
+        # DB should still exist and be usable
+        fresh = SearchCache(cache_db, ttl_seconds=60)
+        assert fresh.get("alpha", None, None, None) is None
+
+    def test_cleanup_no_db_is_noop(self, tmp_path):
+        """cleanup() is a no-op when the DB file does not exist."""
+        from moira.tools.builtin.web_search import SearchCache
+
+        cache = SearchCache(str(tmp_path / "nonexistent.db"))
+        assert cache.cleanup() == 0
+
+    @pytest.mark.asyncio
+    async def test_degraded_results_not_cached(self, tmp_path):
+        """When SearXNG reports unresponsive engines, the response should
+        not be cached — degraded results shouldn't lock out fresh queries
+        for the full TTL."""
+        call_count = 0
+
+        def degraded_handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(
+                200,
+                json={
+                    **SEARXNG_RESPONSE,
+                    "unresponsive_engines": [["mojeek", "HTTP error 403"]],
+                },
+            )
+
+        tool = self._make_cached_tool(tmp_path, handler=degraded_handler)
+
+        # First call — HTTP, but not cached due to unresponsive engines
+        r1 = await tool.execute({"query": "test"})
+        assert r1.success
+        assert r1.metadata["cache_hit"] is False
+        assert call_count == 1
+
+        # Second call — should hit HTTP again, not cache
+        r2 = await tool.execute({"query": "test"})
+        assert r2.success
+        assert r2.metadata["cache_hit"] is False
+        assert call_count == 2

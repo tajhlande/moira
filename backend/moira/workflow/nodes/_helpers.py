@@ -1,7 +1,7 @@
 """Shared utilities for research loop nodes.
 
 This module contains only pure functions with no dependencies on
-``langgraph``, ``langchain_core``, or ``moira.inference.client`` (``httpx``). 
+``langgraph``, ``langchain_core``, or ``moira.inference.client`` (``httpx``).
 Functions that require those dependencies live in ``_helpers_deps``.
 
 This split allows ``moira_eval`` to import the JSON-parsing and

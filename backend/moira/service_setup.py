@@ -264,6 +264,23 @@ async def init_services(
     executor.register_tools(catalog.get_all())
     _services["tool_executor"] = executor
 
+    # Prune expired search cache entries in a background thread so startup
+    # is not blocked by VACUUM. Non-fatal — the cache works fine without it.
+    import threading
+    from pathlib import Path
+
+    _cache_db_path = str(Path(config.database.sqlite_path).parent / "search_cache.db")
+
+    def _cleanup_search_cache() -> None:
+        try:
+            from moira.tools.builtin.web_search import SearchCache
+
+            SearchCache(_cache_db_path).cleanup()
+        except Exception:
+            logger.debug("Search cache cleanup skipped", exc_info=True)
+
+    threading.Thread(target=_cleanup_search_cache, daemon=True).start()
+
     # --- Phase 2: LangGraph research workflow ---
     from moira.workflow.graph import compile_graph
 

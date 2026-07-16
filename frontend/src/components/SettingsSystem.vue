@@ -4,6 +4,7 @@ import {
   NText,
   NSlider,
   NInputNumber,
+  NSwitch,
   NSpin,
   NButton,
   NTooltip,
@@ -39,6 +40,7 @@ const groups = computed<GroupConfig[]>(() => {
   const titles: Record<string, string> = {
     budget: "Budget",
     retry: "Retry Limits",
+    web_search: "Web Search",
   };
   return Array.from(seen.entries()).map(([key, defs]) => ({
     key,
@@ -46,6 +48,19 @@ const groups = computed<GroupConfig[]>(() => {
     defs,
   }));
 });
+
+function isBoolean(key: string): boolean {
+  const defn = definitions.value.find((d) => d.key === key);
+  return defn?.type === "boolean";
+}
+
+function getBoolValue(key: string): boolean {
+  const entry = settings.value.get(key);
+  const raw = entry
+    ? entry.value
+    : definitions.value.find((d) => d.key === key)?.default;
+  return raw ? ["true", "1", "yes"].includes(raw.toLowerCase()) : false;
+}
 
 function getMax(key: string): number {
   const constraints = getConstraints(key);
@@ -89,24 +104,31 @@ function shortLabel(label: string): string {
     .replace(" Cost Weight", "")
     .replace("Default Budget", "Budget")
     .replace("Max Research Review Attempts", "Review Retries")
-    .replace("Max Evaluation Attempts", "Eval Retries");
+    .replace("Max Evaluation Attempts", "Eval Retries")
+    .replace("Search Cache TTL (seconds)", "Cache TTL (s)")
+    .replace("Enable Search Cache", "Cache");
 }
 
-async function saveSetting(key: string, value: number) {
+async function saveSetting(key: string, value: number | boolean) {
   const constraints = getConstraints(key);
-  const min = (constraints.minimum as number) ?? 0;
-  const max = (constraints.maximum as number) ?? Infinity;
 
-  if (value < min || value > max) {
-    errors.value.set(key, `Value must be between ${min} and ${max}`);
-    return;
+  if (typeof value === "number") {
+    const min = (constraints.minimum as number) ?? 0;
+    const max = (constraints.maximum as number) ?? Infinity;
+
+    if (value < min || value > max) {
+      errors.value.set(key, `Value must be between ${min} and ${max}`);
+      return;
+    }
   }
+
+  const serialized = typeof value === "boolean" ? String(value) : String(value);
 
   errors.value.delete(key);
   saving.value.set(key, true);
 
   try {
-    const updated = await api.setSetting(key, value);
+    const updated = await api.setSetting(key, serialized);
     settings.value.set(key, updated);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to save";
@@ -173,26 +195,36 @@ async function resetGroup(group: GroupConfig) {
               {{ defn.description }}
             </NPopover>
 
-            <div class="setting-slider">
-              <NSlider
+            <template v-if="isBoolean(defn.key)">
+              <div class="setting-toggle">
+                <NSwitch
+                  :value="getBoolValue(defn.key)"
+                  @update:value="(v: boolean) => saveSetting(defn.key, v)"
+                />
+              </div>
+            </template>
+            <template v-else>
+              <div class="setting-slider">
+                <NSlider
+                  :value="getValue(defn.key)"
+                  :min="(getConstraints(defn.key).minimum as number) ?? 0"
+                  :max="getMax(defn.key)"
+                  :step="1"
+                  @update:value="(v: number) => saveSetting(defn.key, v)"
+                />
+              </div>
+              <NInputNumber
                 :value="getValue(defn.key)"
                 :min="(getConstraints(defn.key).minimum as number) ?? 0"
                 :max="getMax(defn.key)"
-                :step="1"
-                @update:value="(v: number) => saveSetting(defn.key, v)"
+                size="tiny"
+                :show-button="false"
+                class="setting-input"
+                @update:value="
+                  (v: number | null) => v != null && saveSetting(defn.key, v)
+                "
               />
-            </div>
-            <NInputNumber
-              :value="getValue(defn.key)"
-              :min="(getConstraints(defn.key).minimum as number) ?? 0"
-              :max="getMax(defn.key)"
-              size="tiny"
-              :show-button="false"
-              class="setting-input"
-              @update:value="
-                (v: number | null) => v != null && saveSetting(defn.key, v)
-              "
-            />
+            </template>
           </div>
         </div>
       </div>
@@ -273,6 +305,13 @@ async function resetGroup(group: GroupConfig) {
 .setting-slider {
   flex: 1;
   min-width: 0;
+}
+
+.setting-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
 }
 
 .setting-input {
