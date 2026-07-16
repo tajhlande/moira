@@ -142,4 +142,28 @@ SETTING_DEFINITIONS: dict[str, SettingDefinition] = {
         group="retry",
         constraints=RETRY_LIMIT_CONSTRAINTS,
     ),
+    "web_search.cache_enabled": SettingDefinition(
+        key="web_search.cache_enabled",
+        type="boolean",
+        default="true",
+        label="Enable Search Cache",
+        description=(
+            "Cache web search results in a local SQLite database to avoid "
+            "redundant queries on repeated or similar searches."
+        ),
+        group="web_search",
+    ),
+    "web_search.cache_ttl_seconds": SettingDefinition(
+        key="web_search.cache_ttl_seconds",
+        type="integer",
+        default="604800",
+        label="Search Cache TTL (seconds)",
+        description=(
+            "How long cached search results remain valid, in seconds. "
+            "Default is 604800 (7 days). Set to 0 to disable caching "
+            "without toggling the enabled flag."
+        ),
+        group="web_search",
+        constraints={"type": "integer", "minimum": 0, "maximum": 2592000},
+    ),
 }
