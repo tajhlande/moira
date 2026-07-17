@@ -343,6 +343,113 @@ const { create: createInfChart } = useChart<"line">(infCanvasRef, () => ({
   },
 }));
 
+// --- Search cache chart ---
+// Derived from toolRows (same /metrics endpoint). Only web_search
+// populates cache_hits/cache_misses, so we aggregate across all rows.
+
+const cacheCanvasRef = ref<HTMLCanvasElement>();
+
+const cacheHasData = computed(() =>
+  toolRows.value.some((r) => r.cache_hits > 0 || r.cache_misses > 0),
+);
+
+const cacheChartData = computed(() => {
+  const byDay = new Map<string, { hits: number; misses: number }>();
+
+  for (const r of toolRows.value) {
+    if (r.cache_hits === 0 && r.cache_misses === 0) continue;
+    const day = r.period_hour.substring(0, 10);
+    const acc = byDay.get(day) || { hits: 0, misses: 0 };
+    acc.hits += r.cache_hits;
+    acc.misses += r.cache_misses;
+    byDay.set(day, acc);
+  }
+
+  const sortedDays = [...byDay.keys()].sort();
+  const hitBuckets: DayBucket[] = [];
+  const missBuckets: DayBucket[] = [];
+
+  for (const d of sortedDays) {
+    const acc = byDay.get(d)!;
+    hitBuckets.push({ date: d, count: acc.hits });
+    missBuckets.push({ date: d, count: acc.misses });
+  }
+
+  return { hitBuckets, missBuckets, sortedDays };
+});
+
+function buildCacheDatasets(): ChartDataset<"line">[] {
+  const { hitBuckets, missBuckets } = cacheChartData.value;
+  return [
+    {
+      label: "Cache Hits",
+      data: hitBuckets.map((b) => ({
+        x: b.date,
+        y: b.count,
+      })) as unknown as ChartDataset<"line">["data"],
+      borderColor: PALETTE[1],
+      backgroundColor: PALETTE[1] + "33",
+      borderWidth: 2,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      tension: 0.3,
+      fill: true,
+    },
+    {
+      label: "Cache Misses",
+      data: missBuckets.map((b) => ({
+        x: b.date,
+        y: b.count,
+      })) as unknown as ChartDataset<"line">["data"],
+      borderColor: PALETTE[3],
+      backgroundColor: PALETTE[3] + "33",
+      borderWidth: 2,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      tension: 0.3,
+      fill: true,
+    },
+  ];
+}
+
+const { create: createCacheChart } = useChart<"line">(cacheCanvasRef, () => ({
+  type: "line",
+  data: { datasets: buildCacheDatasets() },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: {
+        position: "bottom",
+        labels: { usePointStyle: true, pointStyle: "circle", padding: 16 },
+      },
+      tooltip: { mode: "index", intersect: false },
+    },
+    scales: {
+      x: {
+        type: "time",
+        min: startDate.value,
+        max: endDate.value,
+        time: {
+          unit: "day",
+          tooltipFormat: "yyyy-MM-dd",
+          displayFormats: { day: "MMM d" },
+        },
+        grid: { display: true },
+        ticks: { maxTicksLimit: 15, autoSkip: true },
+        title: { display: true, text: "Date" },
+      },
+      y: {
+        beginAtZero: true,
+        grid: { display: true },
+        ticks: { precision: 0 },
+        title: { display: true, text: "Searches" },
+      },
+    },
+  },
+}));
+
 // --- Data fetching ---
 
 async function fetchMetrics() {
@@ -357,6 +464,9 @@ async function fetchMetrics() {
     toolLoading.value = false;
     await nextTick();
     createToolChart();
+    if (cacheHasData.value) {
+      createCacheChart();
+    }
   } catch (e: any) {
     toolError.value = e.message || "Failed to load tool metrics";
     toolLoading.value = false;
@@ -438,6 +548,21 @@ onMounted(fetchMetrics);
       </div>
       <div v-else class="chart-container">
         <canvas ref="infCanvasRef"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-panel" style="margin-top: 16px">
+      <div class="chart-panel-header">
+        <NText strong>Search Cache</NText>
+      </div>
+      <div v-if="toolLoading" class="chart-loading">
+        <NSpin size="medium" />
+      </div>
+      <div v-else-if="!cacheHasData" class="chart-empty">
+        <NText depth="3">No search cache data available for this period.</NText>
+      </div>
+      <div v-else class="chart-container">
+        <canvas ref="cacheCanvasRef"></canvas>
       </div>
     </div>
   </div>

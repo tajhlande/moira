@@ -152,6 +152,97 @@ class TestSqliteToolMetricsRepository:
         rows = await metrics_repo.get_metrics()
         assert rows == []
 
+    @pytest.mark.asyncio
+    async def test_cache_hit_increments_cache_hits(self, metrics_repo):
+        """A record_call with cache_hit=True increments cache_hits, not cache_misses."""
+        await metrics_repo.record_call(
+            "web_search",
+            "default",
+            "2026-06-02T14:00",
+            success=True,
+            duration_ms=50,
+            cache_hit=True,
+        )
+        rows = await metrics_repo.get_metrics()
+        assert len(rows) == 1
+        assert rows[0].cache_hits == 1
+        assert rows[0].cache_misses == 0
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_increments_cache_misses(self, metrics_repo):
+        """A record_call with cache_hit=False increments cache_misses, not cache_hits."""
+        await metrics_repo.record_call(
+            "web_search",
+            "default",
+            "2026-06-02T14:00",
+            success=True,
+            duration_ms=200,
+            cache_hit=False,
+        )
+        rows = await metrics_repo.get_metrics()
+        assert len(rows) == 1
+        assert rows[0].cache_hits == 0
+        assert rows[0].cache_misses == 1
+
+    @pytest.mark.asyncio
+    async def test_cache_none_leaves_both_zero(self, metrics_repo):
+        """A record_call without cache_hit (non-caching tool) leaves both at 0."""
+        await metrics_repo.record_call(
+            "calculator",
+            "default",
+            "2026-06-02T14:00",
+            success=True,
+            duration_ms=5,
+            cache_hit=None,
+        )
+        rows = await metrics_repo.get_metrics()
+        assert len(rows) == 1
+        assert rows[0].cache_hits == 0
+        assert rows[0].cache_misses == 0
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_miss_aggregate_in_same_bucket(self, metrics_repo):
+        """Multiple calls with mixed cache_hit values aggregate into the same hourly bucket."""
+        await metrics_repo.record_call(
+            "web_search",
+            "default",
+            "2026-06-02T14:00",
+            True,
+            50,
+            cache_hit=True,
+        )
+        await metrics_repo.record_call(
+            "web_search",
+            "default",
+            "2026-06-02T14:00",
+            True,
+            200,
+            cache_hit=False,
+        )
+        await metrics_repo.record_call(
+            "web_search",
+            "default",
+            "2026-06-02T14:00",
+            True,
+            30,
+            cache_hit=True,
+        )
+        rows = await metrics_repo.get_metrics()
+        assert len(rows) == 1
+        r = rows[0]
+        assert r.call_count == 3
+        assert r.cache_hits == 2
+        assert r.cache_misses == 1
+
+    @pytest.mark.asyncio
+    async def test_cache_default_is_none(self, metrics_repo):
+        """record_call without cache_hit parameter defaults to None (no cache columns changed)."""
+        await metrics_repo.record_call("calculator", "default", "2026-06-02T14:00", True, 5)
+        rows = await metrics_repo.get_metrics()
+        assert len(rows) == 1
+        assert rows[0].cache_hits == 0
+        assert rows[0].cache_misses == 0
+
 
 class TestExecutorMetricsIntegration:
     @pytest.fixture
@@ -227,6 +318,70 @@ class TestExecutorMetricsIntegration:
         assert len(rows) == 1
         assert rows[0].call_count == 2
         assert rows[0].success_count == 2
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_from_metadata_recorded(self, metrics_repo):
+        """When a tool returns metadata with cache_hit=True, the executor
+        records it as a cache hit in tool_metrics."""
+
+        class _CachedTool(BaseTool):
+            tool_name = "cached_tool"
+            tool_description = "returns cache_hit in metadata"
+            tool_argument_schema = {"type": "object"}
+
+            async def execute(self, args):
+                return ToolResult(
+                    tool_name="cached_tool",
+                    output="ok",
+                    success=True,
+                    duration_ms=10,
+                    metadata={"cache_hit": True},
+                )
+
+        executor = ToolExecutor(metrics_repo=metrics_repo)
+        executor.register_tool(_CachedTool(_make_definition(_CachedTool)))
+        await executor.execute("cached_tool", {})
+        rows = await metrics_repo.get_metrics()
+        assert len(rows) == 1
+        assert rows[0].cache_hits == 1
+        assert rows[0].cache_misses == 0
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_from_metadata_recorded(self, metrics_repo):
+        """When a tool returns metadata with cache_hit=False, the executor
+        records it as a cache miss in tool_metrics."""
+
+        class _UncachedTool(BaseTool):
+            tool_name = "uncached_tool"
+            tool_description = "returns cache_hit False in metadata"
+            tool_argument_schema = {"type": "object"}
+
+            async def execute(self, args):
+                return ToolResult(
+                    tool_name="uncached_tool",
+                    output="ok",
+                    success=True,
+                    duration_ms=100,
+                    metadata={"cache_hit": False},
+                )
+
+        executor = ToolExecutor(metrics_repo=metrics_repo)
+        executor.register_tool(_UncachedTool(_make_definition(_UncachedTool)))
+        await executor.execute("uncached_tool", {})
+        rows = await metrics_repo.get_metrics()
+        assert len(rows) == 1
+        assert rows[0].cache_hits == 0
+        assert rows[0].cache_misses == 1
+
+    @pytest.mark.asyncio
+    async def test_no_cache_metadata_leaves_both_zero(self, executor_with_metrics, metrics_repo):
+        """Tools that don't set cache_hit in metadata leave cache_hits and
+        cache_misses at 0."""
+        await executor_with_metrics.execute("dummy", {"x": 1})
+        rows = await metrics_repo.get_metrics()
+        assert len(rows) == 1
+        assert rows[0].cache_hits == 0
+        assert rows[0].cache_misses == 0
 
     @pytest.mark.asyncio
     async def test_no_metrics_repo_silent_skip(self):

@@ -65,6 +65,8 @@ async def get_metrics(
                 "aggregate_duration_ms": r.aggregate_duration_ms,
                 "low_duration_ms": r.low_duration_ms,
                 "high_duration_ms": r.high_duration_ms,
+                "cache_hits": r.cache_hits,
+                "cache_misses": r.cache_misses,
             }
             for r in filtered
         ]
