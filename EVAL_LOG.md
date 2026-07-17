@@ -18,3 +18,18 @@ Scores are recorded manually via `moira_eval.log`.
 
 - Agent model: z-ai/glm-5.2-20260616
 - Note: Baseline after SearXNG en-US fix + hard-fail thresholds. 3/7 PASS, avg 16/25 (64%). FAILs: jazz-trumpeters (Critique quality <=2), tyranitar-ou (total 10/16, 3 hard-fail categories), water-blood-pressure (Citation support + Goal alignment <=2, total 14/25).
+
+## 2026-07-17 batch (commit a848b0b2, cleanup-empty-claims)
+
+| Question | Rubric | Score | web_search | Status |
+|----------|--------|-------|------------|--------|
+| flaming-hot-cheetos | general | 16/25 | 27 | PASS |
+| future-nostalgia | general | 11/25 | 21 | FAIL |
+| jazz-trumpeters | general | 9/25 | 26 | FAIL |
+| telescope-mount-cost | general | 13/25 | 19 | FAIL |
+| trade-policy-manufacturing | general | 17/25 | 19 | FAIL |
+| tyranitar-ou | pokemon | 13/16 | 12 | PASS |
+| water-blood-pressure | general | 15/25 | 21 | FAIL |
+
+- Agent model: z-ai/glm-5.2
+- Note: Added check to mark facts as unverified if the agent's fact statement says that it could not be verified
