@@ -255,6 +255,8 @@ export interface ToolMetricsRow {
   aggregate_duration_ms: number;
   low_duration_ms: number;
   high_duration_ms: number;
+  cache_hits: number;
+  cache_misses: number;
 }
 
 export interface InferenceMetricsRow {

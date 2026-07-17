@@ -152,6 +152,10 @@ class ToolExecutor:
                     call_type = reported
             except Exception:
                 pass
+        # Extract cache_hit from tool metadata. WebSearchTool sets
+        # metadata["cache_hit"] = True/False on every call; other tools
+        # don't set it, so cache_hit stays None (no-op in the metrics).
+        cache_hit = result.metadata.get("cache_hit") if result.metadata else None
         period_hour = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:00")
         try:
             from moira.service_setup import service_provider
@@ -164,6 +168,7 @@ class ToolExecutor:
                     period_hour=period_hour,
                     success=result.success,
                     duration_ms=result.duration_ms,
+                    cache_hit=cache_hit,
                 )
             )
         except Exception:
@@ -174,6 +179,7 @@ class ToolExecutor:
                     period_hour=period_hour,
                     success=result.success,
                     duration_ms=result.duration_ms,
+                    cache_hit=cache_hit,
                 )
             except Exception:
                 logger.debug("Failed to record metrics for %s", tool_name, exc_info=True)

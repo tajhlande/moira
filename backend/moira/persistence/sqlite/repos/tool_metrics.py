@@ -27,24 +27,29 @@ class SqliteToolMetricsRepository(ToolMetricsRepository):
         period_hour: str,
         success: bool,
         duration_ms: int,
+        cache_hit: bool | None = None,
     ) -> None:
         success_inc = 1 if success else 0
         error_inc = 0 if success else 1
+        hit_inc = 1 if cache_hit is True else 0
+        miss_inc = 1 if cache_hit is False else 0
         conn = self._connect()
         try:
             conn.execute(
                 "INSERT INTO tool_metrics "
                 "(tool_name, call_type, period_hour, call_count, "
                 "success_count, error_count, aggregate_duration_ms, "
-                "low_duration_ms, high_duration_ms) "
-                "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?) "
+                "low_duration_ms, high_duration_ms, cache_hits, cache_misses) "
+                "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(tool_name, call_type, period_hour) DO UPDATE SET "
                 "call_count = call_count + 1, "
                 "success_count = success_count + ?, "
                 "error_count = error_count + ?, "
                 "aggregate_duration_ms = aggregate_duration_ms + ?, "
                 "low_duration_ms = MIN(low_duration_ms, ?), "
-                "high_duration_ms = MAX(high_duration_ms, ?)",
+                "high_duration_ms = MAX(high_duration_ms, ?), "
+                "cache_hits = cache_hits + ?, "
+                "cache_misses = cache_misses + ?",
                 (
                     tool_name,
                     call_type,
@@ -54,11 +59,15 @@ class SqliteToolMetricsRepository(ToolMetricsRepository):
                     duration_ms,
                     duration_ms,
                     duration_ms,
+                    hit_inc,
+                    miss_inc,
                     success_inc,
                     error_inc,
                     duration_ms,
                     duration_ms,
                     duration_ms,
+                    hit_inc,
+                    miss_inc,
                 ),
             )
             conn.commit()
@@ -88,7 +97,8 @@ class SqliteToolMetricsRepository(ToolMetricsRepository):
             rows = conn.execute(
                 "SELECT tool_name, call_type, period_hour, call_count, "
                 "success_count, error_count, aggregate_duration_ms, "
-                "low_duration_ms, high_duration_ms "
+                "low_duration_ms, high_duration_ms, "
+                "cache_hits, cache_misses "
                 f"FROM tool_metrics{where} "
                 "ORDER BY period_hour DESC, tool_name, call_type",
                 params,

@@ -13,6 +13,8 @@ class ToolMetricsRow:
     aggregate_duration_ms: int
     low_duration_ms: int
     high_duration_ms: int
+    cache_hits: int = 0
+    cache_misses: int = 0
 
 
 class ToolMetricsRepository(ABC):
@@ -24,6 +26,7 @@ class ToolMetricsRepository(ABC):
         period_hour: str,
         success: bool,
         duration_ms: int,
+        cache_hit: bool | None = None,
     ) -> None: ...
 
     @abstractmethod
