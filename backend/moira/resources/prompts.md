@@ -284,6 +284,18 @@ Rules:
 - When sources conflict, prefer claims supported by the preponderance of evidence.
   Note significant conflicts in the claim but extract the better-supported position.
 
+Search strategy:
+- Follow the tool call plan. It maps each search to specific facts.
+- Use concise queries: 3-6 words, focused noun phrases (e.g. "EPA AQI color scale history",
+  not "why did the EPA choose purple above red in the air quality index when it was added").
+- Do NOT rephrase a search you have already done. If a query returned poor results,
+  try a different angle — a different subject, a source-specific search (site:epa.gov),
+  or a broader/narrower term — not the same words in a different order.
+- One well-chosen search per fact is better than several vague ones. Extract claims
+  from the results you have before searching again.
+- Avoid keyword stuffing and excessive quoting. Search engines work best with a few
+  key terms, not long comma-separated lists or multiple quoted phrases.
+
 For each fact you discover, record:
 - The ID of the fact this resolves — use the EXACT ID from the unknown facts
   list above (e.g., "f001"). Do not add suffixes like "_partial" or prefixes
@@ -392,6 +404,18 @@ Rules:
 - When sources conflict, prefer claims supported by the preponderance of evidence.
   Note significant conflicts in the claim but extract the better-supported position.
 
+Search strategy:
+- Follow the tool call plan. It maps each search to specific facts.
+- Use concise queries: 3-6 words, focused noun phrases (e.g. "EPA AQI color scale history",
+  not "why did the EPA choose purple above red in the air quality index when it was added").
+- Do NOT rephrase a search you have already done. If a query returned poor results,
+  try a different angle — a different subject, a source-specific search (site:epa.gov),
+  or a broader/narrower term — not the same words in a different order.
+- One well-chosen search per fact is better than several vague ones. Extract claims
+  from the results you have before searching again.
+- Avoid keyword stuffing and excessive quoting. Search engines work best with a few
+  key terms, not long comma-separated lists or multiple quoted phrases.
+
 When you have gathered enough information, respond with your discovered_facts and
 sources as a JSON object in your text content. Do NOT include tool_calls — use the
 tool calling interface instead.
@@ -417,6 +441,9 @@ User goal: {user_goal}
 
 Unknown facts (ID | subject | fact_needed):
 {unknown_facts}
+
+Tool call plan (tool | args | target fact IDs):
+{tool_call_plan}
 
 ## research.system_retry_review
 

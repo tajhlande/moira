@@ -485,6 +485,166 @@ class TestExtractToolCalls:
         assert calls[0].name == "ok"
 
 
+class TestValidateAndFilterCalls:
+    """Tests for _validate_and_filter_calls — verifies call limit enforcement,
+    allowed-name filtering, and required-param validation."""
+
+    @staticmethod
+    def _make_call(name: str, args: dict | None = None) -> ToolCall:
+        return ToolCall(id="tc_test", name=name, arguments=args or {})
+
+    def test_batch_does_not_overshoot_limit(self):
+        """Multiple calls to the same tool in one batch must not all pass
+        when the limit is low.  This is the check-vs-increment regression
+        test: previously all calls in a batch saw the same stale count
+        and every one passed, allowing overshoot."""
+        from moira.workflow.nodes.research import _validate_and_filter_calls
+
+        calls = [self._make_call("web_search", {"query": f"q{i}"}) for i in range(5)]
+        call_counts: dict[str, int] = {"web_search": 8}
+        valid, rejected = _validate_and_filter_calls(
+            calls,
+            allowed_names={"web_search"},
+            call_limits={"web_search": 10},
+            call_counts=call_counts,
+            required_params={"web_search": {"query"}},
+        )
+        # Limit is 10, already used 8 → only 2 more allowed
+        assert len(valid) == 2
+        assert call_counts["web_search"] == 10
+
+    def test_batch_all_pass_when_under_limit(self):
+        """Normal case: all calls pass when well under the limit."""
+        from moira.workflow.nodes.research import _validate_and_filter_calls
+
+        calls = [self._make_call("web_search", {"query": f"q{i}"}) for i in range(3)]
+        call_counts: dict[str, int] = {}
+        valid, rejected = _validate_and_filter_calls(
+            calls,
+            allowed_names={"web_search"},
+            call_limits={"web_search": 10},
+            call_counts=call_counts,
+            required_params={"web_search": {"query"}},
+        )
+        assert len(valid) == 3
+        assert call_counts["web_search"] == 3
+
+    def test_at_limit_blocks_all(self):
+        """When already at the limit, all calls to that tool are blocked."""
+        from moira.workflow.nodes.research import _validate_and_filter_calls
+
+        calls = [self._make_call("web_search", {"query": "x"})]
+        call_counts: dict[str, int] = {"web_search": 10}
+        valid, rejected = _validate_and_filter_calls(
+            calls,
+            allowed_names={"web_search"},
+            call_limits={"web_search": 10},
+            call_counts=call_counts,
+            required_params={},
+        )
+        assert len(valid) == 0
+        assert call_counts["web_search"] == 10  # unchanged
+
+    def test_mixed_tools_independent_limits(self):
+        """Calls to different tools are counted independently within a batch."""
+        from moira.workflow.nodes.research import _validate_and_filter_calls
+
+        calls = [
+            self._make_call("web_search", {"query": "x"}),
+            self._make_call("calculator", {"expression": "1+1"}),
+            self._make_call("web_search", {"query": "y"}),
+        ]
+        call_counts: dict[str, int] = {"web_search": 9, "calculator": 0}
+        valid, rejected = _validate_and_filter_calls(
+            calls,
+            allowed_names={"web_search", "calculator"},
+            call_limits={"web_search": 10, "calculator": 5},
+            call_counts=call_counts,
+            required_params={"web_search": {"query"}, "calculator": {"expression"}},
+        )
+        assert len(valid) == 2
+        assert call_counts["web_search"] == 10
+        assert call_counts["calculator"] == 1
+
+    # --- Per-step limit tests ---
+
+    def test_step_limit_blocks_within_step(self):
+        """Per-step limit caps calls even when per-run limit has room."""
+        from moira.workflow.nodes.research import _validate_and_filter_calls
+
+        calls = [self._make_call("web_search", {"query": f"q{i}"}) for i in range(5)]
+        call_counts: dict[str, int] = {"web_search": 0}
+        valid, rejected = _validate_and_filter_calls(
+            calls,
+            allowed_names={"web_search"},
+            call_limits={"web_search": 20},  # generous per-run
+            call_counts=call_counts,
+            required_params={"web_search": {"query"}},
+            step_limits={"web_search": 3},
+            step_baseline={"web_search": 0},
+        )
+        assert len(valid) == 3
+        assert call_counts["web_search"] == 3
+
+    def test_step_limit_resets_across_steps(self):
+        """Per-step usage is relative to baseline, so a fresh step gets
+        a fresh budget even if prior steps used calls."""
+        from moira.workflow.nodes.research import _validate_and_filter_calls
+
+        # Simulate 2nd research invocation: 4 calls already used,
+        # baseline at 4 (those were from the first step).
+        calls = [self._make_call("web_search", {"query": f"q{i}"}) for i in range(5)]
+        call_counts: dict[str, int] = {"web_search": 4}
+        valid, rejected = _validate_and_filter_calls(
+            calls,
+            allowed_names={"web_search"},
+            call_limits={"web_search": 20},
+            call_counts=call_counts,
+            required_params={"web_search": {"query"}},
+            step_limits={"web_search": 3},
+            step_baseline={"web_search": 4},  # baseline = counts at step entry
+        )
+        # step_used = 4 - 4 = 0, so 3 calls allowed this step
+        assert len(valid) == 3
+        assert call_counts["web_search"] == 7
+
+    def test_step_and_run_limit_both_enforced(self):
+        """When per-step is generous but per-run is tight, per-run wins."""
+        from moira.workflow.nodes.research import _validate_and_filter_calls
+
+        calls = [self._make_call("web_search", {"query": f"q{i}"}) for i in range(5)]
+        call_counts: dict[str, int] = {"web_search": 8}
+        valid, rejected = _validate_and_filter_calls(
+            calls,
+            allowed_names={"web_search"},
+            call_limits={"web_search": 10},
+            call_counts=call_counts,
+            required_params={"web_search": {"query"}},
+            step_limits={"web_search": 10},
+            step_baseline={"web_search": 0},
+        )
+        # Per-run limit (10) hits first: only 2 more allowed
+        assert len(valid) == 2
+        assert call_counts["web_search"] == 10
+
+    def test_step_limit_zero_means_unlimited(self):
+        """step_limit of 0 (or absent) means no per-step cap."""
+        from moira.workflow.nodes.research import _validate_and_filter_calls
+
+        calls = [self._make_call("web_search", {"query": f"q{i}"}) for i in range(10)]
+        call_counts: dict[str, int] = {}
+        valid, rejected = _validate_and_filter_calls(
+            calls,
+            allowed_names={"web_search"},
+            call_limits={"web_search": 0},  # unlimited
+            call_counts=call_counts,
+            required_params={"web_search": {"query"}},
+            step_limits={"web_search": 0},  # unlimited
+            step_baseline={},
+        )
+        assert len(valid) == 10
+
+
 class TestFormatUnknownFacts:
     """Tests for _format_unknown_facts — verifies that all non-verified
     statuses are included so retry passes can see unverified facts."""

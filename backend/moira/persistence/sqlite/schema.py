@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
-CURRENT_VERSION = 22
+CURRENT_VERSION = 23
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:

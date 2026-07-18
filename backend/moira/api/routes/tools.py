@@ -160,7 +160,14 @@ async def update_tool(name: str, body: dict[str, Any]):
         raise HTTPException(status_code=404, detail="Tool not found")
 
     allowed = (
-        {"enabled", "is_default", "config"}
+        {
+            "enabled",
+            "is_default",
+            "config",
+            "invocation_cost",
+            "call_limit_per_run",
+            "call_limit_per_step",
+        }
         if tool.built_in
         else {
             "description",
@@ -171,6 +178,9 @@ async def update_tool(name: str, body: dict[str, Any]):
             "is_default",
             "enabled",
             "group_name",
+            "invocation_cost",
+            "call_limit_per_run",
+            "call_limit_per_step",
         }
     )
     updates = {k: v for k, v in body.items() if k in allowed}
@@ -227,7 +237,14 @@ async def bulk_update_tools(body: dict[str, Any]):
             continue
 
         allowed = (
-            {"enabled", "is_default", "config"}
+            {
+                "enabled",
+                "is_default",
+                "config",
+                "invocation_cost",
+                "call_limit_per_run",
+                "call_limit_per_step",
+            }
             if tool.built_in
             else {
                 "description",
@@ -238,6 +255,9 @@ async def bulk_update_tools(body: dict[str, Any]):
                 "is_default",
                 "enabled",
                 "group_name",
+                "invocation_cost",
+                "call_limit_per_run",
+                "call_limit_per_step",
             }
         )
         fields = {k: v for k, v in item.items() if k in allowed}

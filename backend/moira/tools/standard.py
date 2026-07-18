@@ -45,7 +45,11 @@ STANDARD_TOOLS: list[ToolDefinition] = [
             "required": ["question", "options"],
         },
     ),
-    WebSearchTool.make_definition(invocation_cost=5.0, call_limit_per_run=10),
-    UrlContentTool.make_definition(invocation_cost=3.0, call_limit_per_run=15),
+    WebSearchTool.make_definition(
+        invocation_cost=5.0, call_limit_per_run=10, call_limit_per_step=5
+    ),
+    UrlContentTool.make_definition(
+        invocation_cost=3.0, call_limit_per_run=15, call_limit_per_step=8
+    ),
     CalculatorTool.make_definition(invocation_cost=0.1),
 ]

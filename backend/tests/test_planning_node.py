@@ -146,6 +146,28 @@ class TestPlanningCallLimits:
         assert "calls remaining: 0" in result
 
     @pytest.mark.asyncio
+    async def test_step_limits_displayed(self, config, mock_writer, mock_model):
+        """_format_tools_with_costs_and_limits should show per-step remaining."""
+        from moira.workflow.nodes.planning import _format_tools_with_costs_and_limits
+
+        tools = [
+            ToolDefinition(name="web_search", description="Search the web"),
+        ]
+        tool_costs = {"web_search": 5.0}
+        call_counts = {"web_search": 3}
+        call_limits = {"web_search": 10}
+        step_limits = {"web_search": 5}
+        # At planning time, baseline = current counts (step hasn't started)
+        step_baseline = dict(call_counts)
+
+        result = _format_tools_with_costs_and_limits(
+            tools, tool_costs, call_counts, call_limits, step_limits, step_baseline
+        )
+
+        assert "calls remaining: 7" in result
+        assert "(step: 5)" in result
+
+    @pytest.mark.asyncio
     async def test_planning_uses_tool_costs_from_state(self, config, mock_writer, mock_model):
         """Planning should produce a tool_call_plan with costs from tool_costs."""
         _inject_services(config, mock_model)

@@ -28,8 +28,9 @@ def _run_manager() -> RunManager:
     return cast(RunManager, service_provider("run_manager"))
 
 
-async def _build_tool_cost_and_limits() -> tuple[dict[str, float], dict[str, int]]:
-    """Load tool_costs and tool_call_limits from the tool catalog."""
+async def _build_tool_cost_and_limits() -> tuple[dict[str, float], dict[str, int], dict[str, int]]:
+    """Load tool_costs, tool_call_limits, and tool_call_step_limits from the
+    tool catalog."""
     from moira.persistence.interfaces import ToolRepository
 
     repo = cast(ToolRepository, service_provider("tool_repository"))
@@ -37,13 +38,16 @@ async def _build_tool_cost_and_limits() -> tuple[dict[str, float], dict[str, int
 
     tool_costs: dict[str, float] = {}
     tool_call_limits: dict[str, int] = {}
+    tool_call_step_limits: dict[str, int] = {}
     for t in tools:
         if not t.enabled:
             continue
         tool_costs[t.name] = t.invocation_cost
         if t.call_limit_per_run and t.call_limit_per_run > 0:
             tool_call_limits[t.name] = t.call_limit_per_run
-    return tool_costs, tool_call_limits
+        if t.call_limit_per_step and t.call_limit_per_step > 0:
+            tool_call_step_limits[t.name] = t.call_limit_per_step
+    return tool_costs, tool_call_limits, tool_call_step_limits
 
 
 def _apply_run_setting_overrides(
@@ -188,7 +192,7 @@ async def send_message(
     prior_report = prior_turns[-1] if prior_turns else None
     prior_question = prior_turns[-1]["question"] if prior_turns else None
 
-    tool_costs, tool_call_limits = await _build_tool_cost_and_limits()
+    tool_costs, tool_call_limits, tool_call_step_limits = await _build_tool_cost_and_limits()
 
     initial_state = {
         "knowledge": {
@@ -212,6 +216,7 @@ async def send_message(
             "retry_limits": retry_limits,
             "tool_costs": tool_costs,
             "tool_call_limits": tool_call_limits,
+            "tool_call_step_limits": tool_call_step_limits,
             "tool_call_counts": {},
             "total_tool_cost_consumed": 0.0,
             "error": "",
@@ -364,7 +369,7 @@ async def rerun_message(
     prior_report = prior_turns[-1] if prior_turns else None
     prior_question = prior_turns[-1]["question"] if prior_turns else None
 
-    tool_costs, tool_call_limits = await _build_tool_cost_and_limits()
+    tool_costs, tool_call_limits, tool_call_step_limits = await _build_tool_cost_and_limits()
 
     initial_state = {
         "knowledge": {
@@ -388,6 +393,7 @@ async def rerun_message(
             "retry_limits": retry_limits,
             "tool_costs": tool_costs,
             "tool_call_limits": tool_call_limits,
+            "tool_call_step_limits": tool_call_step_limits,
             "tool_call_counts": {},
             "total_tool_cost_consumed": 0.0,
             "error": "",

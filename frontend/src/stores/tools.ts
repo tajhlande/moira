@@ -28,6 +28,9 @@ export interface ToolDefinition {
   config: Record<string, unknown>;
   parameters: ToolParameter[];
   originalDescription: string;
+  invocationCost: number;
+  callLimitPerRun: number;
+  callLimitPerStep: number;
 }
 
 function extractParameters(schema: Record<string, unknown>): ToolParameter[] {
@@ -63,6 +66,9 @@ function apiToolToStore(
     config: info.config,
     parameters: extractParameters(info.argument_schema),
     originalDescription: info.original_description || "",
+    invocationCost: info.invocation_cost ?? 1.0,
+    callLimitPerRun: info.call_limit_per_run ?? 0,
+    callLimitPerStep: info.call_limit_per_step ?? 0,
   };
 }
 

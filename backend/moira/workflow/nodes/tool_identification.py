@@ -98,7 +98,7 @@ async def tool_identification(state: ResearchState, config: RunnableConfig) -> d
 
     new_budget = deduct_cost(es["step_costs"], NODE_NAME, es["budget_remaining"])
 
-    # Build tool_costs and tool_call_limits from candidate tools so
+    # Build tool_costs and call limits from candidate tools so
     # downstream planning and research nodes have the data even if
     # streaming.py did not populate them (e.g. tests, direct invocation).
     tool_costs = {t.name: t.invocation_cost for t in candidate_tools}
@@ -106,6 +106,11 @@ async def tool_identification(state: ResearchState, config: RunnableConfig) -> d
         t.name: t.call_limit_per_run
         for t in candidate_tools
         if t.call_limit_per_run and t.call_limit_per_run > 0
+    }
+    tool_call_step_limits = {
+        t.name: t.call_limit_per_step
+        for t in candidate_tools
+        if t.call_limit_per_step and t.call_limit_per_step > 0
     }
 
     detail = {
@@ -130,11 +135,15 @@ async def tool_identification(state: ResearchState, config: RunnableConfig) -> d
         len(unknown_facts),
     )
 
-    # Merge tool_costs/tool_call_limits with any pre-existing values from
+    # Merge tool_costs/call limits with any pre-existing values from
     # initial_state so tools not in the candidate set (but present in the
     # catalog) are still tracked.
     merged_tool_costs = {**es.get("tool_costs", {}), **tool_costs}
     merged_call_limits = {**es.get("tool_call_limits", {}), **tool_call_limits}
+    merged_step_limits = {
+        **es.get("tool_call_step_limits", {}),
+        **tool_call_step_limits,
+    }
 
     return {
         "execution_state": {
@@ -143,5 +152,6 @@ async def tool_identification(state: ResearchState, config: RunnableConfig) -> d
             "budget_remaining": new_budget,
             "tool_costs": merged_tool_costs,
             "tool_call_limits": merged_call_limits,
+            "tool_call_step_limits": merged_step_limits,
         },
     }

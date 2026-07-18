@@ -242,8 +242,25 @@ def _validate_and_filter_calls(
     call_limits: dict[str, int],
     call_counts: dict[str, int],
     required_params: dict[str, set[str]],
+    step_limits: dict[str, int] | None = None,
+    step_baseline: dict[str, int] | None = None,
 ) -> tuple[list[ToolCall], list[str]]:
     """Filter tool calls by allowed names, call limits, and required params.
+
+    ``call_counts`` is mutated in place — each accepted call increments
+    the count immediately so that subsequent calls in the same batch
+    see the updated value.  This prevents a single batch from
+    overshooting the per-run limit (e.g., 9 calls emitted when the
+    count is at 9 would all pass a limit of 10 if the count were only
+    updated post-execution).
+
+    When ``step_limits`` and ``step_baseline`` are provided, a per-step
+    limit is also enforced.  The per-step usage is computed as
+    ``call_counts[name] - step_baseline[name]``, which gives the number
+    of calls made since the current research invocation began.  This
+    naturally resets to zero each time research() is entered because
+    the baseline is snapshotted from the accumulated call_counts at
+    entry.
 
     Returns ``(valid_calls, rejected_names)``.
     """
@@ -253,16 +270,34 @@ def _validate_and_filter_calls(
         if call.name not in allowed_names:
             rejected.append(call)
             continue
+
+        # --- Per-run limit check ---
         limit = call_limits.get(call.name, 0)
         used = call_counts.get(call.name, 0)
         if limit > 0 and used >= limit:
             logger.warning(
-                "Tool %s hit call limit (%d/%d), skipping",
+                "Tool %s hit per-run call limit (%d/%d), skipping",
                 call.name,
                 used,
                 limit,
             )
             continue
+
+        # --- Per-step limit check ---
+        # step_used = calls made since this research invocation began
+        if step_limits and step_baseline:
+            step_limit = step_limits.get(call.name, 0)
+            if step_limit > 0:
+                step_used = used - step_baseline.get(call.name, 0)
+                if step_used >= step_limit:
+                    logger.warning(
+                        "Tool %s hit per-step call limit (%d/%d), skipping",
+                        call.name,
+                        step_used,
+                        step_limit,
+                    )
+                    continue
+
         required = required_params.get(call.name)
         if required:
             missing = [
@@ -277,6 +312,9 @@ def _validate_and_filter_calls(
                     missing,
                 )
                 continue
+        # Increment immediately so the next call in this batch sees
+        # the updated count and can be properly rejected if at limit.
+        call_counts[call.name] = used + 1
         valid_calls.append(call)
     return valid_calls, [c.name for c in rejected]
 
@@ -387,7 +425,8 @@ def _process_execution_results(
                         if fact["id"] in target_ids and fact["status"] == "unknown":
                             fact["status"] = "unverified"
 
-        call_counts[name] = call_counts.get(name, 0) + 1
+        # call_counts is now incremented in _validate_and_filter_calls
+        # at validation time, so it is already up-to-date here.
         per_call_cost = tool_costs.get(name, 1.0)
         new_budget -= per_call_cost
         total_tool_cost += per_call_cost
@@ -811,6 +850,8 @@ async def _run_native_tool_loop(
     tool_results_log: list[dict],
     new_budget: float,
     total_tool_cost: float,
+    step_limits: dict[str, int] | None = None,
+    step_baseline: dict[str, int] | None = None,
 ) -> _LoopResult:
     """Run the native tool-calling loop.
 
@@ -855,6 +896,8 @@ async def _run_native_tool_loop(
             call_limits,
             call_counts,
             required_params,
+            step_limits=step_limits,
+            step_baseline=step_baseline,
         )
         if rejected_names:
             logger.warning("Model requested disallowed tools: %s", rejected_names)
@@ -948,6 +991,8 @@ async def _run_text_tool_loop(
     tool_results_log: list[dict],
     new_budget: float,
     total_tool_cost: float,
+    step_limits: dict[str, int] | None = None,
+    step_baseline: dict[str, int] | None = None,
 ) -> _LoopResult:
     """Run the text-based tool-calling loop.
 
@@ -1079,6 +1124,8 @@ async def _run_text_tool_loop(
             call_limits,
             call_counts,
             required_params,
+            step_limits=step_limits,
+            step_baseline=step_baseline,
         )
         if rejected_names:
             logger.warning("Model requested disallowed tools: %s", rejected_names)
@@ -1183,6 +1230,10 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
 
     new_budget = deduct_cost(es["step_costs"], NODE_NAME, es["budget_remaining"])
     call_counts = dict(es.get("tool_call_counts", {}))
+    # Snapshot the call counts at entry to compute per-step usage.
+    # Per-step limit = "how many calls since this research invocation began",
+    # which naturally resets each time research() is entered.
+    step_call_baseline = dict(call_counts)
     total_tool_cost = es.get("total_tool_cost_consumed", 0.0)
     tool_costs = es.get("tool_costs", {})
 
@@ -1276,6 +1327,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             "research.user_native",
             user_goal=knowledge.get("user_goal", knowledge["question"]),
             unknown_facts=_format_unknown_facts(facts),
+            tool_call_plan=_format_tool_call_plan(tool_plan),
         )
     else:
         system_prompt = render_prompt(
@@ -1315,6 +1367,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     ]
 
     call_limits = es.get("tool_call_limits", {})
+    step_limits = es.get("tool_call_step_limits", {})
     tool_costs = es.get("tool_costs", {})
 
     if resolved.native_tool_calling:
@@ -1336,6 +1389,8 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             tool_results_log=tool_results_log,
             new_budget=new_budget,
             total_tool_cost=total_tool_cost,
+            step_limits=step_limits,
+            step_baseline=step_call_baseline,
         )
     else:
         loop_result = await _run_text_tool_loop(
@@ -1356,6 +1411,8 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             tool_results_log=tool_results_log,
             new_budget=new_budget,
             total_tool_cost=total_tool_cost,
+            step_limits=step_limits,
+            step_baseline=step_call_baseline,
         )
 
     total_call_count = loop_result.total_call_count
