@@ -33,3 +33,18 @@ Scores are recorded manually via `moira_eval.log`.
 
 - Agent model: z-ai/glm-5.2
 - Note: Added check to mark facts as unverified if the agent's fact statement says that it could not be verified
+
+## 2026-07-18 batch (commit bc94889d, cleanup-empty-claims)
+
+| Question | Rubric | Score | web_search | Status |
+|----------|--------|-------|------------|--------|
+| flaming-hot-cheetos | general | 16/25 | 9 | FAIL |
+| future-nostalgia | general | 16/25 | 10 | PASS |
+| jazz-trumpeters | general | 13/25 | 10 | FAIL |
+| telescope-mount-cost | general | 14/25 | 10 | FAIL |
+| trade-policy-manufacturing | general | 15/25 | 10 | FAIL |
+| tyranitar-ou | pokemon | 9/16 | 10 | FAIL |
+| water-blood-pressure | general | 16/25 | 10 | FAIL |
+
+- Agent model: z-ai/glm-5.2
+- Note: Added per-step tool calling limits
