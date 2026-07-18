@@ -302,6 +302,47 @@ class TestToolIdentificationPhaseC:
         assert "api_tool" not in limits
 
     @pytest.mark.asyncio
+    async def test_tool_call_step_limits_populated(self, config, mock_writer, mock_model):
+        """tool_call_step_limits should be populated for tools with per-step limit > 0."""
+        _inject_services(config, mock_model)
+
+        mock_discovery = AsyncMock()
+        mock_discovery.discover = AsyncMock(
+            return_value=[
+                ToolDefinition(
+                    name="web_search",
+                    description="Search",
+                    invocation_cost=5.0,
+                    call_limit_per_run=10,
+                    call_limit_per_step=5,
+                ),
+                ToolDefinition(
+                    name="api_tool",
+                    description="API",
+                    invocation_cost=2.0,
+                ),
+            ]
+        )
+        _services["tool_discovery"] = mock_discovery
+
+        mock_catalog = MagicMock()
+        mock_catalog.get_default_tools.return_value = []
+        _services["tool_catalog"] = mock_catalog
+
+        from moira.workflow.nodes.tool_identification import tool_identification
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+
+        result = await tool_identification(state, _make_run_config(config))
+
+        step_limits = result["execution_state"]["tool_call_step_limits"]
+        assert step_limits["web_search"] == 5
+        assert "api_tool" not in step_limits
+
+    @pytest.mark.asyncio
     async def test_tool_costs_merges_with_initial_state(self, config, mock_writer, mock_model):
         """tool_costs from initial_state (from streaming.py catalog) should
         be preserved when tool_identification merges its candidate costs."""

@@ -638,6 +638,9 @@ export interface ToolInfo {
   implementation: string;
   group_name: string;
   original_description: string;
+  invocation_cost: number;
+  call_limit_per_run: number;
+  call_limit_per_step: number;
 }
 
 export interface SettingDefinition {

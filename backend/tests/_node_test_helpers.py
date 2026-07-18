@@ -60,6 +60,7 @@ def _build_state(config, question="Test question", facts=None, conclusions=None)
                 "step_costs": step_costs,
                 "tool_costs": {},
                 "tool_call_limits": {},
+                "tool_call_step_limits": {},
                 "tool_call_counts": {},
                 "total_tool_cost_consumed": 0.0,
                 "error": "",

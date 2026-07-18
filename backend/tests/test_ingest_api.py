@@ -765,3 +765,53 @@ class TestToolDescriptionEdit:
 
         tool_resp2 = app_client.get(f"/api/tools/{tool_name}")
         assert tool_resp2.json()["original_description"] == original
+
+    def test_patch_builtin_tool_cost_and_limit(self, app_client):
+        """PATCH /tools/{name} can update invocation_cost and call_limit_per_run
+        on built-in tools."""
+        resp = app_client.get("/api/tools")
+        builtin = next((t for t in resp.json()["tools"] if t["built_in"]), None)
+        assert builtin is not None, "Expected at least one built-in tool"
+
+        resp = app_client.patch(
+            f"/api/tools/{builtin['name']}",
+            json={"invocation_cost": 8.5, "call_limit_per_run": 12},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["invocation_cost"] == 8.5
+        assert resp.json()["call_limit_per_run"] == 12
+
+        # Persisted
+        resp2 = app_client.get(f"/api/tools/{builtin['name']}")
+        assert resp2.json()["invocation_cost"] == 8.5
+        assert resp2.json()["call_limit_per_run"] == 12
+
+    def test_patch_builtin_tool_zero_limit(self, app_client):
+        """PATCH can set call_limit_per_run to 0 (unlimited)."""
+        resp = app_client.get("/api/tools")
+        builtin = next((t for t in resp.json()["tools"] if t["built_in"]), None)
+        assert builtin is not None
+
+        resp = app_client.patch(
+            f"/api/tools/{builtin['name']}",
+            json={"call_limit_per_run": 0},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["call_limit_per_run"] == 0
+
+    def test_patch_builtin_tool_per_step_limit(self, app_client):
+        """PATCH can update call_limit_per_step on built-in tools."""
+        resp = app_client.get("/api/tools")
+        builtin = next((t for t in resp.json()["tools"] if t["built_in"]), None)
+        assert builtin is not None
+
+        resp = app_client.patch(
+            f"/api/tools/{builtin['name']}",
+            json={"call_limit_per_step": 7},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["call_limit_per_step"] == 7
+
+        # Persisted
+        resp2 = app_client.get(f"/api/tools/{builtin['name']}")
+        assert resp2.json()["call_limit_per_step"] == 7

@@ -7,6 +7,7 @@ import {
   NSwitch,
   NScrollbar,
   NInput,
+  NInputNumber,
   useMessage,
   useDialog,
 } from "naive-ui";
@@ -159,6 +160,54 @@ async function saveConfig() {
     configEdits.value = {};
   } finally {
     configSaving.value = false;
+  }
+}
+
+// --- Cost / limit editing ---
+const costLimitEdits = ref<{
+  invocationCost?: number;
+  callLimitPerRun?: number;
+  callLimitPerStep?: number;
+}>({});
+const costLimitSaving = ref(false);
+
+const effectiveCost = computed(
+  () =>
+    costLimitEdits.value.invocationCost ?? tool.value?.invocationCost ?? 1.0,
+);
+const effectiveLimit = computed(
+  () =>
+    costLimitEdits.value.callLimitPerRun ?? tool.value?.callLimitPerRun ?? 0,
+);
+const effectiveStepLimit = computed(
+  () =>
+    costLimitEdits.value.callLimitPerStep ?? tool.value?.callLimitPerStep ?? 0,
+);
+const costLimitDirty = computed(
+  () =>
+    costLimitEdits.value.invocationCost !== undefined ||
+    costLimitEdits.value.callLimitPerRun !== undefined ||
+    costLimitEdits.value.callLimitPerStep !== undefined,
+);
+
+async function saveCostLimit() {
+  if (!toolName.value || !costLimitDirty.value) return;
+  costLimitSaving.value = true;
+  try {
+    const fields: Record<string, unknown> = {};
+    if (costLimitEdits.value.invocationCost !== undefined) {
+      fields.invocation_cost = costLimitEdits.value.invocationCost;
+    }
+    if (costLimitEdits.value.callLimitPerRun !== undefined) {
+      fields.call_limit_per_run = costLimitEdits.value.callLimitPerRun;
+    }
+    if (costLimitEdits.value.callLimitPerStep !== undefined) {
+      fields.call_limit_per_step = costLimitEdits.value.callLimitPerStep;
+    }
+    await store.patchTool(toolName.value, fields);
+    costLimitEdits.value = {};
+  } finally {
+    costLimitSaving.value = false;
   }
 }
 
@@ -391,6 +440,72 @@ const configEntries = computed(() => {
         </div>
       </div>
 
+      <NDivider />
+
+      <div class="cost-limit-section">
+        <NText strong class="cost-limit-heading">Cost & Limits</NText>
+        <div class="cost-limit-form">
+          <div class="cost-limit-field">
+            <NText strong class="cost-limit-field-title">Invocation Cost</NText>
+            <NText depth="3" class="cost-limit-field-desc"
+              >Budget points consumed per call</NText
+            >
+            <NInputNumber
+              :value="effectiveCost"
+              @update:value="
+                (v: number | null) => (costLimitEdits.invocationCost = v ?? 0)
+              "
+              :min="0"
+              :step="0.1"
+              size="small"
+            />
+          </div>
+          <div class="cost-limit-field">
+            <NText strong class="cost-limit-field-title"
+              >Call Limit Per Run</NText
+            >
+            <NText depth="3" class="cost-limit-field-desc"
+              >Max calls per workflow run (0 = unlimited)</NText
+            >
+            <NInputNumber
+              :value="effectiveLimit"
+              @update:value="
+                (v: number | null) => (costLimitEdits.callLimitPerRun = v ?? 0)
+              "
+              :min="0"
+              :step="1"
+              size="small"
+            />
+          </div>
+          <div class="cost-limit-field">
+            <NText strong class="cost-limit-field-title"
+              >Call Limit Per Step</NText
+            >
+            <NText depth="3" class="cost-limit-field-desc"
+              >Max calls per research step (0 = unlimited)</NText
+            >
+            <NInputNumber
+              :value="effectiveStepLimit"
+              @update:value="
+                (v: number | null) => (costLimitEdits.callLimitPerStep = v ?? 0)
+              "
+              :min="0"
+              :step="1"
+              size="small"
+            />
+          </div>
+          <NButton
+            type="primary"
+            size="small"
+            :loading="costLimitSaving"
+            :disabled="!costLimitDirty"
+            @click="saveCostLimit"
+          >
+            Save
+          </NButton>
+        </div>
+      </div>
+
       <div class="info-section">
         <NText strong class="info-heading">Implementation</NText>
         <div class="info-box">
@@ -609,6 +724,37 @@ const configEntries = computed(() => {
 
 .info-section {
   margin-bottom: 20px;
+}
+
+.cost-limit-section {
+  margin-bottom: 20px;
+}
+
+.cost-limit-heading {
+  display: block;
+  margin-bottom: 10px;
+}
+
+.cost-limit-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.cost-limit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cost-limit-field-title {
+  font-size: 0.9em;
+}
+
+.cost-limit-field-desc {
+  font-size: 0.85em;
+  margin-bottom: 4px;
 }
 
 .info-heading {

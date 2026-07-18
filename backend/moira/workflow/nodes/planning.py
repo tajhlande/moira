@@ -51,6 +51,8 @@ def _format_tools_with_costs_and_limits(
     tool_costs: dict[str, float],
     call_counts: dict[str, int],
     tool_call_limits: dict[str, int],
+    tool_call_step_limits: dict[str, int] | None = None,
+    step_baseline: dict[str, int] | None = None,
 ) -> str:
     lines = []
     for t in tools:
@@ -58,6 +60,16 @@ def _format_tools_with_costs_and_limits(
         used = call_counts.get(t.name, 0)
         limit = tool_call_limits.get(t.name, 0)
         remaining = max(limit - used, 0) if limit > 0 else "unlimited"
+
+        # Per-step remaining: calls allowed in the current research step
+        step_str = ""
+        if tool_call_step_limits and step_baseline:
+            step_limit = tool_call_step_limits.get(t.name, 0)
+            if step_limit > 0:
+                step_used = used - step_baseline.get(t.name, 0)
+                step_remaining = max(step_limit - step_used, 0)
+                step_str = f" (step: {step_remaining})"
+
         desc = t.description[:120].replace("\n", " ").strip()
 
         # Include parameter names so the model uses correct arg keys
@@ -75,7 +87,9 @@ def _format_tools_with_costs_and_limits(
                 params_str = f" | params: {', '.join(param_parts)}"
 
         lines.append(
-            f"{t.name} | {desc}{params_str} | cost per call: {cost} | calls remaining: {remaining}"
+            f"{t.name} | {desc}{params_str}"
+            f" | cost per call: {cost}"
+            f" | calls remaining: {remaining}{step_str}"
         )
     return "\n".join(lines)
 
@@ -127,6 +141,10 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
             es.get("tool_costs", {}),
             es.get("tool_call_counts", {}),
             es.get("tool_call_limits", {}),
+            es.get("tool_call_step_limits", {}),
+            # At planning time the upcoming research step hasn't started,
+            # so the baseline = current counts (step_used = 0).
+            es.get("tool_call_counts", {}),
         ),
         budget_remaining=es["budget_remaining"],
         reserved_budget=reserved_budget,

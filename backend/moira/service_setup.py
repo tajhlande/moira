@@ -182,8 +182,15 @@ async def init_services(
         elif existing.built_in:
             tool_def.enabled = existing.enabled
             tool_def.config = existing.config
-            tool_def.invocation_cost = existing.invocation_cost
-            tool_def.call_limit_per_run = existing.call_limit_per_run
+            # Preserve user-customized cost/limits, but fall back to the
+            # code-level default when the DB value is 0/NULL.  This self-heals
+            # bad data caused by earlier bugs that wrote NULL for these fields.
+            if existing.invocation_cost and existing.invocation_cost > 0:
+                tool_def.invocation_cost = existing.invocation_cost
+            if existing.call_limit_per_run and existing.call_limit_per_run > 0:
+                tool_def.call_limit_per_run = existing.call_limit_per_run
+            if existing.call_limit_per_step and existing.call_limit_per_step > 0:
+                tool_def.call_limit_per_step = existing.call_limit_per_step
             if (
                 existing.original_description
                 and existing.original_description == tool_def.description
