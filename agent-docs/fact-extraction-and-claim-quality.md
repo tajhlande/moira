@@ -419,6 +419,86 @@ citations.
 - Excluded sources remain in the knowledge state and surface in the report's
   side channels (`uncited_sources`, `contradicted`, `unknown_facts`) for audit.
 
+### Phase 5: Fact extraction discipline
+
+**Goal:** Stop the model from writing "insufficient data found" claims when
+the search results actually contain the information. Address the root cause
+through prompt changes — the model should either extract a factual claim or
+omit the fact entirely.
+
+**Root cause analysis:**
+
+Database investigation revealed that the 07-14 jazz-trumpeters run had 6
+contradicted facts — ALL of which were process-metadata claims like
+"Insufficient data found about Miles Davis's specific 1960s stylistic
+directions." The reviewer correctly contradicted these because the cited
+sources DID contain the information. After the `_PROCESS_METADATA_PATTERNS`
+detection was added (cleanup-empty-claims branch), these claims are caught
+at research time and the facts stay `unknown`. But the underlying extraction
+failure remains: the model finds relevant sources but writes "insufficient
+data" instead of extracting the factual content.
+
+Three gaps in `research.system_native_tools` (the prompt the agent uses)
+cause this behavior:
+
+1. **Missing "omit" instruction.** The non-native prompt (`research.system`)
+   explicitly says: "If you cannot find any information for a fact, simply
+   omit it from discovered_facts." The native-tools prompt does NOT have
+   this instruction. The model feels obligated to write something for every
+   fact — and "insufficient data found" is what it writes when it gives up.
+
+2. **No prohibition of process-describing language.** Neither prompt says
+   "never write claims about the research process." The model thinks
+   "Insufficient data found about X" is a valid factual observation.
+
+3. **No extraction discipline.** The prompt says "extract specific fact
+   claims" but doesn't say "before concluding a fact can't be answered,
+   review all search results for mentions of the subject."
+
+**Files:**
+- `backend/moira/resources/prompts.md` (`research.system_native_tools`)
+
+**Changes (prompt-only, no code):**
+
+1. **Port the "omit" instruction** into the native-tools Rules section:
+   ```
+   - If you cannot find any information for a fact, omit it from
+     discovered_facts. Do not write entries for facts you could not resolve.
+   ```
+
+2. **Prohibit process-metadata language:**
+   ```
+   - Never write claims describing the research process — "insufficient data
+     found", "no results available", "no studies exist" are NOT factual
+     claims. A claim must be a factual assertion about the subject. "Miles
+     Davis pioneered modal jazz in the 1960s" is a claim. "Insufficient data
+     found about Miles Davis" is not.
+   ```
+
+3. **Add extraction discipline** after the Search strategy section:
+   ```
+   Extraction discipline:
+   - Before concluding a fact cannot be answered, carefully review ALL search
+     results for mentions of the fact's subject. If any result mentions the
+     subject, extract the specific factual information — do not abandon
+     extraction just because the answer isn't in the first snippet.
+   ```
+
+**Interaction with other phases:**
+- Makes **Phase 3** (reviewer-based process-metadata detection) a safety net
+  rather than the primary defense. `_PROCESS_METADATA_PATTERNS` can still be
+  removed — the claims should stop being written at the source.
+- Complements **Phase 2** (url_content): extraction discipline handles "the
+  info is in the snippet but the model gave up"; url_content handles "the
+  info is in the page body but not the snippet."
+
+**Why this is prompt-only:**
+The `_is_process_metadata_claim` detection in `research.py:543-554` already
+catches these claims and skips the update — the fact stays `unknown`. This
+prevents pollution but wastes the research budget: the model searched, found
+relevant results, but produced no usable output. The prompt fix attacks the
+root cause so the model extracts real claims instead of process descriptions.
+
 ## Verification
 
 ### Per-phase testing
@@ -438,6 +518,11 @@ citations.
   citation_ids and a full citation list, produces the correct curated, numbered
   subset. Test the `cit_id → positional` rewrite on fact formatting. Test
   synthesis auto-population of conclusion citation_ids.
+- **Phase 5:** Manual testing — run jazz-trumpeters (the question most affected
+  by process-metadata claims). Verify: facts with non-empty claims increase,
+  zero "insufficient data" style claims in discovered_facts, verified fact
+  count increases, and `_is_process_metadata_claim` warning logs drop to
+  near-zero.
 
 ### Eval batches
 
@@ -454,14 +539,21 @@ moira_eval log --batch --commit <sha>
 - url_content call count (should increase from baseline of 3)
 - Process-metadata claim leakage (should drop to 0)
 - Citation precision (reports should only cite sources from verified facts)
+- Facts with non-empty claims (should increase — Phase 5 extraction discipline)
 
 **Questions to watch:**
-- `water-blood-pressure`, `jazz-trumpeters` — zero-fact failures. Watch
-  whether url_content guidance helps the model find better material.
-- `future-nostalgia` — direct measure of Phase 3 impact (process-metadata
-  leak).
-- `telescope-mount-cost` — had 5 unverified facts, none passed review. Watch
-  whether claim correction (Phase 1) helps borderline contradictions.
+- `water-blood-pressure`, `jazz-trumpeters` — zero-fact failures (all facts
+  stay `unknown`). Phase 5 (extraction discipline) is the primary fix; Phase 2
+  (url_content) helps for body-of-page content. These are the highest-signal
+  questions for Phase 5 impact.
+- `future-nostalgia` — direct measure of Phase 3/5 impact (process-metadata
+  leak). Phase 5 should prevent the claims from being written; Phase 3 catches
+  any that slip through.
+- `telescope-mount-cost` — niche-technical question with facts staying unknown
+  (6 of 14 in recent runs). Phase 5 (extraction discipline) and Phase 2
+  (url_content for technical specs) are the primary fixes. Note: this question
+  produces ZERO contradicted facts — Phase 1 (claim correction) will not
+  trigger here.
 - `tyranitar-ou`, `flaming-hot-cheetos` — consistent passers. Watch for
   regressions.
 
@@ -491,17 +583,19 @@ After quality fixes land:
 
 | Day | Focus | Phase |
 |---|---|---|
-| 1 | Claim correction in research_review | Phase 1 |
+| 1 | Claim correction in research_review | Phase 1 (done) |
 | 2 | url_content prompt guidance + citation curation | Phases 2, 4 |
-| 3 | Reviewer-based process-metadata detection + testing | Phase 3 |
+| 3 | Extraction discipline + reviewer-based process-metadata detection | Phases 5, 3 |
 | 4 | Eval run, iterate on prompts, polish | All |
 | 5 | Demo prep, rehearsal, narrative | — |
 
-Phase 1 is the highest-impact change. If only one phase lands, it should be
-Phase 1 — it directly addresses the "1996 or 1997" contradiction problem and
-reduces unnecessary retries. Phase 4 (citation curation) pairs naturally with
-Phase 2 (url_content) since both improve the quality of material flowing into
-the report.
+Phase 5 (extraction discipline) is the highest-impact change for the zero-fact
+failure mode — it addresses why the model writes "insufficient data found"
+when search results contain the information. Phase 1 (done) addresses the
+"1996 or 1997" imprecision pattern that occurs when claims ARE extracted.
+Phase 4 (citation curation) pairs naturally with Phase 2 (url_content) since
+both improve the quality of material flowing into the report. Phase 3 becomes
+a safety net once Phase 5 prevents the claims from being written.
 
 ## Deferred (with rationale)
 

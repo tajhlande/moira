@@ -50,6 +50,10 @@ class Fact(TypedDict):
     citation_ids: NotRequired[list[str]]
     status: str  # "unknown" | "unverified" | "verified" | "contradicted"
     verification_note: NotRequired[str]
+    # True when research_review supplied a corrected_claim that flipped this
+    # fact from "contradicted" to "verified". Lets downstream nodes and the UI
+    # surface that the claim was refined during review.
+    corrected: NotRequired[bool]
 
 
 class Conclusion(TypedDict):
@@ -198,6 +202,7 @@ def knowledge_summary(knowledge: Knowledge) -> dict:
                 "status": f.get("status", "unknown"),
                 "verification_note": f.get("verification_note"),
                 "citation_ids": f.get("citation_ids", []),
+                "corrected": f.get("corrected", False),
             }
         )
 
@@ -230,6 +235,12 @@ def knowledge_summary(knowledge: Knowledge) -> dict:
                 "title": c.get("title"),
                 "excerpt": c.get("excerpt"),
                 "snippets": c.get("snippets"),
+                # Content is capped at 5000 chars upstream (research.py
+                # _CITATION_CONTENT_LIMIT and url_content.py
+                # _METADATA_CONTENT_LENGTH). The [:5000] here is a safety net
+                # so post-hoc analysis can see what the reviewer saw without
+                # risking unbounded growth in the persisted snapshot.
+                "content": (c.get("content") or "")[:5000],
             }
             for c in knowledge.get("citations", [])
         ],

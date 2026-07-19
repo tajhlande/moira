@@ -198,3 +198,228 @@ class TestResearchReview:
         result = await research_review(state, _make_run_config(config))
 
         assert result["knowledge"]["facts"][0]["status"] == "verified"
+
+    @pytest.mark.asyncio
+    async def test_corrected_claim_flips_contradicted_to_verified(
+        self, config, mock_writer, mock_model
+    ):
+        """When the reviewer supplies a corrected_claim on a contradicted fact,
+        the claim is applied and the fact flips to verified with corrected=True."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "contradicted",
+                        "evidence": "Source says '1996 or 1997', not just 1997",
+                        "corrected_claim": "The event occurred in 1996 or 1997",
+                    }
+                ],
+                "coverage_assessment": "Sufficient after correction",
+                "missing_areas": [],
+                "route": "continue",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="event",
+                fact_needed="when did the event occur",
+                claim="The event happened in 1997",
+                status="unverified",
+                citation_ids=["cit001"],
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+
+        fact = result["knowledge"]["facts"][0]
+        assert fact["status"] == "verified"
+        assert fact["claim"] == "The event occurred in 1996 or 1997"
+        assert fact["corrected"] is True
+        # Original citation_ids are preserved when no corrected_citation_ids given
+        assert fact["citation_ids"] == ["cit001"]
+        assert fact["verification_note"] == "Source says '1996 or 1997', not just 1997"
+
+    @pytest.mark.asyncio
+    async def test_corrected_claim_absent_keeps_contradicted(
+        self, config, mock_writer, mock_model
+    ):
+        """When a contradicted fact has no corrected_claim, it stays
+        contradicted and the corrected flag is not set."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "contradicted",
+                        "evidence": "Source disagrees",
+                    }
+                ],
+                "coverage_assessment": "Missing critical info",
+                "missing_areas": ["Need accurate date"],
+                "route": "retry",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="x",
+                fact_needed="y",
+                claim="original claim",
+                status="unverified",
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+
+        fact = result["knowledge"]["facts"][0]
+        assert fact["status"] == "contradicted"
+        assert fact["claim"] == "original claim"
+        assert not fact.get("corrected")
+
+    @pytest.mark.asyncio
+    async def test_corrected_claim_with_corrected_citation_ids(
+        self, config, mock_writer, mock_model
+    ):
+        """When the reviewer supplies corrected_citation_ids, the fact's
+        citation_ids are updated to the corrected set."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "contradicted",
+                        "evidence": "Better source",
+                        "corrected_claim": "Corrected claim",
+                        "corrected_citation_ids": ["cit002", "cit003"],
+                    }
+                ],
+                "coverage_assessment": "ok",
+                "missing_areas": [],
+                "route": "continue",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="x",
+                fact_needed="y",
+                claim="original",
+                status="unverified",
+                citation_ids=["cit001"],
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+
+        fact = result["knowledge"]["facts"][0]
+        assert fact["status"] == "verified"
+        assert fact["corrected"] is True
+        assert fact["citation_ids"] == ["cit002", "cit003"]
+
+    @pytest.mark.asyncio
+    async def test_corrected_claim_ignored_on_non_contradicted_result(
+        self, config, mock_writer, mock_model
+    ):
+        """A corrected_claim supplied with a non-contradicted result is ignored
+        — corrections only apply when the reviewer explicitly marks a fact
+        contradicted."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "verified",
+                        "evidence": "Confirmed",
+                        "corrected_claim": "Should be ignored",
+                    }
+                ],
+                "coverage_assessment": "ok",
+                "missing_areas": [],
+                "route": "continue",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="x",
+                fact_needed="y",
+                claim="original claim",
+                status="unverified",
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+
+        fact = result["knowledge"]["facts"][0]
+        assert fact["status"] == "verified"
+        assert fact["claim"] == "original claim"
+        assert not fact.get("corrected")
+
+    @pytest.mark.asyncio
+    async def test_whitespace_corrected_claim_treated_as_empty(
+        self, config, mock_writer, mock_model
+    ):
+        """A whitespace-only corrected_claim is treated as empty — the fact
+        stays contradicted."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "contradicted",
+                        "evidence": "Wrong",
+                        "corrected_claim": "   ",
+                    }
+                ],
+                "coverage_assessment": "missing",
+                "missing_areas": ["x"],
+                "route": "retry",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="x",
+                fact_needed="y",
+                claim="original claim",
+                status="unverified",
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+
+        fact = result["knowledge"]["facts"][0]
+        assert fact["status"] == "contradicted"
+        assert fact["claim"] == "original claim"

@@ -618,6 +618,18 @@ the specific information requested has not been established.
 - "contradicted": the claim conflicts with the cited evidence
 - "unverified": the claim does not address what fact_needed asks, or there is insufficient evidence to confirm or refute
 
+When you mark a fact "contradicted" because the claim is slightly imprecise but
+the cited evidence clearly supports a better claim, provide a corrected_claim
+that accurately reflects what the evidence says. The fact will be updated to
+verified with the corrected claim, avoiding a costly research retry. If the
+evidence is insufficient to write a complete, accurate correction, leave
+corrected_claim empty and the fact will remain contradicted.
+
+Example: claim "The event happened in 1997", source says "1996 or 1997"
+→ result: "contradicted"
+→ corrected_claim: "The event occurred in 1996 or 1997"
+→ the fact will be updated to verified with the corrected claim
+
 When evaluating conflicting evidence, weigh the credibility and consensus of
 sources. Official documentation, peer-reviewed research, and specialized
 databases carry more weight than forum posts, blogs, or single opinions.
@@ -635,12 +647,16 @@ If the research is sufficient, recommend continuing to evaluation.
 
 Respond with ONLY a JSON object, structured exactly like this:
 
-{"fact_results": [{"fact_id": "f001", "result": "verified", "evidence": "brief note on what confirmed it"}, {"fact_id": "f002", "result": "contradicted", "evidence": "what contradicted it"}], "coverage_assessment": "Brief assessment of whether the research sufficiently covered the question", "missing_areas": ["specific description of what is still needed"], "route": "continue"}
+{"fact_results": [{"fact_id": "f001", "result": "verified", "evidence": "brief note on what confirmed it"}, {"fact_id": "f002", "result": "contradicted", "evidence": "what contradicted it", "corrected_claim": "the corrected claim that the cited evidence supports"}], "coverage_assessment": "Brief assessment of whether the research sufficiently covered the question", "missing_areas": ["specific description of what is still needed"], "route": "continue"}
 
 where each item in fact_results has:
 - fact_id matching one of the facts you were given
 - result: one of "verified", "contradicted", or "unverified"
 - evidence: your short description of the cited evidence supporting the result
+- corrected_claim (optional): when result is "contradicted" and the cited
+  evidence clearly supports a better claim, the corrected claim that
+  accurately reflects what the evidence says. Omit or leave empty when the
+  evidence is insufficient for a correction.
 the coverage_assessment is a brief written review,
 the missing_areas are a list of short text descriptions of specific
 gaps in claims or subject matter areas that need further research to answer the question,

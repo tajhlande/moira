@@ -208,16 +208,35 @@ async def research_review(state: ResearchState, config: RunnableConfig) -> dict:
     # models sometimes use the wrong key — the verdict is critical for routing.
     # Only "evidence" is used for the note field (not "evaluation" or other
     # model-invented keys, which are assessments, not evidence).
+    #
+    # Claim correction (Phase 1): when the reviewer marks a fact "contradicted"
+    # but supplies a corrected_claim that the cited evidence clearly supports,
+    # apply it and flip the fact to "verified". This avoids a full research
+    # retry to re-discover what the reviewer already sees in the evidence.
+    corrections_applied = 0
     for fr in parsed.get("fact_results", []):
         fid = fr.get("fact_id", "")
         result = fr.get("result") or fr.get("status") or "unverified"
         evidence = fr.get("evidence") or ""
+        corrected_claim = (fr.get("corrected_claim") or "").strip()
         for fact in facts:
             if fact["id"] == fid:
-                fact["status"] = result
+                if result == "contradicted" and corrected_claim:
+                    fact["claim"] = corrected_claim
+                    fact["status"] = "verified"
+                    fact["corrected"] = True
+                    corrected_citations = fr.get("corrected_citation_ids")
+                    if corrected_citations:
+                        fact["citation_ids"] = corrected_citations
+                    corrections_applied += 1
+                else:
+                    fact["status"] = result
                 if evidence:
                     fact["verification_note"] = evidence
                 break
+
+    if corrections_applied:
+        logger.info("RESEARCH_REVIEW: applied %d claim correction(s)", corrections_applied)
 
     # Guard: the reviewer sometimes marks empty-claim facts as "verified"
     # or "unverified" — there is nothing to verify without a claim.  Revert

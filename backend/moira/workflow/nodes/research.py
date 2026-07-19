@@ -753,6 +753,7 @@ def _apply_sources(
             url=src.get("url"),
             title=src.get("title"),
             snippet=src.get("excerpt"),
+            content=src.get("excerpt"),
         )
 
 
