@@ -56,7 +56,7 @@ function boundaryLabel(previousRunId: string): string {
     (attempt) => attempt.run_id === previousRunId,
   );
   if (!previousAttempt) return "Resumed";
-  if (previousAttempt.status === "error") return "Restarted after error";
+  if (previousAttempt.status === "error") return "Resumed after error";
   return "Resumed";
 }
 

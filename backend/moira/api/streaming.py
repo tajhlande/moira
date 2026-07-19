@@ -63,7 +63,7 @@ def _apply_run_setting_overrides(
     """
     raw_budget = settings.get("budget")
     if isinstance(raw_budget, (int, float)):
-        budget_limit = float(max(35, min(150, int(raw_budget))))
+        budget_limit = float(max(35, min(300, int(raw_budget))))
 
     rl = dict(retry_limits)
     raw_max_review = settings.get("max_review")

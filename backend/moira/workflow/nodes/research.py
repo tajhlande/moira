@@ -434,81 +434,19 @@ def _process_execution_results(
     return tool_summary_parts, new_budget, total_tool_cost
 
 
-# ---------------------------------------------------------------------------
-# Process-metadata claim detection
-#
-# The model sometimes writes observations about the research *process* as
-# claims in discovered_facts — e.g. "Insufficient data found", "No sources
-# found that define X".  These are not factual assertions extracted from
-# sources; they are commentary on the search outcome.  When stored as a
-# fact's claim they pollute downstream synthesis, evaluation, and reporting.
-#
-# The patterns below match the common phrasings the model uses.  Matching
-# is anchored at the start of the normalised claim to avoid false positives
-# on legitimate claims that merely contain a keyword like "insufficient".
-# (e.g. "Insufficient funding led to the project's cancellation" does NOT
-# match because "funding" is not a data/information/evidence keyword.)
-# ---------------------------------------------------------------------------
-
-_PROCESS_METADATA_PATTERNS: list[re.Pattern[str]] = [
-    # "Insufficient/Inadequate/Limited data/information/evidence ..."
-    re.compile(
-        r"(?:insufficient|inadequate|incomplete|limited)\s+"
-        r"(?:data|information|evidence|sources?)",
-        re.I,
-    ),
-    # "No data/information/sources/evidence/results ..."
-    re.compile(
-        r"no\s+(?:data|information|sources?|evidence|results?|relevant\s+\w+)\b",
-        re.I,
-    ),
-    # "Not enough data/information/evidence"
-    re.compile(r"not enough (?:data|information|evidence|sources?)", re.I),
-    # "Unable/Could not/Cannot/Failed to find/determine/..."
-    re.compile(
-        r"(?:unable\s+to|could\s+not|cannot|failed\s+to|can't)\s+"
-        r"(?:find|locate|determine|verify|identify|retrieve)",
-        re.I,
-    ),
-    # "Data/Information/Sources not available/found"
-    re.compile(
-        r"(?:data|information|sources?)\s+(?:is\s+|are\s+)?not\s+"
-        r"(?:available|found|located|present)",
-        re.I,
-    ),
-    # "No further information/data/details"
-    re.compile(r"no further (?:data|information|details|sources?)", re.I),
-]
-
-
-def _is_process_metadata_claim(claim: str) -> bool:
-    """Return ``True`` when *claim* describes the research process rather
-    than a factual assertion extracted from sources.
-
-    This catches model outputs like "Insufficient data found" or "No sources
-    found that define anemoia" so they can be treated as if no claim was
-    provided — the fact is left in its prior state instead of being polluted
-    with process commentary.
-
-    The check is deliberately conservative: patterns must match at the start
-    of the normalised (stripped, lowercased) claim.  A purely empty string
-    returns ``False`` — callers handle emptiness separately.
-    """
-    normalized = claim.strip().lower()
-    if not normalized:
-        return False
-    return any(p.match(normalized) for p in _PROCESS_METADATA_PATTERNS)
-
-
 def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
     """Apply discovered_facts from a model response to the facts list.
 
     For facts with a matching fact_id and status "unknown" or "unverified",
     updates the claim, relation, value, and status to "unverified" — but
-    only if the model provided a non-empty, non-process-metadata claim.
-    An empty or process-metadata claim (e.g. "Insufficient data found")
-    causes the entire update to be skipped so the fact stays in its prior
-    state.
+    only if the model provided a non-empty claim. An empty claim causes the
+    entire update to be skipped so the fact stays in its prior state.
+
+    Process-metadata claims (e.g. "Insufficient data found") are NOT filtered
+    here — they pass through as legitimate claims and are caught later by the
+    research_review node, which marks them "unknown" and reverts the fact.
+    Letting them reach the reviewer is more robust than regex patterns: the
+    reviewer understands any phrasing without pattern maintenance.
 
     For new facts (fact_id is null/missing with fact_needed), appends them.
 
@@ -538,18 +476,6 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
                         logger.warning(
                             "RESEARCH: model returned empty claim for %s, skipping",
                             fact_id,
-                        )
-                        break
-                    if _is_process_metadata_claim(new_claim):
-                        # Model wrote a process observation (e.g. "Insufficient
-                        # data found") instead of a factual claim.  Treat it
-                        # the same as an empty claim — skip the update so the
-                        # fact stays in its prior state and can be re-researched.
-                        logger.warning(
-                            "RESEARCH: model returned process-metadata claim "
-                            "for %s: %r — skipping",
-                            fact_id,
-                            new_claim[:80],
                         )
                         break
                     fact["claim"] = new_claim
@@ -586,24 +512,23 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
 
 
 def _cleanup_empty_claims(facts: list[Fact]) -> None:
-    """Revert "unverified" facts whose claims are empty or process metadata.
+    """Revert "unverified" facts whose claims are empty to "unknown".
 
-    Two cases are handled:
+    During research, ``_process_execution_results`` auto-promotes facts from
+    "unknown" to "unverified" when a tool runs for them (so the model doesn't
+    re-research them in subsequent rounds).  If the model then fails to write
+    a claim across all remaining rounds, the fact is left as "unverified"
+    with an empty claim — a phantom fact that downstream nodes can't use.
 
-    1. **Empty claims** — During research, ``_process_execution_results``
-       auto-promotes facts from "unknown" to "unverified" when a tool runs
-       for them (so the model doesn't re-research them in subsequent rounds).
-       If the model then fails to write a claim across all remaining rounds,
-       the fact is left as "unverified" with an empty claim — a phantom fact
-       that downstream nodes can't use.
+    Process-metadata claims (e.g. "Insufficient data found") are intentionally
+    NOT handled here — they are non-empty and pass through as legitimate
+    claims.  The research_review node catches them via the "unknown" reviewer
+    result and reverts the fact there.  Centralising detection in the reviewer
+    avoids the maintenance burden of regex patterns and handles any phrasing.
 
-    2. **Process-metadata claims** — The model sometimes writes a process
-       observation like "Insufficient data found" as a claim.  These slip
-       through ``_apply_discovered_facts`` via the post-loop extraction
-       path.  They provide no factual content and should be reverted.
-
-    In both cases the fact is reverted to "unknown" so the gap is visible
-    to research_review and can trigger a retry.
+    In both cases (empty claim here, process-metadata claim in review) the
+    fact is reverted to "unknown" so the gap is visible and can trigger a
+    retry.
     """
     for fact in facts:
         if fact.get("status") == "unverified":
@@ -613,15 +538,6 @@ def _cleanup_empty_claims(facts: list[Fact]) -> None:
                 logger.warning(
                     "RESEARCH: %s has no claim after all rounds, reverting to unknown",
                     fact["id"],
-                )
-            elif _is_process_metadata_claim(claim):
-                fact["status"] = "unknown"
-                fact["claim"] = ""
-                logger.warning(
-                    "RESEARCH: %s has process-metadata claim after all rounds, "
-                    "reverting to unknown: %r",
-                    fact["id"],
-                    claim[:80],
                 )
 
 
@@ -1449,14 +1365,25 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             logger.warning("RESEARCH: final summary round failed", exc_info=True)
 
     # --- Post-loop: extract discovered facts if model never produced them ---
-    # A fact is considered resolved if it has been marked unverified (matched
-    # to tool results) whether or not it has a claim yet. The claim may be
-    # absent if the model's discovered_facts were empty but the plan-matching
-    # code still marked the fact as having evidence.
-    resolved_facts = [f for f in facts if f["status"] == "unverified"]
-    if tool_results_log and not resolved_facts:
+    # Check for facts that have BOTH status "unverified" AND a non-empty
+    # claim. Tool execution auto-promotes facts from "unknown" to
+    # "unverified" just because a tool targeted them (see
+    # _process_execution_results), so checking status alone is misleading —
+    # facts can be "unverified" with empty claims. The real failure mode
+    # this safety net addresses: the model called tools and got results,
+    # but never wrote discovered_facts in its text content (empty content
+    # or content without the JSON object). When that happens, every
+    # auto-promoted fact is claimless, the condition fires, and a dedicated
+    # extraction call asks the model to interpret the tool results.
+    facts_with_claims = [
+        f for f in facts if f["status"] == "unverified" and (f.get("claim") or "").strip()
+    ]
+    if tool_results_log and not facts_with_claims:
+        auto_promoted = len([f for f in facts if f["status"] == "unverified"])
         logger.info(
-            "RESEARCH: no discovered_facts produced during loop, running post-loop extraction",
+            "RESEARCH: no claims extracted during loop (%d facts auto-promoted "
+            "but claimless), running post-loop extraction",
+            auto_promoted,
         )
         resolved_facts = await _extract_facts_from_results(
             facts=facts,

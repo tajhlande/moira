@@ -28,11 +28,11 @@ SETTING_DEFINITIONS: dict[str, SettingDefinition] = {
     "budget.default_limit": SettingDefinition(
         key="budget.default_limit",
         type="integer",
-        default="100",
+        default="150",
         label="Default Budget",
         description="Default budget allocated to each research run.",
         group="budget",
-        constraints={"type": "integer", "minimum": 35, "maximum": 150},
+        constraints={"type": "integer", "minimum": 35, "maximum": 300},
     ),
     "budget.cost.decomposition": SettingDefinition(
         key="budget.cost.decomposition",

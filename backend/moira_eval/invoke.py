@@ -224,7 +224,7 @@ def main() -> None:
         "--budget",
         type=int,
         default=None,
-        help="Budget override for the run (clamped to 35-150 by the API).",
+        help="Budget override for the run (clamped to 35-300 by the API).",
     )
     args = parser.parse_args()
 

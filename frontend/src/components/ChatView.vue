@@ -194,7 +194,7 @@ function confirmRerun(msgId: number) {
           <NSlider
             :value="store.runSettings.budget ?? DEFAULT_BUDGET"
             :min="35"
-            :max="150"
+            :max="300"
             :step="1"
             :tooltip="false"
             style="flex: 1"

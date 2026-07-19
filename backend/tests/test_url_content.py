@@ -287,6 +287,46 @@ class TestUrlContentMetadata:
         html = "<html><body><p>no title</p></body></html>"
         assert tool._extract_title(html) == ""
 
+    @pytest.mark.asyncio
+    async def test_output_includes_url_header(self, tool):
+        """The output text should start with a URL: header so the model can
+        reference it when emitting sources entries. Without this header, the
+        model frequently omits the URL from its sources array, creating
+        phantom URL-less citations in the report's Additional Sources."""
+        transport = httpx.MockTransport(_make_handler(SAMPLE_HTML))
+        async with httpx.AsyncClient(transport=transport) as client:
+
+            async def mock_fetch(url):
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return resp.text
+
+            tool._fetch = mock_fetch
+            r = await tool.execute({"url": "https://example.com/article"})
+            assert r.success
+            assert r.output.startswith("URL: https://example.com/article")
+            assert "Title: Test Page" in r.output.split("\n\n")[0]
+
+    @pytest.mark.asyncio
+    async def test_output_header_omitted_when_content_empty(self, tool):
+        """When extraction returns empty content (e.g. xpath no match), the
+        output should stay empty — no URL header. This preserves downstream
+        'no results' handling."""
+        transport = httpx.MockTransport(_make_handler(SAMPLE_HTML))
+        async with httpx.AsyncClient(transport=transport) as client:
+
+            async def mock_fetch(url):
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return resp.text
+
+            tool._fetch = mock_fetch
+            r = await tool.execute(
+                {"url": "https://example.com", "xpath": "//p[@class='nonexistent']"}
+            )
+            assert r.success
+            assert r.output == ""
+
 
 class TestUrlContentExtractUnit:
     """Unit tests for the _extract method without HTTP."""

@@ -214,7 +214,12 @@ class TestResearch:
     async def test_empty_claim_reverted_by_cleanup(self, config, mock_writer, mock_model):
         """A fact auto-promoted to 'unverified' by tool execution but never
         given a claim by the model must be reverted to 'unknown' by the
-        cleanup pass before the node returns."""
+        cleanup pass before the node returns.
+
+        With the P1 fix, this scenario also triggers the post-loop extraction
+        (because the fact is 'unverified' but claimless). The extraction fires
+        before cleanup; when it also fails to produce a claim, cleanup handles
+        the reversion. This test verifies both pieces compose correctly."""
         _inject_services(config, mock_model)
 
         mock_executor = AsyncMock()
@@ -231,7 +236,8 @@ class TestResearch:
         _services["tool_executor"] = mock_executor
 
         # Round 1: model calls a tool.  Round 2: model sees the result but
-        # returns an empty claim for f001.
+        # returns an empty claim for f001.  Post-loop extraction: model still
+        # can't extract a claim (same failure mode persists).
         mock_model["client"].chat_completion.side_effect = [
             ChatResponse(
                 content=json.dumps(
@@ -249,6 +255,8 @@ class TestResearch:
                     }
                 )
             ),
+            # Post-loop extraction call — returns empty (no extractable claims)
+            ChatResponse(content=json.dumps({"discovered_facts": [], "sources": []})),
         ]
 
         from moira.workflow.nodes.research import research
@@ -269,7 +277,8 @@ class TestResearch:
 
         result = await research(state, _make_run_config(config))
 
-        # Fact was auto-promoted during the loop, then reverted by cleanup
+        # Fact was auto-promoted during the loop, post-loop extraction also
+        # failed to produce a claim, then cleanup reverted it to unknown.
         assert result["knowledge"]["facts"][0]["status"] == "unknown", (
             "Empty-claim fact should be reverted to 'unknown' by cleanup pass"
         )
@@ -894,6 +903,10 @@ class TestResearch:
                     }
                 )
             ),
+            # Post-loop extraction (P1 fix: fires because facts are
+            # auto-promoted but claimless). Returns empty — not testing
+            # extraction here, just citation dedup.
+            ChatResponse(content=json.dumps({"discovered_facts": [], "sources": []})),
         ]
 
         from moira.workflow.nodes.research import research
@@ -1207,6 +1220,10 @@ class TestResearchCallLimits:
                     }
                 )
             ),
+            # Post-loop extraction (P1 fix: fires because facts are
+            # auto-promoted but claimless). Returns empty — not testing
+            # extraction here, just call limit enforcement.
+            ChatResponse(content=json.dumps({"discovered_facts": [], "sources": []})),
         ]
         mock_model["client"].chat_completion.side_effect = model_responses
 
@@ -1952,6 +1969,128 @@ class TestResearchNativeMode:
         call_kwargs = mock_model["client"].chat_completion.call_args[1]
         assert "tools" in call_kwargs
         assert len(call_kwargs["tools"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_native_post_loop_extraction_fires_on_empty_content(
+        self, config, mock_writer, mock_model
+    ):
+        """P1 regression test: when the model calls tools (auto-promoting
+        facts to 'unverified') but returns empty content in every round —
+        never writing discovered_facts — the post-loop extraction must fire.
+
+        Before the P1 fix, the condition checked status alone:
+        ``resolved_facts = [f for f in facts if f["status"] == "unverified"]``
+        Auto-promotion makes that list non-empty even when claims are absent,
+        so the safety net never triggered. The fix checks for non-empty
+        claims, not just status. This test reproduces the exact failure mode
+        observed in the 2026-07-19 eval batch where 3 of 7 questions had
+        100% empty claims despite successful tool calls.
+        """
+        _inject_services(config, mock_model)
+
+        native_resolved = ResolvedModel(
+            model_id="test-model",
+            client=mock_model["client"],
+            native_tool_calling=True,
+            provider_type="completions",
+        )
+        mock_model["registry"].resolve = AsyncMock(return_value=native_resolved)
+
+        mock_executor = AsyncMock()
+        mock_executor.execute_batch = AsyncMock(
+            return_value=[
+                ToolResult(
+                    tool_name="web_search",
+                    output="The Eiffel Tower was completed in 1889 for the World's Fair.",
+                    success=True,
+                    duration_ms=100,
+                    metadata={
+                        "results": [
+                            {
+                                "title": "Eiffel Tower Facts",
+                                "url": "https://example.com/eiffel",
+                                "snippet": "Completed in 1889 for the World's Fair.",
+                            }
+                        ]
+                    },
+                ),
+            ]
+        )
+        _services["tool_executor"] = mock_executor
+
+        # Round 1: model calls a tool, content is EMPTY (no discovered_facts).
+        # Round 2: model signals completion (no tool_calls), content still EMPTY.
+        # Post-loop extraction: model finally produces claims from tool results.
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(id="call_1", name="web_search", arguments={"query": "eiffel"}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            ChatResponse(
+                content="",
+                tool_calls=[],
+                finish_reason="stop",
+            ),
+            # Post-loop extraction call
+            ChatResponse(
+                content=json.dumps(
+                    {
+                        "discovered_facts": [
+                            {
+                                "fact_id": "f001",
+                                "subject": "Eiffel Tower",
+                                "claim": "Completed in 1889 for the World's Fair",
+                                "citation_ids": ["cit001"],
+                            }
+                        ],
+                        "sources": [],
+                    }
+                ),
+            ),
+        ]
+
+        from moira.workflow.nodes.research import research
+
+        state = _build_state(config, "When was the Eiffel Tower completed?")
+        state["knowledge"]["user_goal"] = "Find Eiffel Tower completion date"
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="Eiffel Tower",
+                fact_needed="completion date",
+                status="unknown",
+            ),
+        ]
+        state["execution_state"]["candidate_tools"] = [
+            ToolDefinition(name="web_search", description="Search"),
+        ]
+        state["execution_state"]["tool_call_plan"] = [
+            ToolCallPlan(
+                tool="web_search",
+                args={"query": "eiffel"},
+                target_fact_ids=["f001"],
+                cost=1.0,
+            ),
+        ]
+
+        result = await research(state, _make_run_config(config))
+
+        # The post-loop extraction should have fired and resolved the fact.
+        fact = result["knowledge"]["facts"][0]
+        assert fact["status"] == "unverified"
+        assert "1889" in fact.get("claim", ""), (
+            f"Post-loop extraction should have produced a claim. Got: {fact.get('claim', '')!r}"
+        )
+
+        # 3 model calls: round 1 (tool call) + round 2 (completion signal)
+        # + post-loop extraction.
+        assert mock_model["client"].chat_completion.call_count == 3, (
+            "Post-loop extraction should have fired (3rd call). "
+            f"Got {mock_model['client'].chat_completion.call_count} calls."
+        )
 
 
 class TestResearchRetryContext:

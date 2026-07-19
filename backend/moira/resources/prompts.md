@@ -403,6 +403,18 @@ Rules:
 - Respect tool call limits — if a tool returns a limit-reached message, do not call it again
 - When sources conflict, prefer claims supported by the preponderance of evidence.
   Note significant conflicts in the claim but extract the better-supported position.
+- ALWAYS include a discovered_facts JSON object in your text content after receiving
+  tool results, even in rounds where you are also calling more tools. Extract and
+  record claims continuously as you learn — do not wait until you are "done" calling
+  tools. Returning empty text content means no claims are extracted, which wastes the
+  tool calls you just made.
+- If you cannot find any information for a fact, simply omit it from discovered_facts.
+  Do not create entries for facts you could not resolve.
+- Never write claims describing the research process — "insufficient data found",
+  "no results available", "no studies exist" are NOT factual claims. A claim must
+  be a factual assertion about the subject, extracted FROM a source. "Miles Davis
+  pioneered modal jazz in the 1960s" is a claim. "Insufficient data found about
+  Miles Davis" is not.
 
 Search strategy:
 - Follow the tool call plan. It maps each search to specific facts.
@@ -416,9 +428,19 @@ Search strategy:
 - Avoid keyword stuffing and excessive quoting. Search engines work best with a few
   key terms, not long comma-separated lists or multiple quoted phrases.
 
-When you have gathered enough information, respond with your discovered_facts and
-sources as a JSON object in your text content. Do NOT include tool_calls — use the
-tool calling interface instead.
+Extraction discipline:
+- Before concluding a fact cannot be answered, carefully review ALL tool results for
+  mentions of the fact's subject. If any result mentions the subject, extract the
+  specific factual information — do not abandon extraction just because the answer
+  isn't in the first result.
+- When a tool returns useful data, you MUST record at least one claim from it. Do not
+  silently discard tool results by returning empty content.
+- Even partial information is valuable. If a source mentions the subject but does not
+  fully answer fact_needed, extract what it does say and omit what it does not.
+
+In every response after receiving tool results, include your discovered_facts and
+sources as a JSON object in your text content. Do NOT include tool_calls in the
+JSON — use the tool calling interface instead.
 
 The JSON object must have exactly these keys:
 - "discovered_facts": array of objects with "fact_id", "subject", "claim",
@@ -429,11 +451,15 @@ The JSON object must have exactly these keys:
 - "sources": array of objects with "source" (tool name), "url" (if applicable),
   "title", and "excerpt" (relevant snippet from the tool output).
 
-IMPORTANT: When you are done calling tools, output the JSON object directly in your
-text response. Do NOT wrap it in ```json blocks or use any markdown formatting.
+IMPORTANT: Output the JSON object directly in your text response. Do NOT wrap it
+in ```json blocks or use any markdown formatting. Even if you are calling more
+tools, include the JSON with whatever claims you have extracted so far.
 
-Example when done researching:
+Example response (claims extracted while continuing to call tools):
 {"discovered_facts": [{"fact_id": "f001", "subject": "Example", "claim": "Specific claim here", "relation": "has_property", "value": "the value", "citation_ids": ["cit001"]}], "sources": [{"source": "web_search", "url": "https://example.com", "title": "Example", "excerpt": "Relevant snippet"}]}
+
+The tool calls go through the native tool calling interface (not in the JSON). The JSON
+in your text content carries only discovered_facts and sources.
 
 ## research.user_native
 
@@ -617,6 +643,19 @@ the specific information requested has not been established.
 - "verified": the claim answers the fact_needed question and is well-supported by the cited source
 - "contradicted": the claim conflicts with the cited evidence
 - "unverified": the claim does not address what fact_needed asks, or there is insufficient evidence to confirm or refute
+- "unknown": the claim is not a factual assertion about the subject. This
+  includes claims that describe the research process rather than answering
+  fact_needed (e.g., "no results found", "insufficient data", "no studies
+  exist", "no peer-reviewed publications were found", "unable to determine"),
+  and any other non-factual commentary. The fact will be reverted to unknown
+  status with its claim cleared so it can be re-researched. Use this result
+  whenever the claim talks ABOUT the search rather than reporting a fact
+  extracted FROM a source.
+
+Distinguishing "unknown" from "unverified": "unverified" is for a legitimate
+factual claim that you simply cannot confirm or refute from the cited evidence.
+"unknown" is for claims that are not factual assertions at all — they describe
+the research outcome ("nothing was found") rather than the subject.
 
 When you mark a fact "contradicted" because the claim is slightly imprecise but
 the cited evidence clearly supports a better claim, provide a corrected_claim
@@ -651,7 +690,7 @@ Respond with ONLY a JSON object, structured exactly like this:
 
 where each item in fact_results has:
 - fact_id matching one of the facts you were given
-- result: one of "verified", "contradicted", or "unverified"
+- result: one of "verified", "contradicted", "unverified", or "unknown"
 - evidence: your short description of the cited evidence supporting the result
 - corrected_claim (optional): when result is "contradicted" and the cited
   evidence clearly supports a better claim, the corrected claim that

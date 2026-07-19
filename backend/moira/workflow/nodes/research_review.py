@@ -213,7 +213,15 @@ async def research_review(state: ResearchState, config: RunnableConfig) -> dict:
     # but supplies a corrected_claim that the cited evidence clearly supports,
     # apply it and flip the fact to "verified". This avoids a full research
     # retry to re-discover what the reviewer already sees in the evidence.
+    #
+    # Process-metadata detection (Phase 3): when the reviewer marks a fact
+    # "unknown", the claim is not a factual assertion (it describes the
+    # research process — e.g. "insufficient data found"). Revert the fact to
+    # unknown status and clear the claim and citations so the fact can be
+    # re-researched cleanly. This replaces the brittle regex pattern layer
+    # that previously caught these claims at write time in research.py.
     corrections_applied = 0
+    unknown_reversions = 0
     for fr in parsed.get("fact_results", []):
         fid = fr.get("fact_id", "")
         result = fr.get("result") or fr.get("status") or "unverified"
@@ -221,7 +229,15 @@ async def research_review(state: ResearchState, config: RunnableConfig) -> dict:
         corrected_claim = (fr.get("corrected_claim") or "").strip()
         for fact in facts:
             if fact["id"] == fid:
-                if result == "contradicted" and corrected_claim:
+                if result == "unknown":
+                    # Reviewer recognized the claim as process-metadata or
+                    # otherwise non-factual. Clear it so downstream nodes
+                    # and retry context see a clean unknown fact.
+                    fact["status"] = "unknown"
+                    fact["claim"] = ""
+                    fact["citation_ids"] = []
+                    unknown_reversions += 1
+                elif result == "contradicted" and corrected_claim:
                     fact["claim"] = corrected_claim
                     fact["status"] = "verified"
                     fact["corrected"] = True
@@ -237,6 +253,11 @@ async def research_review(state: ResearchState, config: RunnableConfig) -> dict:
 
     if corrections_applied:
         logger.info("RESEARCH_REVIEW: applied %d claim correction(s)", corrections_applied)
+    if unknown_reversions:
+        logger.info(
+            "RESEARCH_REVIEW: reverted %d fact(s) to unknown (process-metadata claims)",
+            unknown_reversions,
+        )
 
     # Guard: the reviewer sometimes marks empty-claim facts as "verified"
     # or "unverified" — there is nothing to verify without a claim.  Revert

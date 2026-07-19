@@ -252,6 +252,42 @@ def _extract_report(run: dict) -> dict | None:
     return None
 
 
+def _find_report_in_related_runs(conn: sqlite3.Connection, run: dict) -> dict | None:
+    """Look for a non-null report in other completed runs sharing the same
+    ``user_message_id``.
+
+    When a run fails at ``report_generation`` and is resumed via the UI's
+    "Retry" button, the resume creates a new run containing only the
+    retried step. ``find_run_for_question`` picks the original run (with
+    all the research data), but that run's ``report`` column is NULL
+    because ``report_generation`` failed. The actual report lives in the
+    resumed run. This function finds it by matching on ``user_message_id``
+    so the judge can score the answer.
+    """
+    user_message_id = run.get("user_message_id")
+    if not user_message_id:
+        return None
+    current_run_id = run.get("id")
+    rows = conn.execute(
+        """
+        SELECT report FROM workflow_runs
+        WHERE user_message_id = ?
+          AND id != ?
+          AND status = 'completed'
+          AND report IS NOT NULL
+          AND report != ''
+        ORDER BY started_at DESC
+        LIMIT 1
+        """,
+        (user_message_id, current_run_id),
+    ).fetchall()
+    for row in rows:
+        extracted = _extract_report(dict(row))
+        if extracted:
+            return extracted
+    return None
+
+
 def _extract_critiques(report: dict | None) -> list[str]:
     """Extract the ``critiques`` list from the report, if present."""
     if not report:
@@ -299,6 +335,13 @@ def capture_artifacts(db_path: str, run_id: str | None = None) -> dict:
         tool_trace = _extract_tool_trace(steps)
         tool_catalog = _get_tool_catalog(conn)
         report = _extract_report(run)
+        if not report:
+            # The selected run may be an errored run that was resumed via
+            # the UI's "Retry" button. The original run has all the
+            # research data but no report (report_generation failed); the
+            # resumed run has the report. Look for it in related runs so
+            # the judge can score the answer.
+            report = _find_report_in_related_runs(conn, run)
         knowledge = _extract_knowledge(run)
 
         return {

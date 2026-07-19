@@ -342,7 +342,7 @@ This is the LangGraph `StateDict` that flows through the graph nodes. Checkpoint
 | `verification`         | string                   | `verification` node               | Raw verification output text           |
 | `report`               | ResearchReport or null   | `report_generation` node          | Final structured report                |
 | `budget_remaining`     | float                    | Each node via `deduct_cost`       | Current budget balance                 |
-| `budget_limit`         | float                    | Streaming endpoint                | Starting budget (config default: 50)   |
+| `budget_limit`         | float                    | Streaming endpoint                | Starting budget (config default: 150)   |
 | `verification_history` | list[VerificationReport] | `verification` node (accumulates) | All verification reports from this run |
 | `unverified_claims`    | list[string]             | `verification` node               | Claims to address on retry             |
 | `error`                | string                   | Any node on failure               | Non-empty means error state            |

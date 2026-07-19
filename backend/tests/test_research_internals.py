@@ -130,49 +130,16 @@ class TestResearchHelpers:
         assert facts[2]["status"] == "unknown"
         assert facts[3]["status"] == "unknown"
 
-    def test_cleanup_empty_claims_reverts_process_metadata(self):
-        """_cleanup_empty_claims also reverts 'unverified' facts whose claim
-        is process metadata (e.g. 'Insufficient data found') to 'unknown'."""
-        from moira.workflow.nodes.research import _cleanup_empty_claims
+    def test_apply_discovered_facts_process_metadata_claims_flow_through(self):
+        """Phase 3: process-metadata claims (e.g. 'Insufficient data found')
+        are no longer filtered at write time. They flow through as legitimate
+        claims so the research_review node can catch them via the 'unknown'
+        reviewer result. Filtering at write time required maintaining regex
+        patterns for every phrasing variant; the reviewer handles any phrasing.
 
-        facts = [
-            # Process-metadata claim — should be reverted
-            Fact(
-                id="f001",
-                subject="A",
-                fact_needed="x",
-                claim="Insufficient data found",
-                status="unverified",
-            ),
-            # Another variant
-            Fact(
-                id="f002",
-                subject="B",
-                fact_needed="y",
-                claim="No sources found that define anemoia",
-                status="unverified",
-            ),
-            # Legitimate claim — should be kept
-            Fact(
-                id="f003",
-                subject="C",
-                fact_needed="z",
-                claim="The treaty was signed in 1648",
-                status="unverified",
-            ),
-        ]
-
-        _cleanup_empty_claims(facts)
-
-        assert facts[0]["status"] == "unknown"
-        assert facts[0].get("claim", "") == ""
-        assert facts[1]["status"] == "unknown"
-        assert facts[1].get("claim", "") == ""
-        assert facts[2]["status"] == "unverified"
-
-    def test_apply_discovered_facts_process_metadata_claim_skips(self):
-        """When the model returns a process-metadata claim (e.g. 'Insufficient
-        data found'), the update must be skipped — same as an empty claim."""
+        This test documents the new contract: such a claim updates the fact
+        just like any other non-empty claim would.
+        """
         from moira.workflow.nodes.research import _apply_discovered_facts
 
         facts = [
@@ -199,14 +166,17 @@ class TestResearchHelpers:
             facts,
         )
 
-        assert facts[0]["status"] == "unknown"
-        assert facts[0].get("claim", "") == ""
-        assert "relation" not in facts[0] or facts[0].get("relation") is None
-        assert facts[0].get("citation_ids", []) == []
+        # The claim is applied; research_review will catch and revert it.
+        assert facts[0]["status"] == "unverified"
+        assert facts[0]["claim"] == "Insufficient data found"
+        assert facts[0].get("citation_ids") == ["cit001"]
 
-    def test_apply_discovered_facts_process_metadata_preserves_existing(self):
-        """A process-metadata claim must not overwrite a previously-set
-        legitimate claim."""
+    def test_apply_discovered_facts_overwrites_with_any_nonempty_claim(self):
+        """Phase 3: a later round's non-empty claim overwrites an earlier
+        claim, even if the new claim is process-metadata. There is no special
+        filtering — the earlier claim is replaced. This is the counterpart
+        to the empty-claim preservation test above: only EMPTY claims skip
+        the update."""
         from moira.workflow.nodes.research import _apply_discovered_facts
 
         facts = [
@@ -224,7 +194,8 @@ class TestResearchHelpers:
             facts,
         )
 
-        assert facts[0]["claim"] == "Original claim from round 1"
+        # Overwritten — no special filtering for process-metadata phrasings.
+        assert facts[0]["claim"] == "No information available"
 
     def test_try_merge_snippets_suffix_prefix(self):
         """A's suffix overlaps B's prefix → merged into one string."""
@@ -763,73 +734,3 @@ class TestRetryContextHelpers:
         from moira.workflow.nodes._helpers import _format_prior_citations
 
         assert _format_prior_citations([]) == ""
-
-
-class TestProcessMetadataClaimDetection:
-    """Unit tests for _is_process_metadata_claim — detects when a claim
-    describes the research process rather than a factual assertion."""
-
-    @staticmethod
-    def _detect(claim: str) -> bool:
-        from moira.workflow.nodes.research import _is_process_metadata_claim
-
-        return _is_process_metadata_claim(claim)
-
-    # --- Positive cases: process metadata that should be detected ---
-
-    def test_insufficient_data(self):
-        assert self._detect("Insufficient data found")
-        assert self._detect("insufficient data to determine the exact date")
-        assert self._detect("Insufficient information available")
-
-    def test_no_data_sources_information(self):
-        assert self._detect("No data found")
-        assert self._detect("No sources found that define anemoia")
-        assert self._detect("No information available")
-        assert self._detect("No evidence found")
-        assert self._detect("No results found")
-
-    def test_no_relevant(self):
-        assert self._detect("No relevant information found")
-        assert self._detect("No relevant data available")
-
-    def test_unable_could_not(self):
-        assert self._detect("Unable to find relevant sources")
-        assert self._detect("Could not determine the answer")
-        assert self._detect("Cannot find any information")
-        assert self._detect("Failed to locate the data")
-
-    def test_not_enough(self):
-        assert self._detect("Not enough data")
-        assert self._detect("Not enough information to answer")
-
-    def test_data_not_available(self):
-        assert self._detect("Data not available")
-        assert self._detect("Information not found")
-
-    def test_no_further(self):
-        assert self._detect("No further information available")
-        assert self._detect("No further details found")
-
-    def test_case_insensitive(self):
-        assert self._detect("INSUFFICIENT DATA FOUND")
-        assert self._detect("no DATA available")
-
-    def test_leading_whitespace(self):
-        assert self._detect("  Insufficient data found  ")
-
-    # --- Negative cases: legitimate claims that must NOT match ---
-
-    def test_legitimate_factual_claim(self):
-        assert not self._detect("The Eiffel Tower was built in 1889")
-        assert not self._detect("Water boils at 100 degrees Celsius at sea level")
-
-    def test_insufficient_with_non_data_keyword(self):
-        """'insufficient' followed by a non-data keyword is not process metadata."""
-        assert not self._detect("Insufficient funding led to the project's cancellation")
-
-    def test_empty_string(self):
-        assert not self._detect("")
-
-    def test_whitespace_only(self):
-        assert not self._detect("   ")

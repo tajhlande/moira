@@ -423,3 +423,268 @@ class TestResearchReview:
         fact = result["knowledge"]["facts"][0]
         assert fact["status"] == "contradicted"
         assert fact["claim"] == "original claim"
+
+    # ----------------------------------------------------------------------
+    # Phase 3: "unknown" result handling for process-metadata claims
+    # ----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_unknown_result_reverts_fact_and_clears_claim(
+        self, config, mock_writer, mock_model
+    ):
+        """When the reviewer marks a fact "unknown" (process-metadata or other
+        non-factual claim), the fact reverts to unknown status with its claim
+        and citation_ids cleared so it can be re-researched cleanly."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "unknown",
+                        "evidence": "Claim describes the research process, not a fact",
+                    }
+                ],
+                "coverage_assessment": "Critical fact needs re-research",
+                "missing_areas": ["Actual data on X"],
+                "route": "retry",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="X",
+                fact_needed="the value of X",
+                claim="Insufficient data found about X",
+                status="unverified",
+                citation_ids=["cit001", "cit002"],
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+
+        fact = result["knowledge"]["facts"][0]
+        assert fact["status"] == "unknown"
+        assert fact["claim"] == ""
+        assert fact["citation_ids"] == []
+        # The reviewer's evidence note is preserved to explain the reversion.
+        assert fact["verification_note"] == "Claim describes the research process, not a fact"
+
+    @pytest.mark.asyncio
+    async def test_unknown_result_handles_academic_phrasings(
+        self, config, mock_writer, mock_model
+    ):
+        """The reviewer's unknown detection handles phrasings the old regex
+        patterns missed — academic variants like 'No peer-reviewed publications
+        on X were identified in the literature'. This test documents that the
+        reviewer (not regex patterns) is now the sole defense."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "unknown",
+                        "evidence": "Claim describes absence of research, not a fact",
+                    }
+                ],
+                "coverage_assessment": "missing",
+                "missing_areas": ["Empirical data"],
+                "route": "retry",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="topic",
+                fact_needed="empirical findings on topic",
+                claim=(
+                    "No peer-reviewed publications on this topic were identified in the literature"
+                ),
+                status="unverified",
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+
+        fact = result["knowledge"]["facts"][0]
+        assert fact["status"] == "unknown"
+        assert fact["claim"] == ""
+
+    @pytest.mark.asyncio
+    async def test_unknown_result_takes_precedence_over_corrected_claim(
+        self, config, mock_writer, mock_model
+    ):
+        """If the reviewer supplies both result=unknown and a corrected_claim
+        (defensive — shouldn't happen in practice), the unknown result wins:
+        the fact is reverted, not corrected. Unknown is checked first because
+        a process-metadata claim has no meaningful correction."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "unknown",
+                        "evidence": "Process metadata",
+                        "corrected_claim": "Should be ignored",
+                    }
+                ],
+                "coverage_assessment": "missing",
+                "missing_areas": ["x"],
+                "route": "retry",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="x",
+                fact_needed="y",
+                claim="Insufficient data found",
+                status="unverified",
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+
+        fact = result["knowledge"]["facts"][0]
+        assert fact["status"] == "unknown"
+        assert fact["claim"] == ""
+        assert not fact.get("corrected")
+
+    @pytest.mark.asyncio
+    async def test_unknown_result_mixed_with_other_verdicts(self, config, mock_writer, mock_model):
+        """A batch with mixed verdicts — one unknown, one verified, one
+        contradicted-with-correction — applies each correctly. This verifies
+        the branch ordering and that unknown handling doesn't interfere with
+        the other results."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "unknown",
+                        "evidence": "Process metadata",
+                    },
+                    {
+                        "fact_id": "f002",
+                        "result": "verified",
+                        "evidence": "Confirmed",
+                    },
+                    {
+                        "fact_id": "f003",
+                        "result": "contradicted",
+                        "evidence": "Slightly off",
+                        "corrected_claim": "Corrected claim",
+                    },
+                ],
+                "coverage_assessment": "mixed",
+                "missing_areas": [],
+                "route": "continue",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="A",
+                fact_needed="a",
+                claim="No data available",
+                status="unverified",
+                citation_ids=["cit001"],
+            ),
+            Fact(
+                id="f002",
+                subject="B",
+                fact_needed="b",
+                claim="B is true",
+                status="unverified",
+            ),
+            Fact(
+                id="f003",
+                subject="C",
+                fact_needed="c",
+                claim="original",
+                status="unverified",
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+
+        facts = {f["id"]: f for f in result["knowledge"]["facts"]}
+        assert facts["f001"]["status"] == "unknown"
+        assert facts["f001"]["claim"] == ""
+        assert facts["f001"]["citation_ids"] == []
+        assert facts["f002"]["status"] == "verified"
+        assert facts["f003"]["status"] == "verified"
+        assert facts["f003"]["claim"] == "Corrected claim"
+        assert facts["f003"]["corrected"] is True
+
+    @pytest.mark.asyncio
+    async def test_unknown_result_clears_citations_even_when_empty_claim_guard_would_fire(
+        self, config, mock_writer, mock_model
+    ):
+        """After the unknown result clears the claim, the post-loop empty-claim
+        guard would also fire (it reverts empty-claim verified/unverified
+        facts to unknown). This test verifies the two mechanisms compose
+        without error — the unknown branch runs first, the guard sees the
+        already-unknown fact and skips it (guard only acts on verified/
+        unverified)."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "unknown",
+                        "evidence": "Process metadata",
+                    }
+                ],
+                "coverage_assessment": "missing",
+                "missing_areas": ["x"],
+                "route": "retry",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="x",
+                fact_needed="y",
+                claim="Insufficient data found",
+                status="unverified",
+                citation_ids=["cit001"],
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+
+        fact = result["knowledge"]["facts"][0]
+        # No crash, fact is unknown with cleared claim and citations.
+        assert fact["status"] == "unknown"
+        assert fact["claim"] == ""
+        assert fact["citation_ids"] == []

@@ -1239,4 +1239,105 @@ describe("ChatView", () => {
       "Old attempt detail",
     );
   });
+
+  // NOTE: This test must run LAST in the describe block. The beforeEach
+  // only clears mockFetch (not getConversationMock), so a
+  // mockResolvedValueOnce that isn't fully consumed by the time the test
+  // completes can leak into subsequent tests and cause them to receive
+  // the wrong conversation payload. Placing this at the end ensures no
+  // later test is affected by residual mock state.
+  it("renders 'Resumed after error' boundary when previous attempt errored", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const store = useChatStore();
+
+    const getConversationMock = api.getConversation as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    getConversationMock.mockResolvedValueOnce({
+      id: "conv-1",
+      title: "Error Resume Timeline",
+      created_at: new Date().toISOString(),
+      messages: [
+        {
+          id: 1,
+          role: "user",
+          content: "error resume timeline",
+          created_at: new Date().toISOString(),
+        },
+      ],
+      runs: [
+        {
+          id: "run-new",
+          conversation_id: "conv-1",
+          user_message_id: 1,
+          status: "completed",
+          budget_limit: DEFAULT_BUDGET,
+          budget_consumed: 10,
+          error: "",
+          report: null,
+          attempts: [
+            {
+              run_id: "run-old",
+              status: "error",
+              started_at: new Date().toISOString(),
+              completed_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              state_version: 2,
+            },
+            {
+              run_id: "run-new",
+              status: "completed",
+              started_at: new Date().toISOString(),
+              completed_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              state_version: 1,
+            },
+          ],
+          execution_steps: [
+            {
+              id: "201",
+              detail_run_id: "run-old",
+              node: "report_generation",
+              label: "Generating Report",
+              status: "error",
+              cost: 0,
+              budget_remaining: 40,
+              elapsed_ms: 500,
+              tool_call_count: 0,
+              step_version: 2,
+              has_detail: false,
+            },
+            {
+              id: "run-new:1",
+              detail_run_id: "run-new",
+              node: "report_generation",
+              label: "Generating Report",
+              status: "completed",
+              cost: 3,
+              budget_remaining: 37,
+              tool_call_count: 0,
+              step_version: 1,
+              has_detail: false,
+            },
+          ],
+          tool_executions: [],
+          state_version: 3,
+          started_at: new Date().toISOString(),
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          total_elapsed_ms: undefined,
+        },
+      ],
+    });
+
+    mockFetch.mockResolvedValueOnce(createSSEResponse([]));
+    const wrapper = mount(ChatView, {
+      global: { plugins: [pinia, router] },
+    });
+    await store.selectConversation("conv-1");
+    await flushUi();
+
+    expect(wrapper.text()).toContain("Resumed after error");
+  });
 });

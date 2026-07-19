@@ -344,7 +344,7 @@ def test_reset_settings(app_client):
     assert resp.status_code == 200
     data = resp.json()
     reset = {s["key"]: s["value"] for s in data["settings"]}
-    assert reset["budget.default_limit"] == "100"
+    assert reset["budget.default_limit"] == "150"
 
 
 class WorkflowRunAwareRepo(FakeConversationRepo):

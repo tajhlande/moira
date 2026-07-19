@@ -11,7 +11,7 @@ import {
   type WorkflowRunInfo,
 } from "../api/client";
 
-export const DEFAULT_BUDGET = 100;
+export const DEFAULT_BUDGET = 150;
 export const DEFAULT_MAX_REVIEW = 3;
 export const DEFAULT_MAX_EVALUATION = 2;
 

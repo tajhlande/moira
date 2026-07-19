@@ -96,9 +96,27 @@ class UrlContentTool(BaseTool):
         content = content[:_MAX_OUTPUT_LENGTH]
         title = self._extract_title(html)
         elapsed_ms = int((time.monotonic() - start) * 1000)
+
+        # Include the URL and title in the output text so the model can
+        # reference them when emitting sources entries. Without this, the
+        # model — which sees the output text in its tool feedback —
+        # frequently omits the URL from its sources array, creating phantom
+        # URL-less citations that appear in the report's "Additional
+        # Sources" without a link. web_search already includes URLs in its
+        # output; this matches that pattern. The header is only prepended
+        # when content was successfully extracted — empty output stays empty
+        # so downstream "no results" handling is unaffected.
+        if content:
+            header_parts = [f"URL: {url}"]
+            if title:
+                header_parts.append(f"Title: {title}")
+            output = "\n".join(header_parts) + "\n\n" + content
+        else:
+            output = content
+
         return ToolResult(
             tool_name=self.name,
-            output=content,
+            output=output,
             success=True,
             duration_ms=elapsed_ms,
             metadata={

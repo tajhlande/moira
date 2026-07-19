@@ -30,7 +30,11 @@ class RetryLimits(BaseModel):
 
 
 class BudgetConfig(BaseModel):
-    default_limit: int = 100
+    # Default of 150 fits a full research cycle (~28 step cost) plus 1-2
+    # review retries with realistic tool spend (web_search=5/call). The
+    # previous default of 100 was set before per-call tool costs were
+    # enforced and left the agent cut off mid-investigation.
+    default_limit: int = 150
     cost_weights: CostWeights = CostWeights()
     retry_limits: RetryLimits = RetryLimits()
 

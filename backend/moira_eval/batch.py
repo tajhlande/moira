@@ -44,11 +44,19 @@ _MATCH_PREFIX_LEN = 60
 
 
 def find_run_for_question(db_path: str, question_text: str) -> str | None:
-    """Find the most recent completed run matching the question text.
+    """Find the completed run matching the question text that has the most
+    workflow steps.
 
     Matches on the first ``_MATCH_PREFIX_LEN`` characters of the user
-    message content to tolerate minor trailing differences. Returns the
-    run ID or ``None`` if no match is found.
+    message content to tolerate minor trailing differences.
+
+    When a run fails and is resumed via the UI's "Retry" button, the
+    resume mechanism creates a new run containing only the retried
+    step(s) — e.g. just ``report_generation``. The original run retains
+    all the research data (tool calls, facts, conclusions) but has
+    ``status='error'``. By ordering on step count DESC, we pick the run
+    with the full research pipeline rather than the single-step resumed
+    run, ensuring the eval captures meaningful metrics.
     """
     conn = sqlite3.connect(db_path)
     try:
@@ -58,9 +66,11 @@ def find_run_for_question(db_path: str, question_text: str) -> str | None:
             SELECT wr.id
             FROM workflow_runs wr
             JOIN messages m ON wr.user_message_id = m.id
+            LEFT JOIN workflow_steps ws ON ws.workflow_run_id = wr.id
             WHERE substr(m.content, 1, ?) = ?
               AND wr.status = 'completed'
-            ORDER BY wr.started_at DESC
+            GROUP BY wr.id
+            ORDER BY COUNT(ws.id) DESC, wr.started_at DESC
             LIMIT 1
             """,
             (_MATCH_PREFIX_LEN, prefix),
