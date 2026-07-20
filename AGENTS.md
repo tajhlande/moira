@@ -41,6 +41,14 @@ The system must prioritize:
 * extensibility
 * robustness under large tool catalogs
 
+## Planning Guidelines
+
+- Written plans go in the `agent-docs` directory unless otherwise specified by the user. 
+- In planning, prefer phased implementation when planning large changes or features.
+- In phased implementation, each phase should provide some testable behavior. Prefer "spike" implementations and incremental addition over waterfall-style plans
+- At the top of each plan, create a table that tracks the completion status of each phase
+- Maintain the status tables as we implement the plans
+
 ## Coding Guidelines
 
 - Use idiomatic Python or Typescript code where possible.  Where not possible, add comments explaining why the code differs from idiomatic Python or Typescript.
