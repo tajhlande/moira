@@ -56,9 +56,12 @@ The system must prioritize:
 - Run python commands using `uv run`.
 - In general, use `uv` to manage the Python environment.
 - Use `shellcheck` to error check and lint shell scripts. 
+- The live database for the application is in data/moira.db.  Unless you are doing potentially destructive testing, don't suggest using other databases.
+
 
 ## Research
 - Always use Context7 MCP when I need library or API documentation, code generation, setup, or configuration steps, without me having to explicitly ask to use Context7.
+- If you are making judgments about the severity of an issue, and the prevalence of the issue can be determined by looking at the database of previous workflow runs, examine the prevalence before reporting the issue as a priority. 
 
 ## Codebase Workflow
 - Read files before editing them.
@@ -117,3 +120,4 @@ user experience, and critique notes.
 See [agent-docs/index.md](agent-docs/index.md) for a list of documents and what they contain. 
 See [agent-docs/core/](agent-docs/core/) for the core application architecture and description docs.
 A general roadmap is available in [roadmap.md](roadmap.md).
+
