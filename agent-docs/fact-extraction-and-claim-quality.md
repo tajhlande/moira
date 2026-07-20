@@ -21,6 +21,12 @@ search calls to re-discover what the reviewer already sees.
 
 ### Issue 2: url_content is almost never used
 
+> **Note:** This premise was **disproven** by later eval batches. By the
+> 07-19 batch, url_content was called ~15 times per run (76 calls vs 70
+> web_search across the batch). The model uses the tool aggressively.
+> Phase 2 was reframed to address the real problem — URL retry waste.
+> See the Phase 2 section below for details.
+
 Across the 7-run benchmark:
 
 | Tool | Total calls | Per-run average |
@@ -162,63 +168,91 @@ safety net, and the corrected fact is accurate in the knowledge model. Moving
 synthesis after research_review would be a major topology change not justified
 by this issue.
 
-### Phase 2: url_content usage guidance
+### Phase 2: URL fetch dedup (hard enforcement)
 
-**Goal:** Guide the model to fetch full page content for promising sources
-rather than relying solely on short snippets.
+**Goal:** Prevent the model from wasting budget on url_content calls for URLs
+it has already fetched (successfully or unsuccessfully) within the same
+research session.
+
+**Why the original Phase 2 was reframed:** The initial premise — "url_content
+is almost never used" (3 calls across a 7-run benchmark) — was disproven by
+later eval batches. By the 07-19 batch, url_content was called ~15 times per
+run (76 calls vs 70 web_search across the batch). The model uses the tool
+aggressively; the real problem is that it retries URLs it has already
+fetched.
+
+**Problem (measured):** Database investigation of the water-blood-pressure
+run (`8879d3a9`) showed 15 url_content calls with heavy retry waste:
+
+| URL | Attempts | Outcome |
+|---|---|---|
+| `ahajournals.org/.../01.CIR.101.5.504` | 3 | FAIL × 3 |
+| `pmc.ncbi.nlm.nih.gov/articles/PMC10807041/` | 3 | OK × 3 (content already in citations) |
+| `sciencedirect.com/.../S2161831323001424` | 2 | FAIL × 2 |
+| `ncbi.nlm.nih.gov/books/NBK526069/` | 2 | OK × 2 |
+
+Failure rate is ~30-50% (paywalled/JS-rendered sites). The model retries both
+successes (content already available) and failures (same URL will fail
+again). Prompt-only guidance is insufficient — the model already ignores its
+own previous tool results within the same session.
 
 **Files:**
+- `backend/moira/workflow/nodes/research.py` (new helpers + loop integration)
 - `backend/moira/resources/prompts.md` (`research.system`,
-  `research.system_native_tools`, `planning.user` or `planning.system`)
+  `research.system_native_tools` — document the dedup behavior)
 
 **Changes:**
 
-1. **Add url_content guidance to the research prompts.**
-   Instruct the model that web_search returns short snippets, and for sources
-   that look promising but incomplete, it should use url_content to fetch the
-   full page. Frame url_content as the natural second step after finding a
-   relevant source:
+1. **Track URL fetch attempts in research state.**
+   A `fetched_urls` dict maps URL → `{status, cit_id?, error?}`. It is
+   initialized from `seen_urls` at the start of each research invocation,
+   so URLs fetched in prior passes are also covered. It is updated after
+   each round's tool execution.
 
-   ```
-   ## Using url_content
+2. **Pre-dispatch filter (`_partition_url_content_calls`).**
+   After `_validate_and_filter_calls` accepts calls but before
+   `executor.execute_batch`, partition url_content calls:
+   - URL previously succeeded (citation exists) → synthesize a recurring
+     result pointing to the existing citation
+   - URL previously failed → synthesize a failure with the prior error
+   - URL not yet attempted → execute normally
 
-   web_search returns short snippets (a few sentences). When a search result
-   looks directly relevant to a fact you need but the snippet doesn't contain
-   the specific information, use url_content to fetch the full page content.
-   This is especially valuable for:
-   - Academic or technical content where the answer is in the body, not the
-     meta description
-   - Sources that mention your subject but where the snippet cuts off before
-     the relevant detail
-   - Any result where you need a precise number, date, or definition
+3. **Synthetic results (`_build_synthetic_url_result`).**
+   Build `ToolResult` objects marked with `metadata["synthetic"] = True`:
+   - Success: carries `metadata["results"]` pointing at the existing
+     citation so `_process_execution_results` marks it as "(recurring
+     source)" — the model sees the citation ID and knows not to refetch.
+   - Failure: empty `metadata["results"]` with `success=False`, output
+     text tells the model the URL previously failed and to try a
+     different one.
 
-   Do not fetch every URL — focus on sources that directly address an unknown
-   fact but where the snippet is insufficient.
-   ```
+4. **Cost skipping in `_process_execution_results`.**
+   Synthetic results don't execute, so they don't consume budget. The
+   cost-charging loop checks `metadata.get("synthetic")` and skips the
+   deduction. `call_counts` is also decremented for synthetics so per-run
+   and per-step limits reflect only real executions.
 
-2. **Reinforce in the planning prompt.**
-   The tool_call_plan is where the model decides its research strategy. Guide
-   planning to pair web_search queries with url_content fetches for promising
-   results, rather than treating web_search as the complete research step.
+5. **Prompt guidance.**
+   Both `research.system` and `research.system_native_tools` gain a rule:
+   "Never call url_content on a URL you have already fetched in this
+   research session." This reinforces the hard enforcement at the model
+   level.
 
-**Open questions to resolve during implementation:**
+**What is NOT covered (deferred):**
 
-- **When to fetch?** After seeing promising snippets? Only when snippets are
-  insufficient? For all top results? Start with "when snippets look relevant
-  but incomplete" and refine based on observed behavior.
+- **Cross-invocation failure memory.** Failed URL fetches leave no
+  citation record, so across research retries the model can't know which
+  URLs failed in a prior pass. Within-invocation failures ARE tracked.
+  Cross-pass failure tracking would require persisting `fetched_urls` in
+  execution_state.
 
-- **Interaction with call limits.** url_content has per-run=15, per-step=8.
-  If the model fetches aggressively, it could hit these limits. Monitor and
-  adjust if needed.
+- **Within-batch dedup.** If the model emits two identical url_content
+  calls in a single batch, both execute. This is rare (the model usually
+  emits different calls in one batch) and can be added later if observed.
 
-- **Should planning identify URLs to fetch?** Planning runs before research,
-  so it doesn't know which URLs will appear in results. url_content decisions
-  are better made dynamically during research. Planning can set the strategy
-  ("fetch promising sources") but not specific URLs.
-
-- **What makes a source "strong"?** Position in search results, domain
-  authority, snippet relevance. The model decides this — prompting guides the
-  judgment.
+- **URL normalization.** URLs with different fragments or trailing slashes
+  are treated as distinct. The model usually copies URLs verbatim from
+  search results, so this is a minor concern.
 
 ### Phase 3: Process-metadata claim detection via research_review
 
@@ -581,13 +615,13 @@ After quality fixes land:
 
 ## Five-day timeline
 
-| Day | Focus | Phase |
-|---|---|---|
-| 1 | Claim correction in research_review | Phase 1 (done) |
-| 2 | url_content prompt guidance + citation curation | Phases 2, 4 |
-| 3 | Extraction discipline + reviewer-based process-metadata detection | Phases 5, 3 |
-| 4 | Eval run, iterate on prompts, polish | All |
-| 5 | Demo prep, rehearsal, narrative | — |
+| Day | Focus                                                             | Phase                  |
+|-----|-------------------------------------------------------------------|------------------------|
+| 1   | Claim correction in research_review                               | Phase 1 (done)         |
+| 2   | URL fetch dedup + citation curation                               | Phase 2 (done), 4 (deferred) |
+| 3   | Extraction discipline + reviewer-based process-metadata detection | Phases 5, 3 (done)     |
+| 4   | Eval run, iterate on prompts, polish                              | In progress            |
+| 5   | Demo prep, rehearsal, narrative                                   | —                      |
 
 Phase 5 (extraction discipline) is the highest-impact change for the zero-fact
 failure mode — it addresses why the model writes "insufficient data found"

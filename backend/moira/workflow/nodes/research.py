@@ -29,7 +29,7 @@ from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.inference.registry import ResolvedModel
 from moira.models.knowledge import Citation, Fact, ResearchState, next_id
 from moira.prompts import render_prompt
-from moira.tools.base import ToolCall, ToolDefinition
+from moira.tools.base import ToolCall, ToolDefinition, ToolResult
 from moira.tools.executor import ToolExecutor
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
@@ -52,6 +52,11 @@ NODE_NAME = "research"
 
 DEFAULT_MAX_ROUNDS = 3
 DEFAULT_MAX_PARSE_RETRIES = 2
+
+# Tool name checked against this constant for url_content-specific dedup
+# logic (URL fetch memory). Defined here rather than imported from the tool
+# module to keep _helpers.py dependency-free and avoid a circular import.
+_URL_CONTENT_TOOL_NAME = "url_content"
 
 _DISPLAY_OUTPUT_LIMIT = 2000
 
@@ -319,6 +324,208 @@ def _validate_and_filter_calls(
     return valid_calls, [c.name for c in rejected]
 
 
+def _partition_url_content_calls(
+    valid_calls: list[ToolCall],
+    fetched_urls: dict[str, dict[str, Any]],
+    citations: list[Citation],
+) -> tuple[list[ToolCall], list[tuple[ToolCall, dict[str, Any]]]]:
+    """Split url_content calls into those to execute vs. synthesize.
+
+    A ``url_content`` call is deduped (synthesized instead of executed)
+    when its URL was already attempted in this research session:
+
+    - **Previously succeeded:** the citation referenced by
+      ``fetched_urls[url]["cit_id"]`` must still exist in ``citations``.
+      If it does, the call is deduped and the model will be pointed back
+      to the existing citation. If the citation is somehow missing
+      (shouldn't happen in normal operation), the call falls through to
+      real execution as a defensive refetch.
+
+    - **Previously failed:** always deduped. The model will be told the
+      URL already failed and should try a different one. We treat all
+      failures as permanent — paywalled and JS-rendered sites will fail
+      again on retry, so re-attempting them only wastes budget.
+
+    Non-url_content calls are never deduped.
+
+    Returns ``(calls_to_execute, synthetics)`` where ``synthetics`` is a
+    list of ``(call, fetched_url_info)`` tuples preserving the original
+    call order.
+    """
+    to_execute: list[ToolCall] = []
+    synthetics: list[tuple[ToolCall, dict[str, Any]]] = []
+    for call in valid_calls:
+        if call.name == _URL_CONTENT_TOOL_NAME:
+            url = (call.arguments.get("url") or "").strip()
+            info = fetched_urls.get(url) if url else None
+            if info:
+                if info.get("status") == "success":
+                    cit_id = info.get("cit_id")
+                    if cit_id and any(c["id"] == cit_id for c in citations):
+                        synthetics.append((call, info))
+                        continue
+                    # Citation missing — defensive refetch
+                    logger.warning(
+                        "url_content dedup: citation %s for %s not found, refetching",
+                        cit_id,
+                        url,
+                    )
+                else:
+                    # Previously failed — synthesize failure
+                    synthetics.append((call, info))
+                    continue
+        to_execute.append(call)
+    return to_execute, synthetics
+
+
+def _build_synthetic_url_result(
+    call: ToolCall,
+    info: dict[str, Any],
+    citations: list[Citation],
+) -> ToolResult:
+    """Build a synthetic ToolResult for a deduped url_content call.
+
+    Two cases, both marked with ``metadata["synthetic"] = True`` so that
+    :func:`_process_execution_results` knows to skip cost charging:
+
+    - **Previously succeeded:** carries a minimal ``metadata["results"]``
+      entry pointing at the existing citation.
+      :func:`_process_execution_results` will call ``_find_or_merge_citation``
+      which finds the existing citation via ``seen_urls`` and marks the
+      summary as "(recurring source)". The output text explicitly tells
+      the model not to refetch.
+
+    - **Previously failed:** empty ``metadata["results"]`` with
+      ``success=False``. :func:`_process_execution_results` will route
+      this through the zero-results branch, surfacing the prior error
+      in the summary so the model knows why the URL is blocked.
+    """
+    url = (call.arguments.get("url") or "").strip()
+    status = info.get("status")
+
+    if status == "success":
+        cit_id = info.get("cit_id")
+        citation = next((c for c in citations if c["id"] == cit_id), None)
+        if citation:
+            return ToolResult(
+                tool_name=_URL_CONTENT_TOOL_NAME,
+                output=(
+                    f"URL already fetched in this session — see [{cit_id}]. "
+                    f"Reuse that citation; do not refetch."
+                ),
+                success=True,
+                duration_ms=0,
+                metadata={
+                    "results": [
+                        {
+                            "url": url,
+                            "title": citation.get("title", ""),
+                            "snippet": (citation.get("excerpt") or "")[:_SNIPPET_MAX_LENGTH],
+                            "content": (citation.get("content") or "")[:_CITATION_CONTENT_LIMIT],
+                        }
+                    ],
+                    "synthetic": True,
+                },
+            )
+
+    # Previously failed (or defensive fallback if citation went missing)
+    error = info.get("error") or "previously failed"
+    return ToolResult(
+        tool_name=_URL_CONTENT_TOOL_NAME,
+        output=(f"URL previously failed in this session ({error}). Try a different URL."),
+        success=False,
+        duration_ms=0,
+        error=f"deduped: previously failed ({error})",
+        metadata={"results": [], "synthetic": True},
+    )
+
+
+async def _execute_with_url_dedup(
+    valid_calls: list[ToolCall],
+    fetched_urls: dict[str, dict[str, Any]],
+    executor: ToolExecutor,
+    citations: list[Citation],
+    call_counts: dict[str, int],
+) -> list[ToolResult]:
+    """Execute tool calls, deduping url_content on already-fetched URLs.
+
+    Partitioning happens after ``_validate_and_filter_calls`` has already
+    incremented ``call_counts`` for every accepted call. This function
+    decrements the count for deduped calls so the per-run and per-step
+    limits reflect only actual executions — a deduped call is free from
+    a budgeting perspective.
+
+    Returns results in the same order as ``valid_calls``. Synthetic
+    :class:`ToolResult` objects fill in for deduped calls so downstream
+    processing (:func:`_process_execution_results`, adapter message
+    formatting) sees a result for every call the model emitted.
+    """
+    calls_to_execute, synthetics = _partition_url_content_calls(
+        valid_calls, fetched_urls, citations
+    )
+
+    # Decrement call_counts for deduped calls. _validate_and_filter_calls
+    # incremented them, but these calls won't actually execute. This keeps
+    # the per-run/per-step limits honest — a model that emits 5 url_content
+    # calls for URLs it already fetched shouldn't burn 5 calls against its
+    # limit.
+    for call, _info in synthetics:
+        prev = call_counts.get(call.name, 0)
+        if prev > 0:
+            call_counts[call.name] = prev - 1
+
+    if calls_to_execute:
+        real_results = await executor.execute_batch(calls_to_execute)
+    else:
+        real_results = []
+
+    synthetic_results = [
+        _build_synthetic_url_result(call, info, citations) for call, info in synthetics
+    ]
+
+    # Merge in original valid_calls order so the model sees results aligned
+    # with the tool calls it emitted (adapters pair calls and results by
+    # position or by call.id).
+    result_by_call_id: dict[str, ToolResult] = {}
+    for result, call in zip(real_results, calls_to_execute):
+        result_by_call_id[call.id] = result
+    for result, (call, _info) in zip(synthetic_results, synthetics):
+        result_by_call_id[call.id] = result
+    return [result_by_call_id[call.id] for call in valid_calls]
+
+
+def _update_fetched_urls(
+    fetched_urls: dict[str, dict[str, Any]],
+    results: list[ToolResult],
+    valid_calls: list[ToolCall],
+    seen_urls: dict[str, str],
+) -> None:
+    """Record url_content outcomes for future dedup decisions.
+
+    Runs AFTER :func:`_process_execution_results`, which has populated
+    ``seen_urls`` with the citation ID for each successful fetch. This
+    ordering lets us resolve ``cit_id`` for the synthetic success path
+    in future rounds.
+
+    Synthetic results are skipped — they're already tracked in
+    ``fetched_urls`` (that's why they were deduped).
+    """
+    for result, call in zip(results, valid_calls):
+        if call.name != _URL_CONTENT_TOOL_NAME:
+            continue
+        if result.metadata.get("synthetic"):
+            continue
+        url = (call.arguments.get("url") or "").strip()
+        if not url or url in fetched_urls:
+            continue
+        cit_id = seen_urls.get(url) if result.success else None
+        fetched_urls[url] = {
+            "status": "success" if result.success else "failed",
+            "cit_id": cit_id,
+            "error": result.error if not result.success else None,
+        }
+
+
 def _process_execution_results(
     results: list,
     valid_calls: list[ToolCall],
@@ -427,9 +634,14 @@ def _process_execution_results(
 
         # call_counts is now incremented in _validate_and_filter_calls
         # at validation time, so it is already up-to-date here.
-        per_call_cost = tool_costs.get(name, 1.0)
-        new_budget -= per_call_cost
-        total_tool_cost += per_call_cost
+        # Synthetic results (deduped url_content calls) don't actually
+        # execute, so they don't consume budget. _execute_with_url_dedup
+        # already decremented call_counts for them; we skip the cost
+        # charge here to match.
+        if not result.metadata.get("synthetic"):
+            per_call_cost = tool_costs.get(name, 1.0)
+            new_budget -= per_call_cost
+            total_tool_cost += per_call_cost
 
     return tool_summary_parts, new_budget, total_tool_cost
 
@@ -769,6 +981,7 @@ async def _run_native_tool_loop(
     total_tool_cost: float,
     step_limits: dict[str, int] | None = None,
     step_baseline: dict[str, int] | None = None,
+    fetched_urls: dict[str, dict[str, Any]] | None = None,
 ) -> _LoopResult:
     """Run the native tool-calling loop.
 
@@ -776,7 +989,15 @@ async def _run_native_tool_loop(
     text-based JSON parsing. Tool calls come back in ``response.tool_calls``;
     ``discovered_facts`` and ``sources`` are still parsed from ``content``
     (hybrid approach).
+
+    ``fetched_urls`` tracks URL fetch attempts within this research
+    invocation. When provided, url_content calls on URLs already in the
+    dict are deduped — the actual HTTP fetch is skipped and a synthetic
+    result is returned instead, preventing the model from wasting budget
+    on retries of already-fetched (or already-failed) URLs.
     """
+    if fetched_urls is None:
+        fetched_urls = {}
     total_call_count = 0
     last_response = None
     last_thinking = ""
@@ -831,7 +1052,9 @@ async def _run_native_tool_loop(
         had_valid_calls = True
 
         try:
-            results = await executor.execute_batch(valid_calls)
+            results = await _execute_with_url_dedup(
+                valid_calls, fetched_urls, executor, citations, call_counts
+            )
         except Exception as e:
             logger.error("Tool execution batch error: %s", e, exc_info=True)
             exhausted_rounds = False
@@ -851,6 +1074,11 @@ async def _run_native_tool_loop(
             new_budget,
             total_tool_cost,
         )
+
+        # Record url_content outcomes for future dedup. Runs after
+        # _process_execution_results so seen_urls is populated with the
+        # citation IDs that successful fetches produced.
+        _update_fetched_urls(fetched_urls, results, valid_calls, seen_urls)
 
         # Feed results back using adapter message format so the model
         # sees its own tool calls and the corresponding results.
@@ -910,6 +1138,7 @@ async def _run_text_tool_loop(
     total_tool_cost: float,
     step_limits: dict[str, int] | None = None,
     step_baseline: dict[str, int] | None = None,
+    fetched_urls: dict[str, dict[str, Any]] | None = None,
 ) -> _LoopResult:
     """Run the text-based tool-calling loop.
 
@@ -923,7 +1152,12 @@ async def _run_text_tool_loop(
     descriptions are already baked into the system prompt before the
     loop begins.
     disabled.
+
+    ``fetched_urls`` tracks URL fetch attempts within this research
+    invocation for url_content dedup (see :func:`_run_native_tool_loop`).
     """
+    if fetched_urls is None:
+        fetched_urls = {}
     total_call_count = 0
     last_response = None
     last_thinking = ""
@@ -1056,9 +1290,11 @@ async def _run_text_tool_loop(
 
         had_valid_calls = True
 
-        # Execute tool calls
+        # Execute tool calls (with url_content dedup)
         try:
-            results = await executor.execute_batch(valid_calls)
+            results = await _execute_with_url_dedup(
+                valid_calls, fetched_urls, executor, citations, call_counts
+            )
         except Exception as e:
             logger.error("Tool execution batch error: %s", e, exc_info=True)
             exhausted_rounds = False
@@ -1079,6 +1315,9 @@ async def _run_text_tool_loop(
             new_budget,
             total_tool_cost,
         )
+
+        # Record url_content outcomes for future dedup
+        _update_fetched_urls(fetched_urls, results, valid_calls, seen_urls)
 
         # Feed results back to model for next round
         tool_summary = "\n\n---\n\n".join(tool_summary_parts)
@@ -1161,6 +1400,19 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     # searches return the same URL, the snippet is merged into the
     # existing citation rather than creating a duplicate.
     _seen_urls: dict[str, str] = {url: c["id"] for c in citations if (url := c.get("url"))}
+
+    # URL fetch memory: tracks every url_content attempt within this
+    # research invocation (and pre-populated with URLs already fetched in
+    # prior passes). Used to dedupe url_content calls — the model
+    # frequently refetches URLs it already retrieved (or that already
+    # failed), wasting budget on HTTP calls that can't improve the
+    # outcome. Pre-populating from _seen_urls means cross-pass success
+    # dedup works immediately; cross-pass failure dedup is not tracked
+    # (failed fetches leave no citation record) but within-invocation
+    # failures are caught.
+    _fetched_urls: dict[str, dict[str, Any]] = {
+        url: {"status": "success", "cit_id": cit_id} for url, cit_id in _seen_urls.items()
+    }
 
     candidate_tools = es.get("candidate_tools", [])
     tool_plan = es.get("tool_call_plan", [])
@@ -1308,6 +1560,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             total_tool_cost=total_tool_cost,
             step_limits=step_limits,
             step_baseline=step_call_baseline,
+            fetched_urls=_fetched_urls,
         )
     else:
         loop_result = await _run_text_tool_loop(
@@ -1330,6 +1583,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             total_tool_cost=total_tool_cost,
             step_limits=step_limits,
             step_baseline=step_call_baseline,
+            fetched_urls=_fetched_urls,
         )
 
     total_call_count = loop_result.total_call_count

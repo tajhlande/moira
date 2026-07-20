@@ -281,6 +281,9 @@ Rules:
   plan if needed to fill gaps
 - Respect tool call limits — if a tool returns a limit-reached message, do not call it
   again
+- Never call url_content on a URL you have already fetched in this research session. If
+  a URL was fetched successfully, its content is in the citations above — reuse it. If a
+  URL failed, retrying it will fail again; choose a different URL instead.
 - When sources conflict, prefer claims supported by the preponderance of evidence.
   Note significant conflicts in the claim but extract the better-supported position.
 
@@ -401,6 +404,9 @@ Rules:
 - If a specialized tool is available for the domain, prefer it over web_search
 - You may make up to {max_extra_rounds} additional rounds of tool calls if needed to fill gaps
 - Respect tool call limits — if a tool returns a limit-reached message, do not call it again
+- Never call url_content on a URL you have already fetched in this research session. If
+  a URL was fetched successfully, its content is in the citations above — reuse it. If a
+  URL failed, retrying it will fail again; choose a different URL instead.
 - When sources conflict, prefer claims supported by the preponderance of evidence.
   Note significant conflicts in the claim but extract the better-supported position.
 - ALWAYS include a discovered_facts JSON object in your text content after receiving

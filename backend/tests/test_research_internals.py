@@ -1,9 +1,10 @@
 """Unit tests for research node internal helper functions and parsers."""
 
 import json
+from unittest.mock import AsyncMock
 
-from moira.models.knowledge import Fact
-from moira.tools.base import ToolCall
+from moira.models.knowledge import Citation, Fact
+from moira.tools.base import ToolCall, ToolResult
 
 
 class TestResearchHelpers:
@@ -734,3 +735,538 @@ class TestRetryContextHelpers:
         from moira.workflow.nodes._helpers import _format_prior_citations
 
         assert _format_prior_citations([]) == ""
+
+
+class TestPartitionUrlContentCalls:
+    """Tests for _partition_url_content_calls — the URL dedup gate.
+
+    Verifies that url_content calls on already-fetched URLs are split into
+    a synthetic list (skipped execution), while new URLs and non-url_content
+    calls pass through to real execution.
+    """
+
+    @staticmethod
+    def _make_call(name: str, url: str = "", call_id: str = "tc1") -> ToolCall:
+        args = {"url": url} if url else {}
+        return ToolCall(id=call_id, name=name, arguments=args)
+
+    def test_new_url_passes_through(self):
+        """A url_content call on a URL not in fetched_urls executes."""
+        from moira.workflow.nodes.research import _partition_url_content_calls
+
+        call = self._make_call("url_content", "https://example.com/new")
+        fetched_urls: dict = {}
+        citations: list[Citation] = []
+
+        to_execute, synthetics = _partition_url_content_calls([call], fetched_urls, citations)
+        assert len(to_execute) == 1
+        assert len(synthetics) == 0
+
+    def test_previously_succeeded_is_deduped(self):
+        """A url_content call on a URL that previously succeeded is deduped
+        when the referenced citation still exists."""
+        from moira.workflow.nodes.research import _partition_url_content_calls
+
+        url = "https://example.com/cached"
+        call = self._make_call("url_content", url)
+        fetched_urls = {url: {"status": "success", "cit_id": "cit001", "error": None}}
+        citations: list[Citation] = [
+            Citation(id="cit001", source="url_content", url=url, title="Cached"),
+        ]
+
+        to_execute, synthetics = _partition_url_content_calls([call], fetched_urls, citations)
+        assert len(to_execute) == 0
+        assert len(synthetics) == 1
+        assert synthetics[0][0] is call
+
+    def test_previously_succeeded_missing_citation_refetches(self):
+        """If the citation referenced by fetched_urls is gone, the call
+        falls through to real execution (defensive refetch)."""
+        from moira.workflow.nodes.research import _partition_url_content_calls
+
+        url = "https://example.com/missing"
+        call = self._make_call("url_content", url)
+        fetched_urls = {url: {"status": "success", "cit_id": "cit999", "error": None}}
+        citations: list[Citation] = []  # cit999 not present
+
+        to_execute, synthetics = _partition_url_content_calls([call], fetched_urls, citations)
+        assert len(to_execute) == 1
+        assert len(synthetics) == 0
+
+    def test_previously_failed_is_deduped(self):
+        """A url_content call on a URL that previously failed is deduped —
+        failures are treated as permanent (paywalled/JS-rendered sites will
+        fail again)."""
+        from moira.workflow.nodes.research import _partition_url_content_calls
+
+        url = "https://example.com/failed"
+        call = self._make_call("url_content", url)
+        fetched_urls = {url: {"status": "failed", "cit_id": None, "error": "HTTP 403"}}
+        citations: list[Citation] = []
+
+        to_execute, synthetics = _partition_url_content_calls([call], fetched_urls, citations)
+        assert len(to_execute) == 0
+        assert len(synthetics) == 1
+
+    def test_non_url_content_calls_always_execute(self):
+        """web_search and other tools are never deduped."""
+        from moira.workflow.nodes.research import _partition_url_content_calls
+
+        calls = [
+            self._make_call("web_search", call_id="ws1"),
+            self._make_call("calculator", call_id="calc1"),
+        ]
+        # web_search doesn't take a url arg
+        calls[0] = ToolCall(id="ws1", name="web_search", arguments={"query": "test"})
+        calls[1] = ToolCall(id="calc1", name="calculator", arguments={"expression": "1+1"})
+        fetched_urls: dict = {}
+        citations: list[Citation] = []
+
+        to_execute, synthetics = _partition_url_content_calls(calls, fetched_urls, citations)
+        assert len(to_execute) == 2
+        assert len(synthetics) == 0
+
+    def test_mixed_batch_preserves_order(self):
+        """A mix of deduped and non-deduped calls preserves original order
+        in both output lists."""
+        from moira.workflow.nodes.research import _partition_url_content_calls
+
+        cached_url = "https://example.com/cached"
+        failed_url = "https://example.com/failed"
+        new_url = "https://example.com/new"
+
+        calls = [
+            self._make_call("url_content", cached_url, "c1"),
+            self._make_call("url_content", new_url, "c2"),
+            self._make_call("url_content", failed_url, "c3"),
+            self._make_call("web_search", call_id="c4"),
+        ]
+        calls[3] = ToolCall(id="c4", name="web_search", arguments={"query": "test"})
+        fetched_urls = {
+            cached_url: {"status": "success", "cit_id": "cit001"},
+            failed_url: {"status": "failed", "cit_id": None, "error": "403"},
+        }
+        citations: list[Citation] = [
+            Citation(id="cit001", source="url_content", url=cached_url),
+        ]
+
+        to_execute, synthetics = _partition_url_content_calls(calls, fetched_urls, citations)
+        # c2 (new url) and c4 (web_search) execute
+        assert [c.id for c in to_execute] == ["c2", "c4"]
+        # c1 (cached) and c3 (failed) are synthesized, in original order
+        assert [c.id for c, _ in synthetics] == ["c1", "c3"]
+
+
+class TestBuildSyntheticUrlResult:
+    """Tests for _build_synthetic_url_result — synthetic ToolResult builder."""
+
+    @staticmethod
+    def _make_call(url: str) -> ToolCall:
+        return ToolCall(id="tc1", name="url_content", arguments={"url": url})
+
+    def test_success_carries_citation_metadata(self):
+        """A synthetic success result carries metadata pointing to the
+        existing citation so _process_execution_results marks it as a
+        recurring source."""
+        from moira.workflow.nodes.research import _build_synthetic_url_result
+
+        url = "https://example.com/article"
+        call = self._make_call(url)
+        info = {"status": "success", "cit_id": "cit005", "error": None}
+        citations: list[Citation] = [
+            Citation(
+                id="cit005",
+                source="url_content",
+                url=url,
+                title="The Article",
+                excerpt="Short snippet here",
+                content="Full body content",
+            ),
+        ]
+
+        result = _build_synthetic_url_result(call, info, citations)
+        assert result.success is True
+        assert result.metadata.get("synthetic") is True
+        results_meta = result.metadata.get("results", [])
+        assert len(results_meta) == 1
+        assert results_meta[0]["url"] == url
+        assert results_meta[0]["title"] == "The Article"
+        assert "Full body content" in results_meta[0]["content"]
+        assert "cit005" in result.output
+
+    def test_failure_carries_error_message(self):
+        """A synthetic failure result surfaces the prior error so the model
+        knows why the URL is blocked."""
+        from moira.workflow.nodes.research import _build_synthetic_url_result
+
+        url = "https://example.com/paywalled"
+        call = self._make_call(url)
+        info = {"status": "failed", "cit_id": None, "error": "HTTP 403 Forbidden"}
+
+        result = _build_synthetic_url_result(call, info, [])
+        assert result.success is False
+        assert result.metadata.get("synthetic") is True
+        assert result.metadata.get("results") == []
+        assert "HTTP 403 Forbidden" in result.output
+        assert result.error  # non-empty error string
+
+
+class TestUpdateFetchedUrls:
+    """Tests for _update_fetched_urls — records url_content outcomes after
+    _process_execution_results runs."""
+
+    @staticmethod
+    def _make_call(url: str) -> ToolCall:
+        return ToolCall(id="tc1", name="url_content", arguments={"url": url})
+
+    def test_records_success_with_cit_id(self):
+        """A successful real fetch is recorded with the cit_id resolved from
+        seen_urls."""
+        from moira.workflow.nodes.research import _update_fetched_urls
+
+        url = "https://example.com/new-success"
+        call = self._make_call(url)
+        result = ToolResult(
+            tool_name="url_content",
+            output="URL: ...\n\ncontent",
+            success=True,
+            metadata={"results": [{"url": url}]},
+        )
+        fetched_urls: dict = {}
+        seen_urls = {url: "cit010"}
+
+        _update_fetched_urls(fetched_urls, [result], [call], seen_urls)
+        assert url in fetched_urls
+        assert fetched_urls[url]["status"] == "success"
+        assert fetched_urls[url]["cit_id"] == "cit010"
+
+    def test_records_failure_with_error(self):
+        """A failed real fetch is recorded with the error message."""
+        from moira.workflow.nodes.research import _update_fetched_urls
+
+        url = "https://example.com/new-fail"
+        call = self._make_call(url)
+        result = ToolResult(
+            tool_name="url_content",
+            output="",
+            success=False,
+            error="timeout",
+            metadata={"results": []},
+        )
+        fetched_urls: dict = {}
+        seen_urls: dict = {}
+
+        _update_fetched_urls(fetched_urls, [result], [call], seen_urls)
+        assert url in fetched_urls
+        assert fetched_urls[url]["status"] == "failed"
+        assert fetched_urls[url]["error"] == "timeout"
+
+    def test_skips_synthetic_results(self):
+        """Synthetic results (already tracked in fetched_urls) are skipped."""
+        from moira.workflow.nodes.research import _update_fetched_urls
+
+        url = "https://example.com/cached"
+        call = self._make_call(url)
+        result = ToolResult(
+            tool_name="url_content",
+            output="cached",
+            success=True,
+            metadata={"results": [{"url": url}], "synthetic": True},
+        )
+        fetched_urls = {url: {"status": "success", "cit_id": "cit001", "error": None}}
+
+        _update_fetched_urls(fetched_urls, [result], [call], {})
+        # Entry unchanged — synthetic didn't overwrite
+        assert fetched_urls[url]["cit_id"] == "cit001"
+
+    def test_skips_non_url_content_calls(self):
+        """web_search and other tools are ignored by this tracker."""
+        from moira.workflow.nodes.research import _update_fetched_urls
+
+        call = ToolCall(id="ws1", name="web_search", arguments={"query": "x"})
+        result = ToolResult(
+            tool_name="web_search",
+            output="results",
+            success=True,
+            metadata={"results": [{"url": "https://example.com/s"}]},
+        )
+        fetched_urls: dict = {}
+
+        _update_fetched_urls(fetched_urls, [result], [call], {})
+        assert fetched_urls == {}
+
+    def test_does_not_overwrite_existing_entry(self):
+        """If a URL is already in fetched_urls (e.g. pre-populated from
+        seen_urls), a real execution result doesn't overwrite it."""
+        from moira.workflow.nodes.research import _update_fetched_urls
+
+        url = "https://example.com/preexisting"
+        call = self._make_call(url)
+        result = ToolResult(
+            tool_name="url_content",
+            output="content",
+            success=False,
+            error="should not overwrite",
+            metadata={"results": []},
+        )
+        fetched_urls = {url: {"status": "success", "cit_id": "cit001", "error": None}}
+
+        _update_fetched_urls(fetched_urls, [result], [call], {})
+        assert fetched_urls[url]["status"] == "success"
+
+
+class TestExecuteWithUrlDedup:
+    """Integration tests for _execute_with_url_dedup — verifies the full
+    partition/execute/merge flow."""
+
+    @staticmethod
+    def _make_call(name: str, url: str = "", call_id: str = "tc1") -> ToolCall:
+        args = {"url": url} if url else {}
+        return ToolCall(id=call_id, name=name, arguments=args)
+
+    async def test_deduped_calls_do_not_execute(self):
+        """The executor is only called for non-deduped calls."""
+        from moira.workflow.nodes.research import _execute_with_url_dedup
+
+        cached_url = "https://example.com/cached"
+        new_url = "https://example.com/new"
+        calls = [
+            self._make_call("url_content", cached_url, "c1"),
+            self._make_call("url_content", new_url, "c2"),
+        ]
+        fetched_urls = {cached_url: {"status": "success", "cit_id": "cit001", "error": None}}
+        citations: list[Citation] = [
+            Citation(id="cit001", source="url_content", url=cached_url),
+        ]
+        executor = AsyncMock()
+        executor.execute_batch.return_value = [
+            ToolResult(
+                tool_name="url_content",
+                output="new content",
+                success=True,
+                metadata={"results": [{"url": new_url}]},
+            )
+        ]
+        call_counts = {"url_content": 2}
+
+        results = await _execute_with_url_dedup(
+            calls, fetched_urls, executor, citations, call_counts
+        )
+
+        # Only the new URL was executed
+        executor.execute_batch.assert_awaited_once()
+        executed_calls = executor.execute_batch.call_args[0][0]
+        assert len(executed_calls) == 1
+        assert executed_calls[0].id == "c2"
+
+        # Two results returned, in original call order
+        assert len(results) == 2
+        assert results[0].metadata.get("synthetic") is True  # c1 deduped
+        assert results[1].metadata.get("synthetic") is not True  # c2 real
+
+    async def test_call_counts_decremented_for_synthetics(self):
+        """call_counts is decremented for deduped calls so per-run limits
+        reflect only actual executions."""
+        from moira.workflow.nodes.research import _execute_with_url_dedup
+
+        cached_url = "https://example.com/cached"
+        call = self._make_call("url_content", cached_url)
+        fetched_urls = {cached_url: {"status": "success", "cit_id": "cit001", "error": None}}
+        citations: list[Citation] = [
+            Citation(id="cit001", source="url_content", url=cached_url),
+        ]
+        executor = AsyncMock()
+        # No calls to execute — all deduped
+        executor.execute_batch.return_value = []
+        call_counts = {"url_content": 5}
+
+        await _execute_with_url_dedup([call], fetched_urls, executor, citations, call_counts)
+
+        # Was 5, _validate incremented to 6 (hypothetically), dedup decrements back
+        assert call_counts["url_content"] == 4
+
+    async def test_all_new_urls_execute_normally(self):
+        """When no URLs are cached, all calls execute normally."""
+        from moira.workflow.nodes.research import _execute_with_url_dedup
+
+        calls = [
+            self._make_call("url_content", "https://a.com", "c1"),
+            self._make_call("url_content", "https://b.com", "c2"),
+        ]
+        fetched_urls: dict = {}
+        citations: list[Citation] = []
+        executor = AsyncMock()
+        executor.execute_batch.return_value = [
+            ToolResult(
+                tool_name="url_content",
+                output="a",
+                success=True,
+                metadata={"results": [{"url": "https://a.com"}]},
+            ),
+            ToolResult(
+                tool_name="url_content",
+                output="b",
+                success=True,
+                metadata={"results": [{"url": "https://b.com"}]},
+            ),
+        ]
+        call_counts = {"url_content": 0}
+
+        results = await _execute_with_url_dedup(
+            calls, fetched_urls, executor, citations, call_counts
+        )
+
+        assert len(results) == 2
+        assert all(not r.metadata.get("synthetic") for r in results)
+        assert call_counts["url_content"] == 0  # unchanged — no synthetics
+
+    async def test_results_returned_in_call_order(self):
+        """Results are returned in the same order as valid_calls, with
+        synthetics filling in for deduped calls."""
+        from moira.workflow.nodes.research import _execute_with_url_dedup
+
+        cached = "https://cached.com"
+        new = "https://new.com"
+        failed = "https://failed.com"
+        calls = [
+            self._make_call("url_content", cached, "c1"),
+            self._make_call("url_content", new, "c2"),
+            self._make_call("url_content", failed, "c3"),
+        ]
+        fetched_urls = {
+            cached: {"status": "success", "cit_id": "cit001"},
+            failed: {"status": "failed", "error": "403"},
+        }
+        citations: list[Citation] = [
+            Citation(id="cit001", source="url_content", url=cached),
+        ]
+        executor = AsyncMock()
+        executor.execute_batch.return_value = [
+            ToolResult(
+                tool_name="url_content",
+                output="new content",
+                success=True,
+                metadata={"results": [{"url": new}]},
+            ),
+        ]
+        call_counts = {"url_content": 3}
+
+        results = await _execute_with_url_dedup(
+            calls, fetched_urls, executor, citations, call_counts
+        )
+
+        assert len(results) == 3
+        # c1: synthetic success (cached)
+        assert results[0].success is True
+        assert results[0].metadata.get("synthetic") is True
+        # c2: real execution
+        assert results[1].metadata.get("synthetic") is not True
+        # c3: synthetic failure (previously failed)
+        assert results[2].success is False
+        assert results[2].metadata.get("synthetic") is True
+
+
+class TestProcessExecutionResultsSyntheticCost:
+    """Tests that _process_execution_results skips budget charging for
+    synthetic (deduped) results."""
+
+    def test_synthetic_result_does_not_charge_budget(self):
+        """A synthetic url_content result must not deduct tool cost from
+        the budget — the HTTP call was skipped."""
+        from moira.workflow.nodes.research import _process_execution_results
+
+        url = "https://example.com/cached"
+        call = ToolCall(id="tc1", name="url_content", arguments={"url": url})
+        synthetic_result = ToolResult(
+            tool_name="url_content",
+            output="URL already fetched — see [cit001].",
+            success=True,
+            metadata={
+                "results": [
+                    {
+                        "url": url,
+                        "title": "Cached",
+                        "snippet": "snippet",
+                        "content": "content",
+                    }
+                ],
+                "synthetic": True,
+            },
+        )
+        citations: list[Citation] = [
+            Citation(id="cit001", source="url_content", url=url),
+        ]
+        seen_urls = {url: "cit001"}
+        facts: list[Fact] = []
+        tool_plan: list = []
+        tool_results_log: list[dict] = []
+        call_counts = {"url_content": 0}
+        tool_costs = {"url_content": 5.0}
+
+        budget_before = 100.0
+        summaries, budget_after, total_cost = _process_execution_results(
+            [synthetic_result],
+            [call],
+            lambda _event: None,  # no-op writer
+            citations,
+            seen_urls,
+            facts,
+            tool_plan,
+            tool_results_log,
+            call_counts,
+            tool_costs,
+            budget_before,
+            0.0,
+        )
+        # Budget unchanged — synthetic didn't cost anything
+        assert budget_after == budget_before
+        assert total_cost == 0.0
+        # Summary still produced (model sees the dedup feedback)
+        assert len(summaries) == 1
+
+    def test_real_result_charges_budget(self):
+        """A real url_content result charges the tool cost as before."""
+        from moira.workflow.nodes.research import _process_execution_results
+
+        url = "https://example.com/real"
+        call = ToolCall(id="tc1", name="url_content", arguments={"url": url})
+        real_result = ToolResult(
+            tool_name="url_content",
+            output="URL: ...\n\nreal content",
+            success=True,
+            metadata={
+                "results": [
+                    {
+                        "url": url,
+                        "title": "Real",
+                        "snippet": "snippet",
+                        "content": "content",
+                    }
+                ]
+            },
+        )
+        citations: list[Citation] = []
+        seen_urls: dict[str, str] = {}
+        facts: list[Fact] = []
+        tool_plan: list = []
+        tool_results_log: list[dict] = []
+        call_counts = {"url_content": 0}
+        tool_costs = {"url_content": 5.0}
+
+        budget_before = 100.0
+        summaries, budget_after, total_cost = _process_execution_results(
+            [real_result],
+            [call],
+            lambda _event: None,
+            citations,
+            seen_urls,
+            facts,
+            tool_plan,
+            tool_results_log,
+            call_counts,
+            tool_costs,
+            budget_before,
+            0.0,
+        )
+        assert budget_after == budget_before - 5.0
+        assert total_cost == 5.0
