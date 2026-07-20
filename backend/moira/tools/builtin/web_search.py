@@ -369,23 +369,23 @@ class WebSearchTool(BaseTool):
             except Exception as e:
                 return self._fail(start, f"SearXNG request failed: {e}")
 
-            # Store successful response in cache — skip when engines are
-            # unresponsive so degraded results don't lock out fresh
-            # queries for the full TTL.
-            unresponsive = data.get("unresponsive_engines", [])
-            if cache is not None and not unresponsive:
+            # Cache any successful SearXNG response. Previously this
+            # skipped caching when any engine was unresponsive, but since
+            # SearXNG frequently has 1-2 down engines, that guard prevented
+            # the cache from ever populating (zero entries, zero hits across
+            # hundreds of calls). Degraded results are still valid for
+            # caching — the same query would likely see similar degradation
+            # next time, and a cache hit beats no caching at all. Empty
+            # result lists are cached too, to avoid re-querying SearXNG for
+            # terms that genuinely have no hits. HTTP errors are excluded
+            # because they return early via _fail() before reaching here.
+            if cache is not None:
                 cache.put(
                     query,
                     args.get("categories"),
                     args.get("language"),
                     args.get("time_range"),
                     data,
-                )
-            elif cache is not None:
-                logger.info(
-                    "Search cache: skipping cache for '%s' (unresponsive engines: %s)",
-                    query[:80],
-                    unresponsive,
                 )
 
         results = data.get("results", [])

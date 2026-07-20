@@ -618,10 +618,13 @@ class TestSearchCache:
         assert cache.cleanup() == 0
 
     @pytest.mark.asyncio
-    async def test_degraded_results_not_cached(self, tmp_path):
-        """When SearXNG reports unresponsive engines, the response should
-        not be cached — degraded results shouldn't lock out fresh queries
-        for the full TTL."""
+    async def test_degraded_results_cached(self, tmp_path):
+        """When SearXNG reports unresponsive engines, the response is still
+        cached as long as results were returned. Degraded results are valid
+        for caching — a cache hit returning slightly-degraded results beats
+        no caching at all (which was the prior behavior and resulted in zero
+        cache entries across hundreds of calls because SearXNG routinely has
+        1-2 down engines)."""
         call_count = 0
 
         def degraded_handler(request: httpx.Request) -> httpx.Response:
@@ -637,14 +640,14 @@ class TestSearchCache:
 
         tool = self._make_cached_tool(tmp_path, handler=degraded_handler)
 
-        # First call — HTTP, but not cached due to unresponsive engines
+        # First call — HTTP fetch, cached despite unresponsive engine
         r1 = await tool.execute({"query": "test"})
         assert r1.success
         assert r1.metadata["cache_hit"] is False
         assert call_count == 1
 
-        # Second call — should hit HTTP again, not cache
+        # Second call — served from cache (degraded results still cached)
         r2 = await tool.execute({"query": "test"})
         assert r2.success
-        assert r2.metadata["cache_hit"] is False
-        assert call_count == 2
+        assert r2.metadata["cache_hit"] is True
+        assert call_count == 1  # no second HTTP fetch
