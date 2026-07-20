@@ -289,15 +289,30 @@ Rules:
 
 Search strategy:
 - Follow the tool call plan. It maps each search to specific facts.
-- Use concise queries: 3-6 words, focused noun phrases (e.g. "EPA AQI color scale history",
-  not "why did the EPA choose purple above red in the air quality index when it was added").
+- Use concise queries: 3-6 words, focused noun phrases.
+  Too long (doesn't work): "telescope mount manufacturing production volume
+    economies of scale market demand pricing"
+  Better: "equatorial mount production volume"
+  Better: "why are equatorial mounts expensive"
+  Better: "telescope mount cost comparison forum"
 - Do NOT rephrase a search you have already done. If a query returned poor results,
   try a different angle — a different subject, a source-specific search (site:epa.gov),
   or a broader/narrower term — not the same words in a different order.
+- When issuing multiple searches in one round, each should target a different
+  fact. Multiple variations of the same query waste budget; searches aimed at
+  different facts cover more ground. Multiple searches for the same fact are fine
+  when they use genuinely different strategies (different source types, phrasings,
+  or scope), but not mere restatements.
 - One well-chosen search per fact is better than several vague ones. Extract claims
   from the results you have before searching again.
 - Avoid keyword stuffing and excessive quoting. Search engines work best with a few
   key terms, not long comma-separated lists or multiple quoted phrases.
+- Match source type to the question category:
+  - Cost/price → forums, reviews, product comparisons, pricing pages
+  - Medical/health → clinical trial databases, medical journals
+  - Causal/policy → academic literature, think-tank reports
+  - Use site-specific searches (site:reddit.com, site:arxiv.org) when a
+    domain-specific source likely has the information
 
 For each fact you discover, record:
 - The ID of the fact this resolves — use the EXACT ID from the unknown facts
@@ -424,15 +439,30 @@ Rules:
 
 Search strategy:
 - Follow the tool call plan. It maps each search to specific facts.
-- Use concise queries: 3-6 words, focused noun phrases (e.g. "EPA AQI color scale history",
-  not "why did the EPA choose purple above red in the air quality index when it was added").
+- Use concise queries: 3-6 words, focused noun phrases.
+  Too long (doesn't work): "telescope mount manufacturing production volume
+    economies of scale market demand pricing"
+  Better: "equatorial mount production volume"
+  Better: "why are equatorial mounts expensive"
+  Better: "telescope mount cost comparison forum"
 - Do NOT rephrase a search you have already done. If a query returned poor results,
   try a different angle — a different subject, a source-specific search (site:epa.gov),
   or a broader/narrower term — not the same words in a different order.
+- When issuing multiple searches in one round, each should target a different
+  fact. Multiple variations of the same query waste budget; searches aimed at
+  different facts cover more ground. Multiple searches for the same fact are fine
+  when they use genuinely different strategies (different source types, phrasings,
+  or scope), but not mere restatements.
 - One well-chosen search per fact is better than several vague ones. Extract claims
   from the results you have before searching again.
 - Avoid keyword stuffing and excessive quoting. Search engines work best with a few
   key terms, not long comma-separated lists or multiple quoted phrases.
+- Match source type to the question category:
+  - Cost/price → forums, reviews, product comparisons, pricing pages
+  - Medical/health → clinical trial databases, medical journals
+  - Causal/policy → academic literature, think-tank reports
+  - Use site-specific searches (site:reddit.com, site:arxiv.org) when a
+    domain-specific source likely has the information
 
 Extraction discipline:
 - Before concluding a fact cannot be answered, carefully review ALL tool results for
@@ -490,7 +520,21 @@ Missing areas that need further investigation:
 
 Use the same tools available to you. Focus on the gaps identified above. Do not
 repeat queries that have already been answered — look for new information to
-fill the missing areas.
+fill the missing areas. Each search should target a different missing area, not
+the same gap restated multiple ways.
+
+When prior searches didn't find the information, try alternative strategies:
+- Natural-language phrasings: "why are equatorial mounts expensive" instead of
+  "equatorial mount manufacturing cost"
+- Indirect sources: forums, reviews, product comparisons, pricing pages, or
+  manufacturer specs — these often discuss specifics that encyclopedic sources omit
+- Terminology variation: colloquial terms, hobbyist jargon, or industry-specific
+  vocabulary the original query may have missed
+- Scope shifts: broaden to industry-level analysis ("telescope mount market
+  pricing") or narrow to a specific comparison ("Celestron vs Sky-Watcher mount
+  cost")
+- Site-specific searches: target domains known for the topic
+  (site:reddit.com/r/telescopes, site:cloudynights.com)
 
 ## research.system_retry_context
 
