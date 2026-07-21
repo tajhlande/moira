@@ -7,6 +7,7 @@ import {
   NInput,
   NSelect,
   NSwitch,
+  NIcon,
   NCard,
   NModal,
   NForm,
@@ -23,6 +24,8 @@ import {
   IconPlus,
   IconTrash,
   IconEdit,
+  IconBolt,
+  IconBoltOff,
 } from "@tabler/icons-vue";
 import type {
   InferenceProvider,
@@ -378,13 +381,22 @@ const providerTypeOptions = [
               />
             </div>
             <div class="tool-calling-toggle">
-              <NText depth="3" class="tool-calling-label">Tool Calling</NText>
+              <NText depth="3" class="tool-calling-label"
+                >Native Tool Calling</NText
+              >
               <NSwitch
                 :value="intelligenceToolCalling"
                 size="small"
                 :disabled="!assignments.intelligence.model"
                 @update:value="toggleIntelligenceToolCalling"
-              />
+              >
+                <template #checked-icon>
+                  <NIcon :component="IconBolt" :size="14" />
+                </template>
+                <template #unchecked-icon>
+                  <NIcon :component="IconBoltOff" :size="14" />
+                </template>
+              </NSwitch>
             </div>
           </div>
 

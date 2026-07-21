@@ -1,11 +1,21 @@
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
-import { NPopover, NInput, NText, NButton, NScrollbar, NSpin } from "naive-ui";
+import {
+  NPopover,
+  NInput,
+  NText,
+  NButton,
+  NScrollbar,
+  NSpin,
+  NSwitch,
+  NIcon,
+} from "naive-ui";
 import {
   IconArrowBackUp,
   IconCircleCheck,
   IconBolt,
   IconBoltOff,
+  IconInfoCircle,
 } from "@tabler/icons-vue";
 import {
   api,
@@ -170,25 +180,28 @@ async function selectModel(providerSlug: string, modelId: string) {
   }
 }
 
-async function toggleNativeToolCalling() {
-  const newVal = !nativeToolCalling.value;
-  saving.value = true;
+async function toggleNativeToolCalling(value: boolean) {
+  // Note: we intentionally do NOT set saving=true here. The saving flag
+  // triggers a v-if/v-else swap (NSpin ↔ NScrollbar) that destroys and
+  // recreates the switch mid-animation, causing a visual blink. The toggle
+  // is a lightweight capability update — the switch's :value binding handles
+  // optimistic update / revert naturally.
   try {
     await api.setModelCapability(
       currentEndpoint.value,
       currentModel.value,
-      newVal,
+      value,
     );
-    nativeToolCalling.value = newVal;
+    nativeToolCalling.value = value;
     // Update the models list entry so the list below stays in sync
     const m = models.value.find(
       (m) =>
         m.provider === currentEndpoint.value && m.id === currentModel.value,
     );
-    if (m) m.native_tool_calling = newVal;
+    if (m) m.native_tool_calling = value;
     emit("changed");
-  } finally {
-    saving.value = false;
+  } catch {
+    // On failure, nativeToolCalling is unchanged — the switch reverts.
   }
 }
 
@@ -251,18 +264,32 @@ watch(
           <div class="group-header">{{ currentProviderName }}</div>
           <div class="model-option active current-selection">
             <span class="model-id">{{ currentModel }}</span>
-            <button
-              class="capability-toggle"
-              :title="
-                nativeToolCalling
-                  ? 'Native tool calling — click to disable'
-                  : 'Emulated tool calling — click to enable native'
-              "
-              @click.stop="toggleNativeToolCalling"
-            >
-              <IconBolt v-if="nativeToolCalling" :size="14" />
-              <IconBoltOff v-else :size="14" />
-            </button>
+            <div class="toggle-group">
+              <NPopover trigger="hover" placement="top" :width="260">
+                <template #trigger>
+                  <IconInfoCircle :size="14" class="info-icon" />
+                </template>
+                <div class="toggle-help">
+                  Choose between native
+                  <IconBolt :size="14" class="help-icon-native" />
+                  and emulated
+                  <IconBoltOff :size="14" class="help-icon-emulated" />
+                  tool calling
+                </div>
+              </NPopover>
+              <NSwitch
+                :value="nativeToolCalling"
+                size="small"
+                @update:value="toggleNativeToolCalling"
+              >
+                <template #checked-icon>
+                  <NIcon :component="IconBolt" :size="14" />
+                </template>
+                <template #unchecked-icon>
+                  <NIcon :component="IconBoltOff" :size="14" />
+                </template>
+              </NSwitch>
+            </div>
           </div>
           <div class="section-divider" />
         </template>
@@ -381,20 +408,31 @@ watch(
   margin: 6px 0;
 }
 
-.capability-toggle {
+.toggle-group {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  padding: 2px;
-  border-radius: 4px;
-  color: var(--n-primary-color, #18a058);
+  gap: 4px;
   flex-shrink: 0;
 }
 
-.capability-toggle:hover {
-  background: var(--n-color-hover, rgba(0, 0, 0, 0.06));
+.info-icon {
+  flex-shrink: 0;
+  color: var(--n-text-color-disabled, #999);
+  cursor: help;
+}
+
+.toggle-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.help-icon-native {
+  color: var(--n-primary-color, #18a058);
+}
+
+.help-icon-emulated {
+  color: var(--n-text-color-3, #999);
 }
 </style>
