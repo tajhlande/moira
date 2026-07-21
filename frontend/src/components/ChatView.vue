@@ -23,7 +23,6 @@ const dialog = useDialog();
 const inputText = ref("");
 const showSettings = ref(false);
 const messagesScrollbar = ref<InstanceType<typeof NScrollbar> | null>(null);
-const scrollContent = ref<HTMLElement | null>(null);
 
 // Sync store state with the current route.
 // - /conversation/new → startNewChat()
@@ -57,7 +56,8 @@ watch(
   },
 );
 
-// Track conversation switches so we can scroll to the report after data loads.
+// Track conversation switches to suppress streaming auto-scroll during
+// the initial data load.
 const justSwitchedConversation = ref(false);
 
 watch(
@@ -67,31 +67,20 @@ watch(
   },
 );
 
-// On conversation switch: scroll to the top of the latest report.
-// Uses a separate watcher from streaming auto-scroll so the two don't
-// interfere.  The flag is cleared inside nextTick (not synchronously),
-// so the streaming watcher below sees it as true and skips during the
-// same flush cycle.
+// Clear the flag once messages are loaded for the new conversation so
+// the streaming auto-scroll watcher below resumes normal operation.
 watch(
   () => store.messages,
   () => {
     if (!justSwitchedConversation.value) return;
     nextTick(() => {
       justSwitchedConversation.value = false;
-      const reports =
-        scrollContent.value?.querySelectorAll<HTMLElement>(".report-panel");
-      if (reports && reports.length > 0) {
-        reports[reports.length - 1]?.scrollIntoView({
-          block: "start",
-          behavior: "smooth",
-        });
-      }
     });
   },
 );
 
 // Auto-scroll during streaming as new steps/content arrive.
-// Skips during conversation switch (flag still true in same flush cycle).
+// Skips the first update after a conversation switch.
 watch(
   () => [store.activeRun?.execution_steps?.length, store.activeRun?.report],
   () => {
@@ -150,7 +139,7 @@ function confirmRerun(msgId: number) {
     </div>
 
     <NScrollbar ref="messagesScrollbar" class="messages-area">
-      <div ref="scrollContent">
+      <div>
         <template v-for="(msg, i) in store.messages" :key="i">
           <!-- Message bubble -->
           <div :class="['message', msg.role]">
