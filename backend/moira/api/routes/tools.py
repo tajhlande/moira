@@ -164,6 +164,7 @@ async def update_tool(name: str, body: dict[str, Any]):
             "enabled",
             "is_default",
             "config",
+            "description",
             "invocation_cost",
             "call_limit_per_run",
             "call_limit_per_step",
