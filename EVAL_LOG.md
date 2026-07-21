@@ -63,3 +63,18 @@ Scores are recorded manually via `moira_eval.log`.
 
 - Agent model: z-ai/glm-5.2
 - Note: Completed most improvements from fact-extraction-and-claim-quality.md . 
+
+## 2026-07-21 batch (commit 616cad46, main)
+
+| Question                   | Rubric  | Score | web_search | Status |
+|----------------------------|---------|-------|------------|--------|
+| flaming-hot-cheetos        | general | 17/25 | 10         | PASS   |
+| future-nostalgia           | general | 17/25 | 10         | PASS   |
+| jazz-trumpeters            | general | 17/25 | 10         | FAIL   |
+| telescope-mount-cost       | general | 17/25 | 10         | FAIL   |
+| trade-policy-manufacturing | general | 16/25 | 10         | FAIL   |
+| tyranitar-ou               | pokemon | 11/16 | 10         | FAIL   |
+| water-blood-pressure       | general | 11/25 | 10         | FAIL   |
+
+- Agent model: z-ai/glm-5.2
+- Note: Fixed url_content passing to research step to send 15000 chars, not 500
