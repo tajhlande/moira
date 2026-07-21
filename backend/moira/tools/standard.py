@@ -9,6 +9,7 @@ catalog but cannot be executed."""
 from moira.tools.base import ToolDefinition
 from moira.tools.builtin.calculator import CalculatorTool
 from moira.tools.builtin.date_time import DateTimeTool
+from moira.tools.builtin.recall_source import RecallSourceTool
 from moira.tools.builtin.url_content import UrlContentTool
 from moira.tools.builtin.web_search import WebSearchTool
 
@@ -50,6 +51,12 @@ STANDARD_TOOLS: list[ToolDefinition] = [
     ),
     UrlContentTool.make_definition(
         invocation_cost=3.0, call_limit_per_run=15, call_limit_per_step=8
+    ),
+    # recall_source is free — it reads existing citation content from
+    # workflow state. Call limits prevent context bloat. The research loop
+    # intercepts these calls and synthesizes results from in-scope citations.
+    RecallSourceTool.make_definition(
+        invocation_cost=0.0, call_limit_per_run=10, call_limit_per_step=5
     ),
     CalculatorTool.make_definition(invocation_cost=0.1),
 ]

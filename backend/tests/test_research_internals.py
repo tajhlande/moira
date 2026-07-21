@@ -1270,3 +1270,116 @@ class TestProcessExecutionResultsSyntheticCost:
         )
         assert budget_after == budget_before - 5.0
         assert total_cost == 5.0
+
+
+class TestSynthesizeCitationTitle:
+    """Tests for _synthesize_citation_title — generic title fallback for
+    tools that don't provide structured metadata (calculator, date_time,
+    etc.)."""
+
+    def test_no_args_uses_tool_name(self):
+        from moira.workflow.nodes.research import _synthesize_citation_title
+
+        assert _synthesize_citation_title("date_time", {}) == "date_time"
+
+    def test_single_arg(self):
+        from moira.workflow.nodes.research import _synthesize_citation_title
+
+        title = _synthesize_citation_title("calculator", {"expression": "2+2"})
+        assert "calculator" in title
+        assert "expression=2+2" in title
+
+    def test_multiple_args(self):
+        from moira.workflow.nodes.research import _synthesize_citation_title
+
+        title = _synthesize_citation_title("convert", {"from": "USD", "to": "EUR"})
+        assert "from=USD" in title
+        assert "to=EUR" in title
+
+    def test_filters_sensitive_args(self):
+        from moira.workflow.nodes.research import _synthesize_citation_title
+
+        title = _synthesize_citation_title(
+            "data_fetch",
+            {"api_key": "SECRET", "query": "weather"},
+        )
+        assert "SECRET" not in title
+        assert "api_key" not in title
+        assert "query=weather" in title
+
+    def test_truncates_long_arg_values(self):
+        from moira.workflow.nodes.research import _synthesize_citation_title
+
+        long_val = "x" * 200
+        title = _synthesize_citation_title("search", {"q": long_val})
+        assert len(title) < 200  # truncated
+        assert "x" in title  # still present, just truncated
+
+
+class TestPathBTitleSynthesis:
+    """Tests that _process_execution_results Path B creates citations with
+    synthesized titles for tools without structured metadata."""
+
+    def test_calculator_citation_has_title(self):
+        """A calculator result (no metadata["results"]) must produce a
+        citation with a synthesized title like 'calculator(expression=2+2)'."""
+        from moira.workflow.nodes.research import _process_execution_results
+
+        call = ToolCall(id="tc1", name="calculator", arguments={"expression": "2+2"})
+        result = ToolResult(
+            tool_name="calculator",
+            output="4",
+            success=True,
+        )
+        citations: list[Citation] = []
+        facts: list[Fact] = []
+        tool_plan: list = []
+        tool_results_log: list[dict] = []
+
+        summaries, _, _ = _process_execution_results(
+            [result],
+            [call],
+            lambda _event: None,
+            citations,
+            {},
+            facts,
+            tool_plan,
+            tool_results_log,
+            {},
+            {"calculator": 0.1},
+            100.0,
+            0.0,
+        )
+
+        assert len(citations) == 1
+        assert citations[0]["title"] == "calculator(expression=2+2)"
+
+    def test_no_args_tool_gets_bare_name_title(self):
+        """A tool with no arguments gets just the tool name as title."""
+        from moira.workflow.nodes.research import _process_execution_results
+
+        call = ToolCall(id="tc1", name="date_time", arguments={})
+        result = ToolResult(
+            tool_name="date_time",
+            output="2024-01-01T00:00:00Z",
+            success=True,
+        )
+        citations: list[Citation] = []
+
+        _process_execution_results(
+            [result],
+            [call],
+            lambda _event: None,
+            citations,
+            {},
+            [],
+            [],
+            [],
+            {},
+            {},
+            100.0,
+            0.0,
+        )
+
+        assert len(citations) == 1
+        assert citations[0]["title"] == "date_time"

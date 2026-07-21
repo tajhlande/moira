@@ -12,6 +12,29 @@ logger = logging.getLogger(__name__)
 
 _MAX_OUTPUT_CHARS = 10000
 
+# Citation snippet/content limits — must match research.py's
+# _SNIPPET_MAX_LENGTH and _CITATION_CONTENT_LIMIT so that citations
+# created via Path A (metadata["results"]) store the same amount of
+# source text as Path B citations.
+_SNIPPET_LIMIT = 500
+_CONTENT_LIMIT = 5000
+
+# Argument keys that should never appear in derived citation titles.
+_SENSITIVE_ARG_KEYS = frozenset(
+    {
+        "apikey",
+        "api_key",
+        "key",
+        "token",
+        "auth",
+        "authorization",
+        "secret",
+        "password",
+    }
+)
+
+_MAX_ARG_VALUE_LEN = 50
+
 
 def _truncate_json_value(
     obj: Any,
@@ -96,6 +119,10 @@ class RESTTool(BaseTool):
             # Copy so _resolve_path's pop() doesn't mutate the caller's
             # dict (research.py reuses it for the tool_result event).
             args = dict(args)
+            # Derive title before _resolve_path consumes path params —
+            # the path param (e.g. id=rock) is often the most identifying
+            # part of the call and should appear in the citation title.
+            title = self._derive_title(args)
             config = self.definition.config
             method = (config.get("method") or "GET").upper()
             base_url = config.get("base_url", "")
@@ -126,11 +153,24 @@ class RESTTool(BaseTool):
                     output = _serialize_json_truncated(resp.json())
                 except Exception:
                     output = resp.text[:_MAX_OUTPUT_CHARS]
+                # Surface the resolved URL and derived title via structured
+                # metadata so _process_execution_results creates a citation
+                # with url + title (Path A), not a bare Path B citation.
                 return ToolResult(
                     tool_name=self.name,
                     output=output,
                     success=True,
                     duration_ms=elapsed_ms,
+                    metadata={
+                        "results": [
+                            {
+                                "url": url,
+                                "title": title,
+                                "snippet": output[:_SNIPPET_LIMIT],
+                                "content": output[:_CONTENT_LIMIT],
+                            }
+                        ]
+                    },
                 )
         except Exception as e:
             elapsed_ms = int((time.monotonic() - start) * 1000)
@@ -141,7 +181,22 @@ class RESTTool(BaseTool):
                 success=False,
                 duration_ms=elapsed_ms,
                 error=str(e),
+                metadata={"results": []},
             )
+
+    def _derive_title(self, args: dict[str, Any]) -> str:
+        """Build a human-readable title from the tool name and call arguments.
+
+        Filters sensitive parameters (API keys, tokens) and truncates long
+        values. Used as the citation title so the retry context's
+        "Sources already consulted" section shows a meaningful label
+        instead of a blank line.
+        """
+        safe_args = {k: v for k, v in args.items() if k.lower() not in _SENSITIVE_ARG_KEYS}
+        if safe_args:
+            parts = [f"{k}={str(v)[:_MAX_ARG_VALUE_LEN]}" for k, v in safe_args.items()]
+            return f"{self.name}({', '.join(parts)})"
+        return self.name
 
     def _resolve_path(self, url: str, args: dict[str, Any], config: dict[str, Any]) -> str:
         """Substitute path parameters like {city} with actual values from args.

@@ -16,6 +16,7 @@ usage() {
     echo "  build           Build frontend for production"
     echo "  prod            Build frontend + start backend serving everything"
     echo "  eval            Run the evaluation harness (args passed to moira_eval.run)"
+    echo "  eval:score      Score a single run: ./run.sh eval:score <run-id> [question-id]"
     echo "  eval:invoke     Trigger workflow runs without the UI (moira_eval.invoke)"
     echo "  eval:batch      Batch-evaluate all benchmark questions (moira_eval.batch)"
     echo "  eval:log        Log results to EVAL_LOG.md (moira_eval.log)"
@@ -114,6 +115,43 @@ cmd_eval() {
     uv run --project "$REPO_ROOT/backend" --env-file "$REPO_ROOT/.env-eval" python -m moira_eval.run "${@:2}"
 }
 
+cmd_eval_score() {
+    local first_arg="${2:-}"
+
+    if [ -z "$first_arg" ]; then
+        echo "Usage: ./run.sh eval:score <run-id> [question-id]"
+        echo "       ./run.sh eval:score --run-id <id> [--question-id <qid>]"
+        echo ""
+        echo "Scores a single workflow run against the judge."
+        echo ""
+        echo "Arguments:"
+        echo "  run-id       Workflow run ID to score (positional or --run-id)"
+        echo "  question-id  Benchmark question ID (e.g., tyranitar-ou)"
+        echo "               If omitted, uses the general rubric (ad hoc mode)."
+        echo ""
+        echo "Examples:"
+        echo "  ./run.sh eval:score 92d83d1a-... tyranitar-ou"
+        echo "  ./run.sh eval:score --run-id 92d83d1a-... --question-id tyranitar-ou"
+        exit 1
+    fi
+
+    local args=(--db "$DATA_DIR/moira.db")
+
+    if [[ "$first_arg" == --* ]]; then
+        # Flag style: pass all args through
+        args+=("${@:2}")
+    else
+        # Positional style: <run-id> [question-id]
+        args+=(--run-id "$first_arg")
+        if [ -n "${3:-}" ]; then
+            args+=(--question-id "$3")
+        fi
+    fi
+
+    uv run --project "$REPO_ROOT/backend" --env-file "$REPO_ROOT/.env-eval" \
+        python -m moira_eval.run "${args[@]}"
+}
+
 cmd_eval_invoke() {
     uv run --project "$REPO_ROOT/backend" --env-file "$REPO_ROOT/.env-eval" python -m moira_eval.invoke "${@:2}"
 }
@@ -187,6 +225,7 @@ case "${1:-}" in
     build)           cmd_build ;;
     prod)            cmd_prod ;;
     eval)            cmd_eval "$@" ;;
+    eval:score)      cmd_eval_score "$@" ;;
     eval:invoke)     cmd_eval_invoke "$@" ;;
     eval:batch)      cmd_eval_batch "$@" ;;
     eval:log)        cmd_eval_log "$@" ;;

@@ -204,7 +204,7 @@ wasting budget on a call unlikely to return useful results.
 ## planning.system_retry_context
 
 Context from the previous research pass — use this to plan queries that
-fill the identified gaps without re-searching what is already known.
+fill the identified gaps.
 
 Previously established facts (ID | subject | claim | citations):
 {established_facts}
@@ -215,9 +215,15 @@ Conclusions already drawn (ID | conclusion | supporting facts | status):
 Sources already consulted (citation ID | title | URL):
 {prior_citations}
 
-Do not plan tool calls that would re-discover information already listed
-above. Target the missing areas with new queries and potentially different
-tools.
+The sources above may contain information that was not fully extracted in
+the first pass — their full content is available via the `recall_source`
+tool. Before planning new searches, consider whether existing sources
+contain additional facts that address the missing areas. Plan
+`recall_source` calls for citations likely to hold relevant unextracted
+data, alongside new searches for genuinely missing information.
+
+Do not plan url_content calls for URLs already listed above — use
+`recall_source` to re-read their content instead.
 
 ## planning.system_prior_report
 
@@ -538,8 +544,8 @@ When prior searches didn't find the information, try alternative strategies:
 
 ## research.system_retry_context
 
-Context from the previous research pass — use this to avoid re-discovering
-information that has already been established and to focus on the gaps.
+Context from the previous research pass — use this to focus on the gaps
+in the research.
 
 Previously established facts (ID | subject | claim | citations):
 {established_facts}
@@ -550,8 +556,14 @@ Conclusions already drawn (ID | conclusion | supporting facts | status):
 Sources already consulted (citation ID | title | URL):
 {prior_citations}
 
-Do not re-research information that has already been established. Focus your
-tool calls on the missing areas identified in the review.
+The sources above may contain information that was not fully extracted in
+the first pass. Use `recall_source` with a citation ID to re-read the full
+stored content of any source. Extract additional facts from existing
+sources before searching for new information.
+
+Do not re-fetch URLs that have already been consulted (listed above) — use
+`recall_source` instead. Focus new searches on genuinely missing
+information identified in the review.
 
 ## research.fact_extraction.system
 

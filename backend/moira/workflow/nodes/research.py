@@ -58,6 +58,10 @@ DEFAULT_MAX_PARSE_RETRIES = 2
 # module to keep _helpers.py dependency-free and avoid a circular import.
 _URL_CONTENT_TOOL_NAME = "url_content"
 
+# recall_source is intercepted in the research loop and never reaches the
+# executor. Defined here for the same dependency-isolation reason as above.
+_RECALL_SOURCE_TOOL_NAME = "recall_source"
+
 _DISPLAY_OUTPUT_LIMIT = 2000
 
 # Cap for Citation.content — the source text stored for downstream
@@ -440,6 +444,59 @@ def _build_synthetic_url_result(
     )
 
 
+def _build_recall_source_result(call: ToolCall, citations: list[Citation]) -> ToolResult:
+    """Synthesize a ToolResult for recall_source from in-scope citations.
+
+    Returns the full stored content (snippets + page content up to
+    ``_CITATION_CONTENT_LIMIT``) for the requested citation ID. If the ID
+    is not found, lists available citation IDs so the model can correct
+    itself.
+
+    Always marked ``metadata["synthetic"] = True`` so
+    :func:`_process_execution_results` skips cost charging and citation
+    creation — the content comes from an existing citation, not a new fetch.
+    """
+    citation_id = call.arguments.get("citation_id", "")
+
+    for c in citations:
+        if c["id"] == citation_id:
+            parts = [f"Source: {citation_id}"]
+            if c.get("title"):
+                parts.append(f"Title: {c['title']}")
+            if c.get("url"):
+                parts.append(f"URL: {c['url']}")
+
+            snippets = c.get("snippets", [])
+            if snippets:
+                parts.append("\nSearch result snippets:")
+                for s in snippets:
+                    parts.append(f"  - {s}")
+            elif c.get("excerpt"):
+                parts.append(f"\nExcerpt: {c['excerpt']}")
+
+            content = c.get("content", "")
+            if content and content.strip():
+                parts.append(f"\nPage content:\n{content}")
+
+            return ToolResult(
+                tool_name=_RECALL_SOURCE_TOOL_NAME,
+                output="\n".join(parts),
+                success=True,
+                duration_ms=0,
+                metadata={"synthetic": True},
+            )
+
+    # Not found — list available IDs to help the model
+    available = ", ".join(c["id"] for c in citations) if citations else "(none)"
+    return ToolResult(
+        tool_name=_RECALL_SOURCE_TOOL_NAME,
+        output=(f"Citation '{citation_id}' not found. Available citations: {available}"),
+        success=False,
+        duration_ms=0,
+        metadata={"synthetic": True},
+    )
+
+
 async def _execute_with_url_dedup(
     valid_calls: list[ToolCall],
     fetched_urls: dict[str, dict[str, Any]],
@@ -492,6 +549,43 @@ async def _execute_with_url_dedup(
     for result, (call, _info) in zip(synthetic_results, synthetics):
         result_by_call_id[call.id] = result
     return [result_by_call_id[call.id] for call in valid_calls]
+
+
+async def _execute_tools(
+    valid_calls: list[ToolCall],
+    fetched_urls: dict[str, dict[str, Any]],
+    executor: ToolExecutor,
+    citations: list[Citation],
+    call_counts: dict[str, int],
+) -> list[ToolResult]:
+    """Execute tool calls with recall_source interception and url_content dedup.
+
+    Partitions ``recall_source`` calls out before they reach the executor —
+    these are synthesized from in-scope citations (free, no HTTP fetch).
+    Remaining calls go through :func:`_execute_with_url_dedup` which handles
+    url_content URL dedup and real execution for all other tools.
+
+    Returns results in the same order as ``valid_calls``.
+    """
+    # Partition out recall_source calls (always synthetic — never executed)
+    recall_calls = [c for c in valid_calls if c.name == _RECALL_SOURCE_TOOL_NAME]
+    non_recall_calls = [c for c in valid_calls if c.name != _RECALL_SOURCE_TOOL_NAME]
+
+    # Execute non-recall calls through url_content dedup + executor
+    if non_recall_calls:
+        results = await _execute_with_url_dedup(
+            non_recall_calls, fetched_urls, executor, citations, call_counts
+        )
+        results_by_id = {c.id: r for c, r in zip(non_recall_calls, results)}
+    else:
+        results_by_id = {}
+
+    # Synthesize recall_source results from in-scope citations
+    for call in recall_calls:
+        results_by_id[call.id] = _build_recall_source_result(call, citations)
+
+    # Reassemble in original valid_calls order
+    return [results_by_id[c.id] for c in valid_calls]
 
 
 def _update_fetched_urls(
@@ -565,6 +659,24 @@ def _process_execution_results(
             }
         )
 
+        # recall_source returns content from existing citations — don't
+        # create new citations or charge budget. The synthetic flag also
+        # prevents cost charging below, but we short-circuit here to skip
+        # the structured/unstructured citation creation branches entirely.
+        if name == _RECALL_SOURCE_TOOL_NAME:
+            tool_summary_parts.append(result.output)
+            tool_results_log.append(
+                {
+                    "tool": result.tool_name,
+                    "args": args,
+                    "output": result.output[:_SNIPPET_MAX_LENGTH] if result.output else "",
+                    "duration_ms": result.duration_ms,
+                    "success": result.success,
+                    "metadata": result.metadata,
+                }
+            )
+            continue
+
         # Tools that provide structured metadata (web_search, url_content)
         # always carry a "results" key — even when empty.  This distinguishes
         # "search returned 0 hits" (skip citation creation) from "tool has
@@ -600,10 +712,12 @@ def _process_execution_results(
                 )
         else:
             cit_id = next_id("cit", citations)
+            synth_title = _synthesize_citation_title(name, args)
             citations.append(
                 Citation(
                     id=cit_id,
                     source=result.tool_name,
+                    title=synth_title,
                     excerpt=result.output[:_SNIPPET_MAX_LENGTH] if result.output else "",
                     content=result.output[:_CITATION_CONTENT_LIMIT] if result.output else "",
                 )
@@ -771,6 +885,36 @@ def _try_merge_snippets(a: str, b: str, min_words: int = 3) -> str | None:
             if [w.lower() for w in first[-k:]] == [w.lower() for w in second[:k]]:
                 return " ".join(first + second[k:])
     return None
+
+
+# Argument keys excluded from synthesized citation titles (security).
+_TITLE_SENSITIVE_KEYS = frozenset(
+    {
+        "apikey",
+        "api_key",
+        "key",
+        "token",
+        "auth",
+        "authorization",
+        "secret",
+        "password",
+    }
+)
+_TITLE_MAX_ARG_LEN = 50
+
+
+def _synthesize_citation_title(tool_name: str, args: dict[str, Any]) -> str:
+    """Build a human-readable title from tool name and call arguments.
+
+    Generic fallback for tools that don't provide structured metadata
+    (calculator, date_time, etc.). Ensures every citation has a label
+    for the retry context's "Sources already consulted" section.
+    """
+    safe_args = {k: v for k, v in args.items() if k.lower() not in _TITLE_SENSITIVE_KEYS}
+    if safe_args:
+        parts = [f"{k}={str(v)[:_TITLE_MAX_ARG_LEN]}" for k, v in safe_args.items()]
+        return f"{tool_name}({', '.join(parts)})"
+    return tool_name
 
 
 def _find_or_merge_citation(
@@ -1052,7 +1196,7 @@ async def _run_native_tool_loop(
         had_valid_calls = True
 
         try:
-            results = await _execute_with_url_dedup(
+            results = await _execute_tools(
                 valid_calls, fetched_urls, executor, citations, call_counts
             )
         except Exception as e:
@@ -1290,9 +1434,9 @@ async def _run_text_tool_loop(
 
         had_valid_calls = True
 
-        # Execute tool calls (with url_content dedup)
+        # Execute tool calls (recall_source interception + url_content dedup)
         try:
-            results = await _execute_with_url_dedup(
+            results = await _execute_tools(
                 valid_calls, fetched_urls, executor, citations, call_counts
             )
         except Exception as e:

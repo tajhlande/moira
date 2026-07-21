@@ -1,6 +1,7 @@
 """Tests for the RESTTool module."""
 
 import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -336,3 +337,150 @@ class TestJsonTruncation:
         parsed = json.loads(result)
         assert parsed["damage_relations"] == damage_relations
         assert "more items" in parsed["pokemon"][-1]
+
+
+class TestRESTToolMetadata:
+    """Tests for structured metadata output (URL + title in results).
+
+    RESTTool must populate ``metadata["results"]`` so that
+    _process_execution_results creates citations with url + title via
+    Path A, not bare Path B citations with no URL or title.
+    """
+
+    @staticmethod
+    def _mock_response(json_data: dict) -> MagicMock:
+        """Create a mock httpx response that returns json_data."""
+        resp = MagicMock()
+        resp.json.return_value = json_data
+        resp.raise_for_status = MagicMock()
+        return resp
+
+    @staticmethod
+    def _mock_client(resp: MagicMock) -> AsyncMock:
+        """Create a mock AsyncClient whose request() returns resp."""
+        client = AsyncMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        client.request = AsyncMock(return_value=resp)
+        return client
+
+    @pytest.mark.asyncio
+    async def test_success_returns_url_and_title(self):
+        """A successful REST call surfaces the resolved URL and a derived
+        title in metadata["results"]."""
+        tool = _rest_tool(
+            {
+                "base_url": "https://pokeapi.co/api/v2",
+                "endpoint": "/type/{id}",
+                "method": "GET",
+                "parameters": [
+                    {"name": "id", "location": "path", "required": True},
+                ],
+            },
+            name="pokeapi__type_retrieve",
+        )
+        resp = self._mock_response({"name": "rock", "id": 6})
+        client = self._mock_client(resp)
+
+        with patch("moira.tools.rest_tool.httpx.AsyncClient", return_value=client):
+            result = await tool.execute({"id": "rock"})
+
+        assert result.success is True
+        results = result.metadata.get("results", [])
+        assert len(results) == 1
+        assert results[0]["url"] == "https://pokeapi.co/api/v2/type/rock"
+        assert "pokeapi__type_retrieve" in results[0]["title"]
+        assert "rock" in results[0]["title"]
+
+    @pytest.mark.asyncio
+    async def test_title_includes_path_param(self):
+        """The title must include the path param value, which is consumed
+        by _resolve_path before the title is used — so the title must be
+        derived before _resolve_path runs."""
+        tool = _rest_tool(
+            {
+                "base_url": "https://api.example.com",
+                "endpoint": "/pokemon/{name}/stats",
+                "method": "GET",
+                "parameters": [
+                    {"name": "name", "location": "path", "required": True},
+                ],
+            },
+            name="pokeapi__pokemon_stats",
+        )
+        resp = self._mock_response({"stats": []})
+        client = self._mock_client(resp)
+
+        with patch("moira.tools.rest_tool.httpx.AsyncClient", return_value=client):
+            result = await tool.execute({"name": "tyranitar"})
+
+        title = result.metadata["results"][0]["title"]
+        assert "tyranitar" in title
+
+    @pytest.mark.asyncio
+    async def test_title_filters_sensitive_args(self):
+        """API keys and tokens must not appear in the citation title."""
+        tool = _rest_tool(
+            {
+                "base_url": "https://api.example.com",
+                "endpoint": "/data",
+                "method": "GET",
+                "parameters": [],
+            },
+            name="data_fetch",
+        )
+        resp = self._mock_response({"data": "ok"})
+        client = self._mock_client(resp)
+
+        with patch("moira.tools.rest_tool.httpx.AsyncClient", return_value=client):
+            result = await tool.execute({"api_key": "SECRET123", "query": "test"})
+
+        title = result.metadata["results"][0]["title"]
+        assert "SECRET123" not in title
+        assert "api_key" not in title
+        assert "query=test" in title
+
+    @pytest.mark.asyncio
+    async def test_failure_returns_empty_results(self):
+        """A failed REST call returns metadata with empty results list,
+        matching web_search/url_content convention (no noise citation)."""
+        tool = _rest_tool(
+            {
+                "base_url": "http://nonexistent.example.invalid",
+                "endpoint": "/type/{id}",
+                "method": "GET",
+                "parameters": [
+                    {"name": "id", "location": "path", "required": True},
+                ],
+            },
+            name="pokeapi__type_retrieve",
+        )
+
+        result = await tool.execute({"id": "rock"})
+
+        assert result.success is False
+        assert result.metadata.get("results") == []
+
+    @pytest.mark.asyncio
+    async def test_snippet_and_content_populated(self):
+        """The metadata results include snippet and content for citation
+        creation via Path A."""
+        tool = _rest_tool(
+            {
+                "base_url": "https://api.example.com",
+                "endpoint": "/data",
+                "method": "GET",
+                "parameters": [],
+            },
+            name="data_fetch",
+        )
+        resp = self._mock_response({"result": "value", "count": 42})
+        client = self._mock_client(resp)
+
+        with patch("moira.tools.rest_tool.httpx.AsyncClient", return_value=client):
+            result = await tool.execute({})
+
+        entry = result.metadata["results"][0]
+        assert entry["snippet"]
+        assert entry["content"]
+        assert "result" in entry["content"]
