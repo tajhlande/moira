@@ -201,6 +201,20 @@ function fmt(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
   return String(n);
 }
+
+function formatTimestamp(iso: string | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return (
+    d.toLocaleDateString([], {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }) +
+    ", " +
+    d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+  );
+}
 </script>
 
 <template>
@@ -210,7 +224,8 @@ function fmt(n: number): string {
       class="steps-and-resume-wrapper"
     >
       <div class="initial-budget" v-if="run.budget_limit">
-        Budget: {{ run.budget_limit }}
+        <span class="run-timestamp">{{ formatTimestamp(run.started_at) }}</span>
+        <span>Budget: {{ run.budget_limit }}</span>
       </div>
       <div class="steps-container">
         <div v-for="row in timelineRows" :key="row.key">
