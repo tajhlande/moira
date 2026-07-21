@@ -42,6 +42,24 @@ const hasRunningStep = computed(() =>
   props.run.execution_steps.some((s) => s.status === "running"),
 );
 
+// Live total elapsed: always computed from step durations — sum of
+// completed step elapsed_ms plus the live ticking elapsed of any running
+// step. This is consistent across running and completed runs, and
+// correctly handles pause/resume (stopped steps retain their elapsed_ms,
+// pause gaps are excluded). The backend's total_elapsed_ms is not used
+// because it resets on resume, undercounting resumed runs.
+const totalElapsedMs = computed(() => {
+  let total = 0;
+  for (const step of props.run.execution_steps) {
+    if (step.status === "running" && step.started_at) {
+      total += nowMs.value - new Date(step.started_at).getTime();
+    } else if (step.elapsed_ms != null) {
+      total += step.elapsed_ms;
+    }
+  }
+  return total;
+});
+
 type TimelineRow =
   | { kind: "step"; key: string; step: ExecutionStep; stepIndex: number }
   | { kind: "boundary"; key: string; label: string };
@@ -341,8 +359,11 @@ function fmt(n: number): string {
       <CopyButton :text="run.id" title="Copy run ID" />
     </div>
 
-    <div v-if="run.total_elapsed_ms != null" class="total-elapsed">
-      Time: {{ formatElapsed(run.total_elapsed_ms) }}
+    <div
+      v-if="totalElapsedMs > 0 || run.execution_steps.length > 0"
+      class="total-elapsed"
+    >
+      Time: {{ formatElapsed(totalElapsedMs) }}
       <span v-if="(run.input_tokens ?? 0) > 0" class="token-stats">
         &middot; Tokens:
         {{ fmt(run.input_tokens ?? 0) }} in /
