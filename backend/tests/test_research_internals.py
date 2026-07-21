@@ -1383,3 +1383,198 @@ class TestPathBTitleSynthesis:
 
         assert len(citations) == 1
         assert citations[0]["title"] == "date_time"
+
+
+class TestPathAContentFeedback:
+    """Tests that _process_execution_results Path A feeds the full content
+    field (not just snippet) to the model for fetch tools.
+
+    This is the core information-flow fix: url_content returns the page body
+    in metadata["results"][0]["content"], but the model previously only saw
+    the 500-char snippet. Now any structured result with a "content" field
+    gets that content in the tool feedback, labeled "Content:" instead of
+    "Snippet:".
+    """
+
+    @staticmethod
+    def _run(results, calls):
+        """Helper: run _process_execution_results and return summaries."""
+        from moira.workflow.nodes.research import _process_execution_results
+
+        citations: list[Citation] = []
+        summaries, _, _ = _process_execution_results(
+            results,
+            calls,
+            lambda _event: None,
+            citations,
+            {},
+            [],
+            [],
+            [],
+            {},
+            {},
+            100.0,
+            0.0,
+        )
+        return summaries, citations
+
+    def test_url_content_shows_content_label(self):
+        """url_content result with a content field must produce a summary
+        labeled 'Content:' containing the full body text, not a 500-char
+        snippet."""
+        call = ToolCall(
+            id="tc1",
+            name="url_content",
+            arguments={"url": "https://example.com/article"},
+        )
+        full_body = "Body text " * 1000  # ~10k chars, well over snippet size
+        result = ToolResult(
+            tool_name="url_content",
+            output=full_body,
+            success=True,
+            metadata={
+                "results": [
+                    {
+                        "url": "https://example.com/article",
+                        "title": "The Article",
+                        "snippet": "Short snippet.",
+                        "content": full_body,
+                    }
+                ]
+            },
+        )
+
+        summaries, _ = self._run([result], [call])
+
+        assert len(summaries) == 1
+        assert "Content:" in summaries[0]
+        assert "Snippet:" not in summaries[0]
+        assert full_body in summaries[0]
+        assert "Short snippet." not in summaries[0].split("Content:")[1]
+
+    def test_web_search_shows_snippet_label(self):
+        """web_search results have no content field — must still use
+        'Snippet:' label with the snippet text (unchanged behavior)."""
+        call = ToolCall(
+            id="tc1",
+            name="web_search",
+            arguments={"query": "pokemon types"},
+        )
+        result = ToolResult(
+            tool_name="web_search",
+            output="search results",
+            success=True,
+            metadata={
+                "results": [
+                    {
+                        "title": "Pokemon Types",
+                        "url": "https://example.com/pokemon",
+                        "snippet": "Fire is super effective against Grass.",
+                    }
+                ]
+            },
+        )
+
+        summaries, _ = self._run([result], [call])
+
+        assert len(summaries) == 1
+        assert "Snippet:" in summaries[0]
+        assert "Content:" not in summaries[0]
+        assert "Fire is super effective against Grass." in summaries[0]
+
+    def test_synthetic_dedup_shows_content(self):
+        """A synthetic url_content dedup result (already-fetched URL)
+        carries content from the stored citation — the model must see that
+        content, not just the snippet."""
+        full_body = "Cached body " * 800
+        call = ToolCall(
+            id="tc1",
+            name="url_content",
+            arguments={"url": "https://example.com/cached"},
+        )
+        result = ToolResult(
+            tool_name="url_content",
+            output="URL already fetched in this session — see [cit001].",
+            success=True,
+            duration_ms=0,
+            metadata={
+                "results": [
+                    {
+                        "url": "https://example.com/cached",
+                        "title": "Cached Page",
+                        "snippet": "Cached snippet.",
+                        "content": full_body,
+                    }
+                ],
+                "synthetic": True,
+            },
+        )
+
+        summaries, _ = self._run([result], [call])
+
+        assert len(summaries) == 1
+        assert "Content:" in summaries[0]
+        assert full_body in summaries[0]
+
+    def test_rest_tool_shows_content_label(self):
+        """RESTTool results provide a content field — must use 'Content:'
+        label so the model sees the API response body."""
+        api_body = '{"type": "rock", "damage_relations": {"double_damage_to": ["fire"]}}'
+        call = ToolCall(
+            id="tc1",
+            name="pokeapi__type_retrieve",
+            arguments={"id": "rock"},
+        )
+        result = ToolResult(
+            tool_name="pokeapi__type_retrieve",
+            output=api_body,
+            success=True,
+            metadata={
+                "results": [
+                    {
+                        "url": "https://pokeapi.co/api/v2/type/rock",
+                        "title": "pokeapi type retrieve(id=rock)",
+                        "snippet": api_body[:500],
+                        "content": api_body,
+                    }
+                ]
+            },
+        )
+
+        summaries, _ = self._run([result], [call])
+
+        assert len(summaries) == 1
+        assert "Content:" in summaries[0]
+        assert "double_damage_to" in summaries[0]
+
+    def test_empty_content_falls_back_to_snippet(self):
+        """If content field is present but empty/falsy, fall back to
+        snippet with 'Snippet:' label. Prevents showing an empty body
+        when a fetch returned no content."""
+        call = ToolCall(
+            id="tc1",
+            name="url_content",
+            arguments={"url": "https://example.com/empty"},
+        )
+        result = ToolResult(
+            tool_name="url_content",
+            output="",
+            success=True,
+            metadata={
+                "results": [
+                    {
+                        "url": "https://example.com/empty",
+                        "title": "Empty Page",
+                        "snippet": "A short excerpt.",
+                        "content": "",
+                    }
+                ]
+            },
+        )
+
+        summaries, _ = self._run([result], [call])
+
+        assert len(summaries) == 1
+        assert "Snippet:" in summaries[0]
+        assert "Content:" not in summaries[0]
+        assert "A short excerpt." in summaries[0]

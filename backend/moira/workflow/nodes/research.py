@@ -67,7 +67,7 @@ _DISPLAY_OUTPUT_LIMIT = 2000
 # Cap for Citation.content — the source text stored for downstream
 # cross-referencing in review/evaluation.  Larger than excerpt (500) because
 # this is the substantive body, but bounded to avoid state-size bloat.
-_CITATION_CONTENT_LIMIT = 5000
+_CITATION_CONTENT_LIMIT = 10_000
 
 
 def _truncate_for_display(text: str | None, limit: int = _DISPLAY_OUTPUT_LIMIT) -> str:
@@ -695,11 +695,20 @@ def _process_execution_results(
                 )
                 status = "SUCCESS" if result.success else "FAILED"
                 recurring = "" if is_new else " (recurring source)"
+                # Fetch tools (url_content, RESTTool) provide a "content"
+                # field with the full retrieved body. Discovery tools
+                # (web_search) only provide "snippet". Feed the full
+                # content to the model when available — the whole point of
+                # a fetch tool is to get the body, so returning a snippet
+                # in response to a url_content call would discard exactly
+                # the data the model asked for.
+                body = sr.get("content") or sr.get("snippet", "")
+                label = "Content" if sr.get("content") else "Snippet"
                 tool_summary_parts.append(
                     f"[{cit_id}] Tool: {name}\nStatus: {status}{recurring}\n"
                     f"Title: {sr.get('title', '')}\n"
                     f"URL: {sr.get('url', '')}\n"
-                    f"Snippet: {sr.get('snippet', '')}"
+                    f"{label}: {body}"
                 )
             if not structured:
                 # Tool returned structured metadata but zero results (e.g.,
