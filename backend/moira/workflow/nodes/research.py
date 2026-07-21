@@ -67,7 +67,7 @@ _DISPLAY_OUTPUT_LIMIT = 2000
 # Cap for Citation.content — the source text stored for downstream
 # cross-referencing in review/evaluation.  Larger than excerpt (500) because
 # this is the substantive body, but bounded to avoid state-size bloat.
-_CITATION_CONTENT_LIMIT = 10_000
+_CITATION_CONTENT_LIMIT = 15_000
 
 
 def _truncate_for_display(text: str | None, limit: int = _DISPLAY_OUTPUT_LIMIT) -> str:
