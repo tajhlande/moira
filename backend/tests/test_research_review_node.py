@@ -688,3 +688,164 @@ class TestResearchReview:
         assert fact["status"] == "unknown"
         assert fact["claim"] == ""
         assert fact["citation_ids"] == []
+
+    # ----------------------------------------------------------------------
+    # Fact-status gate: conclusions citing non-verified facts are blocked
+    # from being marked "verified" by evaluation.
+    # ----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_fact_gate_blocks_conclusion_with_unverified_facts(
+        self, config, mock_writer, mock_model
+    ):
+        """A conclusion citing any non-verified fact gets fact_gate='blocked'.
+        Evaluation must not upgrade it to 'verified'."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {"fact_id": "f001", "result": "verified", "evidence": "Confirmed"},
+                    {"fact_id": "f002", "result": "unverified", "evidence": "Weak source"},
+                ],
+                "coverage_assessment": "Partial",
+                "missing_areas": [],
+                "route": "continue",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", claim="z", status="unverified"),
+            Fact(id="f002", subject="a", fact_needed="b", claim="c", status="unverified"),
+        ]
+        state["knowledge"]["conclusions"] = [
+            Conclusion(
+                id="c001",
+                conclusion="Mixed conclusion",
+                supporting_fact_ids=["f001", "f002"],
+                status="unverified",
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+        conclusions = result["knowledge"]["conclusions"]
+        assert conclusions[0].get("fact_gate") == "blocked"
+
+    @pytest.mark.asyncio
+    async def test_fact_gate_clear_for_all_verified_facts(self, config, mock_writer, mock_model):
+        """A conclusion citing only verified facts is NOT gated — evaluation
+        may verify it based on reasoning."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {"fact_id": "f001", "result": "verified", "evidence": "Confirmed"},
+                    {"fact_id": "f002", "result": "verified", "evidence": "Confirmed"},
+                ],
+                "coverage_assessment": "Complete",
+                "missing_areas": [],
+                "route": "continue",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", claim="z", status="unverified"),
+            Fact(id="f002", subject="a", fact_needed="b", claim="c", status="unverified"),
+        ]
+        state["knowledge"]["conclusions"] = [
+            Conclusion(
+                id="c001",
+                conclusion="Well-grounded conclusion",
+                supporting_fact_ids=["f001", "f002"],
+                status="unverified",
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+        conclusions = result["knowledge"]["conclusions"]
+        assert conclusions[0].get("fact_gate") != "blocked"
+
+    @pytest.mark.asyncio
+    async def test_fact_gate_skips_unsupported_conclusions(self, config, mock_writer, mock_model):
+        """Conclusions already marked 'unsupported' by the structural sanity
+        check are skipped by the fact-status gate — their verdict is terminal."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {"fact_id": "f001", "result": "verified", "evidence": "Confirmed"},
+                ],
+                "coverage_assessment": "ok",
+                "missing_areas": [],
+                "route": "continue",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", claim="z", status="unverified"),
+        ]
+        # Conclusion references non-existent fact f999 — structural check
+        # will mark it "unsupported" before the gate runs.
+        state["knowledge"]["conclusions"] = [
+            Conclusion(
+                id="c001",
+                conclusion="Bad conclusion",
+                supporting_fact_ids=["f999"],
+                status="unverified",
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+        conclusions = result["knowledge"]["conclusions"]
+        # Unsupported by structural check — gate should not touch it.
+        assert conclusions[0]["status"] == "unsupported"
+        assert "fact_gate" not in conclusions[0]
+
+    @pytest.mark.asyncio
+    async def test_fact_gate_all_unverified_facts(self, config, mock_writer, mock_model):
+        """When ALL supporting facts are unverified, the conclusion is gated.
+        This is the common first-pass scenario."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {"fact_id": "f001", "result": "unverified", "evidence": "No source"},
+                    {"fact_id": "f002", "result": "unverified", "evidence": "No source"},
+                ],
+                "coverage_assessment": "Missing",
+                "missing_areas": ["Everything"],
+                "route": "retry",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(id="f001", subject="x", fact_needed="y", claim="z", status="unverified"),
+            Fact(id="f002", subject="a", fact_needed="b", claim="c", status="unverified"),
+        ]
+        state["knowledge"]["conclusions"] = [
+            Conclusion(
+                id="c001",
+                conclusion="Conclusion from unverified facts",
+                supporting_fact_ids=["f001", "f002"],
+                status="unverified",
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+        conclusions = result["knowledge"]["conclusions"]
+        assert conclusions[0].get("fact_gate") == "blocked"

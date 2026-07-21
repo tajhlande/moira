@@ -64,6 +64,9 @@ class Conclusion(TypedDict):
     status: str  # "unverified" | "verified" | "contradicted" | "unsupported"
     reasoning: NotRequired[str]
     verification_note: NotRequired[str]
+    # Set by research_review: "blocked" when any supporting fact is not
+    # verified. Evaluation must not upgrade a blocked conclusion to "verified".
+    fact_gate: NotRequired[str]
 
 
 class ToolCallPlan(TypedDict):

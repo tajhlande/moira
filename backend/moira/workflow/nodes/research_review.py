@@ -282,6 +282,30 @@ async def research_review(state: ResearchState, config: RunnableConfig) -> dict:
             unsupported_count,
         )
 
+    # Fact-status gate: mark conclusions whose supporting facts are not all
+    # verified. Evaluation must not upgrade these to "verified" — a conclusion
+    # cannot be verified unless every fact it cites is verified. This is a
+    # mechanical check (no model judgment) that catches the common failure
+    # where the evaluator marks a conclusion "verified" while its supporting
+    # facts are still "unverified".
+    fact_status_map = {f["id"]: f.get("status", "unknown") for f in facts}
+    gated_count = 0
+    for conclusion in conclusions:
+        if conclusion.get("status") == "unsupported":
+            continue
+        supporting_ids = conclusion.get("supporting_fact_ids", [])
+        unverified_support = [
+            fid for fid in supporting_ids if fact_status_map.get(fid, "unknown") != "verified"
+        ]
+        if unverified_support:
+            conclusion["fact_gate"] = "blocked"
+            gated_count += 1
+    if gated_count:
+        logger.info(
+            "RESEARCH_REVIEW: %d conclusion(s) gated by unverified facts",
+            gated_count,
+        )
+
     outcome = ReviewOutcome(
         fact_results=parsed.get("fact_results", []),
         coverage_assessment=parsed.get("coverage_assessment", ""),

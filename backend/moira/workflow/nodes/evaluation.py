@@ -191,6 +191,11 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
     # sanity check — their verdict is terminal (no model tokens were spent on
     # them) and must not be overwritten by model output. The evaluator still
     # sees them in the prompt context to inform the holistic goal_met call.
+    #
+    # Fact-status gate: if research_review marked a conclusion with
+    # fact_gate="blocked" (supporting facts not all verified), the evaluator
+    # may not upgrade it to "verified". This enforces the invariant
+    # mechanically rather than relying on the model to notice fact statuses.
     for cr in parsed.get("conclusion_results", []):
         cid = cr.get("conclusion_id", "")
         result = cr.get("result") or cr.get("status") or "unverified"
@@ -198,6 +203,17 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
         for conclusion in conclusions:
             if conclusion["id"] == cid:
                 if conclusion.get("status") == "unsupported":
+                    break
+                if result == "verified" and conclusion.get("fact_gate") == "blocked":
+                    conclusion["status"] = "unverified"
+                    conclusion["verification_note"] = (
+                        "Cannot verify — supporting facts not yet verified."
+                    )
+                    logger.warning(
+                        "EVALUATION: fact-status gate blocked conclusion %s "
+                        "from 'verified' (unverified supporting facts)",
+                        cid,
+                    )
                     break
                 conclusion["status"] = result
                 if reason:
