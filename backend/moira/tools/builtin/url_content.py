@@ -30,7 +30,7 @@ _MAX_OUTPUT_LENGTH = 100_000
 # _CITATION_CONTENT_LIMIT (5000) in research.py — the tool provides the
 # data, the pipeline enforces its own limits.
 _METADATA_SNIPPET_LENGTH = 500
-_METADATA_CONTENT_LENGTH = 15_000
+_METADATA_CONTENT_LENGTH = 10_000
 
 
 class UrlContentTool(BaseTool):

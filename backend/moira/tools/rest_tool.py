@@ -17,7 +17,7 @@ _MAX_OUTPUT_CHARS = 10000
 # created via Path A (metadata["results"]) store the same amount of
 # source text as Path B citations.
 _SNIPPET_LIMIT = 500
-_CONTENT_LIMIT = 15_000
+_CONTENT_LIMIT = 10_000
 
 # Argument keys that should never appear in derived citation titles.
 _SENSITIVE_ARG_KEYS = frozenset(
