@@ -92,6 +92,8 @@ class EvaluationOutcome(TypedDict):
     goal_met: bool
     goal_assessment: str
     route: str  # "accept" | "retry"
+    verified_fact_count: int  # for progress-based retry cutoff
+    verified_conclusion_count: int  # for progress-based retry cutoff
 
 
 # ---------------------------------------------------------------------------

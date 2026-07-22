@@ -18,6 +18,8 @@ from moira.prompts import render_prompt
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
     _format_citation_content,
+    _format_prior_evaluations,
+    _format_prior_reviews,
     _now,
     _response_meta,
 )
@@ -119,6 +121,29 @@ async def research_review(state: ResearchState, config: RunnableConfig) -> dict:
         conclusions_context=_format_conclusions_for_context(conclusions),
         source_content=_format_citation_content(
             knowledge.get("citations", []), conclusions, facts
+        ),
+        prior_reviews=_format_prior_reviews(
+            knowledge.get("review_history", []),
+            instruction=(
+                "Prior review verdicts (your previous assessments of these "
+                "facts). Use these to maintain consistency. You may change a "
+                "verdict only if a more careful reading of existing sources "
+                "reveals information you missed, or if new citations have been "
+                "added since the prior review. Do not rubber-stamp a claim you "
+                "previously rejected without specific justification for why the "
+                "evidence now supports it."
+            ),
+        ),
+        prior_evaluations=_format_prior_evaluations(
+            knowledge.get("evaluation_history", []),
+            instruction=(
+                "Prior evaluation feedback (concerns from the conclusion "
+                "evaluator). The evaluation step flagged conclusions built on "
+                "some of these facts as unsupported or overclaimed. When "
+                "re-examining facts, check whether the claim needs to be "
+                "narrowed to match what the evidence actually establishes, "
+                "rather than verifying an overclaim."
+            ),
         ),
     )
 

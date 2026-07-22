@@ -21,6 +21,8 @@ from moira.prompts import render_prompt
 from moira.workflow.budget import can_execute, deduct_cost, get_node_cost
 from moira.workflow.nodes._helpers import (
     _format_citation_content,
+    _format_prior_evaluations,
+    _format_prior_reviews,
     _now,
     _response_meta,
 )
@@ -98,6 +100,26 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
         conclusions_with_supporting_facts=_format_conclusions_for_evaluation(conclusions),
         source_content=_format_citation_content(
             knowledge.get("citations", []), conclusions, facts
+        ),
+        prior_reviews=_format_prior_reviews(
+            knowledge.get("review_history", []),
+            instruction=(
+                "Prior review verdicts (fact verification from "
+                "research_review). These show how the reviewer assessed each "
+                "fact's evidence quality and whether cited sources support the "
+                "claims. Use this context when evaluating whether conclusions "
+                "are well-grounded."
+            ),
+        ),
+        prior_evaluations=_format_prior_evaluations(
+            knowledge.get("evaluation_history", []),
+            instruction=(
+                "Prior evaluation verdicts (your previous assessments of "
+                "these conclusions). Maintain consistency with your earlier "
+                "verdicts. You may change a result only if new evidence, new "
+                "conclusions, or new facts have been added since the prior "
+                "evaluation."
+            ),
         ),
     )
 
@@ -221,11 +243,39 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
                 break
 
     route = parsed.get("route", "accept")
+
+    # Compute verified counts for progress tracking. These are stored in
+    # the EvaluationOutcome so the next evaluation cycle can compare.
+    verified_fact_count = sum(1 for f in facts if f.get("status") == "verified")
+    verified_conclusion_count = sum(1 for c in conclusions if c.get("status") == "verified")
+
+    # Progress-based retry cutoff: if this is the 2nd+ evaluation and
+    # neither verified facts nor verified conclusions increased from
+    # the previous cycle, accept instead of retrying. More research
+    # cycles won't help if the model isn't finding new evidence.
+    existing_eval_history = knowledge.get("evaluation_history", [])
+    if evaluation_count >= 2 and route == "retry" and existing_eval_history:
+        prev = existing_eval_history[-1]
+        prev_facts = prev.get("verified_fact_count", 0)
+        prev_conclusions = prev.get("verified_conclusion_count", 0)
+        if verified_fact_count <= prev_facts and verified_conclusion_count <= prev_conclusions:
+            route = "accept"
+            logger.info(
+                "EVALUATION: overriding retry→accept (no progress: "
+                "facts %d→%d, conclusions %d→%d)",
+                prev_facts,
+                verified_fact_count,
+                prev_conclusions,
+                verified_conclusion_count,
+            )
+
     outcome = EvaluationOutcome(
         conclusion_results=parsed.get("conclusion_results", []),
         goal_met=parsed.get("goal_met", False),
         goal_assessment=parsed.get("goal_assessment", ""),
         route=route,
+        verified_fact_count=verified_fact_count,
+        verified_conclusion_count=verified_conclusion_count,
     )
 
     evaluation_history = list(knowledge.get("evaluation_history", []))

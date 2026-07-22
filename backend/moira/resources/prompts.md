@@ -780,6 +780,10 @@ Conclusions drawn from these facts (for context on what needs supporting):
 Source content (from cited sources — use this to cross-reference claims against what sources actually say):
 {source_content}
 
+{prior_reviews}
+
+{prior_evaluations}
+
 ---
 
 ## evaluation.system
@@ -855,6 +859,10 @@ Conclusions to evaluate (ID | conclusion | supporting fact IDs | reasoning | sta
 
 Source content (from cited sources — use this to cross-reference claims against what sources actually say):
 {source_content}
+
+{prior_reviews}
+
+{prior_evaluations}
 
 ---
 

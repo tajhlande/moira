@@ -459,3 +459,75 @@ def _format_prior_citations(citations: list) -> str:
     for c in citations:
         lines.append(f"{c['id']} | {c.get('title') or ''} | {c.get('url') or ''}")
     return "\n".join(lines)
+
+
+def _format_prior_reviews(review_history: list, *, instruction: str) -> str:
+    """Format prior research_review outcomes with an instructional header.
+
+    Returns empty string when *review_history* is empty, so the prompt
+    placeholder disappears entirely — no orphan header.
+
+    Each prior review is rendered as one compact line showing fact verdicts
+    and evidence notes, plus optional missing-areas line. The *instruction*
+    parameter provides node-specific guidance on what the model should do
+    with this information (different for research_review vs evaluation).
+    """
+    if not review_history:
+        return ""
+
+    lines = []
+    for i, review in enumerate(review_history, 1):
+        route = review.get("route", "?")
+        fact_parts = []
+        for fr in review.get("fact_results", []):
+            fid = fr.get("fact_id", "?")
+            result = fr.get("result", "?")
+            evidence = (fr.get("evidence") or "")[:80]
+            if evidence:
+                fact_parts.append(f"{fid}={result} ({evidence})")
+            else:
+                fact_parts.append(f"{fid}={result}")
+        facts_str = ", ".join(fact_parts)
+        lines.append(f"Review #{i} ({route}): {facts_str}")
+        missing = "; ".join(review.get("missing_areas", []))[:200]
+        if missing:
+            lines.append(f"  Missing: {missing}")
+
+    return f"{instruction}\n\n" + "\n".join(lines)
+
+
+def _format_prior_evaluations(evaluation_history: list, *, instruction: str) -> str:
+    """Format prior evaluation outcomes with an instructional header.
+
+    Returns empty string when *evaluation_history* is empty, so the prompt
+    placeholder disappears entirely.
+
+    Each prior evaluation is rendered as one compact line showing conclusion
+    verdicts and reasons, plus optional goal assessment line. The
+    *instruction* parameter provides node-specific guidance on what the
+    model should do with this information.
+    """
+    if not evaluation_history:
+        return ""
+
+    lines = []
+    for i, eval_outcome in enumerate(evaluation_history, 1):
+        route = eval_outcome.get("route", "?")
+        goal_met = eval_outcome.get("goal_met", False)
+        goal_str = "goal met" if goal_met else "goal not met"
+        conc_parts = []
+        for cr in eval_outcome.get("conclusion_results", []):
+            cid = cr.get("conclusion_id", "?")
+            result = cr.get("result", "?")
+            reason = (cr.get("reason") or "")[:80]
+            if reason:
+                conc_parts.append(f"{cid}={result} ({reason})")
+            else:
+                conc_parts.append(f"{cid}={result}")
+        conc_str = ", ".join(conc_parts)
+        lines.append(f"Evaluation #{i} ({route}, {goal_str}): {conc_str}")
+        assessment = (eval_outcome.get("goal_assessment") or "")[:200]
+        if assessment:
+            lines.append(f"  Assessment: {assessment}")
+
+    return f"{instruction}\n\n" + "\n".join(lines)

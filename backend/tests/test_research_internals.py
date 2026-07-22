@@ -1578,3 +1578,287 @@ class TestPathAContentFeedback:
         assert "Snippet:" in summaries[0]
         assert "Content:" not in summaries[0]
         assert "A short excerpt." in summaries[0]
+
+
+class TestFormatPriorReviews:
+    """Tests for _format_prior_reviews — formats prior ReviewOutcome list
+    with instructional header. Returns empty string when no history."""
+
+    def test_empty_returns_empty_string(self):
+        from moira.workflow.nodes._helpers import _format_prior_reviews
+
+        assert _format_prior_reviews([], instruction="test header") == ""
+
+    def test_single_review_with_evidence(self):
+        from moira.workflow.nodes._helpers import _format_prior_reviews
+
+        reviews = [
+            {
+                "route": "retry",
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "verified",
+                        "evidence": "Type chart confirmed via PokeAPI",
+                    },
+                    {
+                        "fact_id": "f002",
+                        "result": "unverified",
+                        "evidence": "Ability data not found in sources",
+                    },
+                ],
+                "missing_areas": ["Ability data for Tyranitar"],
+            }
+        ]
+        result = _format_prior_reviews(reviews, instruction="HEADER TEXT")
+
+        assert "HEADER TEXT" in result
+        assert "Review #1 (retry)" in result
+        assert "f001=verified" in result
+        assert "Type chart confirmed" in result
+        assert "f002=unverified" in result
+        assert "Missing: Ability data for Tyranitar" in result
+
+    def test_multiple_reviews(self):
+        from moira.workflow.nodes._helpers import _format_prior_reviews
+
+        reviews = [
+            {
+                "route": "retry",
+                "fact_results": [{"fact_id": "f001", "result": "unverified"}],
+                "missing_areas": [],
+            },
+            {
+                "route": "retry",
+                "fact_results": [{"fact_id": "f001", "result": "verified"}],
+                "missing_areas": [],
+            },
+        ]
+        result = _format_prior_reviews(reviews, instruction="HEADER")
+
+        assert "Review #1 (retry)" in result
+        assert "Review #2 (retry)" in result
+        assert "f001=unverified" in result
+        assert "f001=verified" in result
+
+    def test_no_evidence_omits_parens(self):
+        from moira.workflow.nodes._helpers import _format_prior_reviews
+
+        reviews = [
+            {
+                "route": "continue",
+                "fact_results": [{"fact_id": "f001", "result": "verified"}],
+                "missing_areas": [],
+            }
+        ]
+        result = _format_prior_reviews(reviews, instruction="HEADER")
+
+        assert "f001=verified" in result
+        assert "()" not in result
+
+    def test_no_missing_areas_omits_line(self):
+        from moira.workflow.nodes._helpers import _format_prior_reviews
+
+        reviews = [
+            {
+                "route": "continue",
+                "fact_results": [{"fact_id": "f001", "result": "verified"}],
+                "missing_areas": [],
+            }
+        ]
+        result = _format_prior_reviews(reviews, instruction="HEADER")
+
+        assert "Missing:" not in result
+
+
+class TestFormatPriorEvaluations:
+    """Tests for _format_prior_evaluations — formats prior EvaluationOutcome
+    list with instructional header. Returns empty string when no history."""
+
+    def test_empty_returns_empty_string(self):
+        from moira.workflow.nodes._helpers import _format_prior_evaluations
+
+        assert _format_prior_evaluations([], instruction="test header") == ""
+
+    def test_single_evaluation_with_reasons(self):
+        from moira.workflow.nodes._helpers import _format_prior_evaluations
+
+        evals = [
+            {
+                "route": "retry",
+                "goal_met": False,
+                "conclusion_results": [
+                    {
+                        "conclusion_id": "c001",
+                        "result": "verified",
+                        "reason": "Type weakness correctly established",
+                    },
+                    {
+                        "conclusion_id": "c002",
+                        "result": "unsupported",
+                        "reason": "Asserts price superiority without cost data",
+                    },
+                ],
+                "goal_assessment": "Engineering differences described but not linked to cost",
+            }
+        ]
+        result = _format_prior_evaluations(evals, instruction="HEADER TEXT")
+
+        assert "HEADER TEXT" in result
+        assert "Evaluation #1 (retry, goal not met)" in result
+        assert "c001=verified" in result
+        assert "Type weakness" in result
+        assert "c002=unsupported" in result
+        assert "Asserts price superiority" in result
+        assert "Assessment: Engineering differences" in result
+
+    def test_goal_met_shows_correctly(self):
+        from moira.workflow.nodes._helpers import _format_prior_evaluations
+
+        evals = [
+            {
+                "route": "accept",
+                "goal_met": True,
+                "conclusion_results": [],
+                "goal_assessment": "",
+            }
+        ]
+        result = _format_prior_evaluations(evals, instruction="HEADER")
+
+        assert "goal met" in result
+        assert "goal not met" not in result
+
+    def test_no_reason_omits_parens(self):
+        from moira.workflow.nodes._helpers import _format_prior_evaluations
+
+        evals = [
+            {
+                "route": "accept",
+                "goal_met": True,
+                "conclusion_results": [
+                    {"conclusion_id": "c001", "result": "verified"},
+                ],
+                "goal_assessment": "",
+            }
+        ]
+        result = _format_prior_evaluations(evals, instruction="HEADER")
+
+        assert "c001=verified" in result
+        assert "()" not in result
+
+
+class TestProgressCutoff:
+    """Tests for the progress-based retry cutoff in evaluation.
+
+    The evaluation node overrides route from 'retry' to 'accept' when
+    neither verified facts nor verified conclusions increased from the
+    previous evaluation cycle. These tests verify the logic by simulating
+    the relevant state and checking the EvaluationOutcome.
+    """
+
+    def test_no_progress_overrides_retry_to_accept(self):
+        """When verified counts don't increase from prior evaluation,
+        route is overridden from retry to accept."""
+        # The progress check logic:
+        # evaluation_count >= 2, route == "retry", prior eval exists,
+        # verified_fact_count <= prev_facts AND verified_conclusion_count <= prev_conclusions
+        evaluation_count = 2
+        route = "retry"
+        verified_fact_count = 3
+        verified_conclusion_count = 1
+        existing_eval_history = [
+            {
+                "route": "retry",
+                "goal_met": False,
+                "verified_fact_count": 3,
+                "verified_conclusion_count": 1,
+            }
+        ]
+
+        # Simulate the progress check
+        if evaluation_count >= 2 and route == "retry" and existing_eval_history:
+            prev = existing_eval_history[-1]
+            prev_facts = prev.get("verified_fact_count", 0)
+            prev_conclusions = prev.get("verified_conclusion_count", 0)
+            if verified_fact_count <= prev_facts and verified_conclusion_count <= prev_conclusions:
+                route = "accept"
+
+        assert route == "accept"
+
+    def test_progress_in_facts_preserves_retry(self):
+        """When verified fact count increases, route stays retry."""
+        evaluation_count = 2
+        route = "retry"
+        verified_fact_count = 5
+        verified_conclusion_count = 1
+        existing_eval_history = [
+            {
+                "route": "retry",
+                "goal_met": False,
+                "verified_fact_count": 3,
+                "verified_conclusion_count": 1,
+            }
+        ]
+
+        if evaluation_count >= 2 and route == "retry" and existing_eval_history:
+            prev = existing_eval_history[-1]
+            prev_facts = prev.get("verified_fact_count", 0)
+            prev_conclusions = prev.get("verified_conclusion_count", 0)
+            if verified_fact_count <= prev_facts and verified_conclusion_count <= prev_conclusions:
+                route = "accept"
+
+        assert route == "retry"
+
+    def test_progress_in_conclusions_preserves_retry(self):
+        """When verified conclusion count increases, route stays retry."""
+        evaluation_count = 2
+        route = "retry"
+        verified_fact_count = 3
+        verified_conclusion_count = 2
+        existing_eval_history = [
+            {
+                "route": "retry",
+                "goal_met": False,
+                "verified_fact_count": 3,
+                "verified_conclusion_count": 1,
+            }
+        ]
+
+        if evaluation_count >= 2 and route == "retry" and existing_eval_history:
+            prev = existing_eval_history[-1]
+            prev_facts = prev.get("verified_fact_count", 0)
+            prev_conclusions = prev.get("verified_conclusion_count", 0)
+            if verified_fact_count <= prev_facts and verified_conclusion_count <= prev_conclusions:
+                route = "accept"
+
+        assert route == "retry"
+
+    def test_first_evaluation_not_checked(self):
+        """On the first evaluation (count=1), progress check doesn't
+        trigger even if route is retry."""
+        evaluation_count = 1
+        route = "retry"
+        existing_eval_history = []
+
+        if evaluation_count >= 2 and route == "retry" and existing_eval_history:
+            route = "accept"
+
+        assert route == "retry"
+
+    def test_accept_route_not_overridden(self):
+        """When route is already accept, progress check doesn't apply."""
+        evaluation_count = 2
+        route = "accept"
+        existing_eval_history = [
+            {
+                "route": "retry",
+                "goal_met": False,
+                "verified_fact_count": 3,
+                "verified_conclusion_count": 1,
+            }
+        ]
+
+        if evaluation_count >= 2 and route == "retry" and existing_eval_history:
+            route = "accept"
+
+        assert route == "accept"

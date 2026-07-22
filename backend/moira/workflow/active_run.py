@@ -746,7 +746,7 @@ class ActiveRun:
                 status=self.status,
                 budget_limit=float(self.budget_limit),
                 total_cost=self.budget_consumed,
-                generation_reason="",
+                generation_reason=(self.report or {}).get("generation_reason", ""),
                 started_at=self.started_at,
                 completed_at=self.completed_at or None,
                 total_elapsed_ms=self.total_elapsed_ms or None,

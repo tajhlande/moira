@@ -136,6 +136,8 @@ class TestPromptsFile:
                 "facts_with_claims_and_sources",
                 "conclusions_context",
                 "source_content",
+                "prior_reviews",
+                "prior_evaluations",
             },
             "evaluation.user": {
                 "user_goal",
@@ -143,6 +145,8 @@ class TestPromptsFile:
                 "facts_with_statuses",
                 "conclusions_with_supporting_facts",
                 "source_content",
+                "prior_reviews",
+                "prior_evaluations",
             },
             "report_generation.system": {"path_instruction"},
             "report_generation.reason_error": {"error"},
