@@ -68,6 +68,7 @@ export interface ConclusionRecord {
   supporting_fact_ids: string[];
   reasoning?: string;
   status: string;
+  derivation?: string;
 }
 
 export interface CitationRecord {
@@ -112,7 +113,12 @@ export interface ResearchReport {
     claim: string;
     status: string;
   }[];
-  verified_conclusions: { id: string; conclusion: string; status: string }[];
+  verified_conclusions: {
+    id: string;
+    conclusion: string;
+    status: string;
+    derivation?: string;
+  }[];
   contradicted: {
     id: string;
     subject?: string;

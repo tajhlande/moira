@@ -67,6 +67,14 @@ class Conclusion(TypedDict):
     # Set by research_review: "blocked" when any supporting fact is not
     # verified. Evaluation must not upgrade a blocked conclusion to "verified".
     fact_gate: NotRequired[str]
+    # How the conclusion was derived. "direct" = strict restatement of
+    # verified facts. "inferred" = reasoned inference that goes beyond strict
+    # restatement to address the user's question, but is a logical consequence
+    # of the cited verified facts. Synthesis sets this; evaluation verifies it.
+    # A "direct" claim smuggling in inference is re-labeled to "inferred" or
+    # marked "unsupported" if the inference isn't sound. An "inferred" claim
+    # with sound logic + citation is marked "verified", not "unsupported".
+    derivation: NotRequired[str]  # "direct" | "inferred"
 
 
 class ToolCallPlan(TypedDict):
@@ -221,6 +229,8 @@ def knowledge_summary(knowledge: Knowledge) -> dict:
                 "supporting_fact_ids": c.get("supporting_fact_ids", []),
                 "reasoning": c.get("reasoning"),
                 "status": status,
+                "derivation": c.get("derivation", "direct"),
+                "verification_note": c.get("verification_note"),
             }
         )
 

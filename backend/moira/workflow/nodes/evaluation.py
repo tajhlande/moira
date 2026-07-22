@@ -51,11 +51,63 @@ def _format_conclusions_for_evaluation(conclusions: list) -> str:
     lines = []
     for c in conclusions:
         facts_str = ", ".join(c.get("supporting_fact_ids", []))
+        derivation = c.get("derivation", "direct")
         lines.append(
             f"{c['id']} | {c['conclusion']} | [{facts_str}] | "
-            f"{c.get('reasoning', '')} | {c['status']}"
+            f"{c.get('reasoning', '')} | {c['status']} | {derivation}"
         )
     return "\n".join(lines)
+
+
+def _apply_conclusion_results(
+    conclusions: list, conclusion_results: list, logger_obj=None
+) -> None:
+    """Apply evaluator verdicts to conclusions in place.
+
+    - Skip conclusions already marked "unsupported" (terminal verdict from
+      structural sanity check).
+    - Fact-status gate: a conclusion with fact_gate="blocked" cannot be
+      upgraded to "verified" — it's downgraded to "unverified" instead.
+    - Apply derivation re-labeling: the evaluator confirms or corrects the
+      derivation label set by synthesis. Purely metadata; does not affect
+      the status verdict.
+    """
+    for cr in conclusion_results:
+        cid = cr.get("conclusion_id", "")
+        result = cr.get("result") or cr.get("status") or "unverified"
+        reason = cr.get("reason") or ""
+        eval_derivation = cr.get("derivation", "")
+        for conclusion in conclusions:
+            if conclusion["id"] == cid:
+                if conclusion.get("status") == "unsupported":
+                    break
+                if result == "verified" and conclusion.get("fact_gate") == "blocked":
+                    conclusion["status"] = "unverified"
+                    conclusion["verification_note"] = (
+                        "Cannot verify — supporting facts not yet verified."
+                    )
+                    if logger_obj:
+                        logger_obj.warning(
+                            "EVALUATION: fact-status gate blocked conclusion %s "
+                            "from 'verified' (unverified supporting facts)",
+                            cid,
+                        )
+                    break
+                conclusion["status"] = result
+                if reason:
+                    conclusion["verification_note"] = reason
+                if eval_derivation in ("direct", "inferred"):
+                    old_derivation = conclusion.get("derivation", "direct")
+                    if eval_derivation != old_derivation:
+                        if logger_obj:
+                            logger_obj.info(
+                                "EVALUATION: re-labeled conclusion %s derivation %s→%s",
+                                cid,
+                                old_derivation,
+                                eval_derivation,
+                            )
+                        conclusion["derivation"] = eval_derivation
+                break
 
 
 async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
@@ -205,42 +257,9 @@ async def evaluation(state: ResearchState, config: RunnableConfig) -> dict:
             f"(response={len(raw)} chars)"
         )
 
-    # Apply conclusion results. Accept "status" as a fallback for "result"
-    # since models sometimes use the wrong key — the verdict is critical.
-    # Only "reason" is used for the note field.
-    #
-    # Skip conclusions already marked "unsupported" by the Phase 3 structural
-    # sanity check — their verdict is terminal (no model tokens were spent on
-    # them) and must not be overwritten by model output. The evaluator still
-    # sees them in the prompt context to inform the holistic goal_met call.
-    #
-    # Fact-status gate: if research_review marked a conclusion with
-    # fact_gate="blocked" (supporting facts not all verified), the evaluator
-    # may not upgrade it to "verified". This enforces the invariant
-    # mechanically rather than relying on the model to notice fact statuses.
-    for cr in parsed.get("conclusion_results", []):
-        cid = cr.get("conclusion_id", "")
-        result = cr.get("result") or cr.get("status") or "unverified"
-        reason = cr.get("reason") or ""
-        for conclusion in conclusions:
-            if conclusion["id"] == cid:
-                if conclusion.get("status") == "unsupported":
-                    break
-                if result == "verified" and conclusion.get("fact_gate") == "blocked":
-                    conclusion["status"] = "unverified"
-                    conclusion["verification_note"] = (
-                        "Cannot verify — supporting facts not yet verified."
-                    )
-                    logger.warning(
-                        "EVALUATION: fact-status gate blocked conclusion %s "
-                        "from 'verified' (unverified supporting facts)",
-                        cid,
-                    )
-                    break
-                conclusion["status"] = result
-                if reason:
-                    conclusion["verification_note"] = reason
-                break
+    # Apply conclusion results (verdicts + derivation re-labeling).
+    # See _apply_conclusion_results for the full logic.
+    _apply_conclusion_results(conclusions, parsed.get("conclusion_results", []), logger)
 
     route = parsed.get("route", "accept")
 

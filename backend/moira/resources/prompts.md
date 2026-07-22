@@ -626,7 +626,12 @@ Rules:
 - Derive conclusions ONLY from the provided facts
 - Each conclusion must reference the specific facts that support it by ID
 - Show your reasoning chain: how do the supporting facts lead to the conclusion via derived claims?
-- If the facts are insufficient to support a conclusion, do NOT draw that conclusion.
+- When verified facts logically imply a partial answer but do not directly state it, you SHOULD
+  draw a reasoned inference rather than leaving the question unaddressed. The inference must be
+  a logical consequence of the cited facts — not domain knowledge. Mark such conclusions with
+  "derivation": "inferred" and use hedged reasoning ("likely," "suggests," "probably").
+- Conclusions that are strict restatements of what the cited facts directly establish should use
+  "derivation": "direct".
 - You MAY derive new claims that logically follow from the supplied facts.
 - You should then derive conclusions from the facts and the derived claims.
 - You MUST NOT introduce additional domain knowledge that does not come from the supplied facts. For example, if fact f005 says "X is weak to Y" and fact f008
@@ -634,6 +639,15 @@ Rules:
   conclude "Z is a good teammate for X" without additional facts about team
   evaluation criteria.
 - Be precise. Avoid vague conclusions that could be interpreted multiple ways.
+
+Example of reasoned inference (derivation: "inferred"):
+  If f002 says "equatorial mounts require precision tolerances" and f004 says
+  "they use specialized single-axis tracking motors," you may conclude "The
+  mechanical complexity of equatorial mounts (precision tolerances + specialized
+  tracking) likely contributes to their higher cost compared to simpler
+  alt-azimuth designs." This is permitted — it follows logically from the cited
+  facts. What is NOT permitted: asserting the cost difference is due to "supply
+  and demand" or other domain knowledge not in the facts.
 
 You will receive facts in the format: ID | subject | fact_needed | claim | status
 Only use facts with status "verified" or "unverified" as support. Do not draw
@@ -644,6 +658,10 @@ Respond with a JSON object with key "conclusions": a list of objects, each with:
 - "supporting_fact_ids": list of fact IDs that support this conclusion (e.g., ["f001", "f005"])
 - "reasoning": step-by-step explanation of how the supporting facts lead to this
   conclusion, including derived claims that support the conclusion.
+- "derivation": either "direct" (strict restatement of what the cited facts establish)
+  or "inferred" (goes beyond strict restatement, but is a logical consequence of the
+  cited facts). Use "inferred" when you are connecting facts to address the user's
+  question via reasoning rather than direct quotation.
 
 Example JSON structure:
 {
@@ -651,12 +669,14 @@ Example JSON structure:
     {
       "conclusion" : "Caesar was murdered by Cassius, Brutus, and other Roman senators.",
       "supporting_fact_ids": ["f001", "f004", "f007", "f009", "f011"],
-      "reasoning": "Caesar died. His cause of death was stab wounds and exsanguination. Cassius and Brutus conspired to kill him along with other senators, hoping to prevent him becoming a tyrant. They had daggers with which to kill him. And the conspirators used a fake petition to create the opportunity for the murder. Means, motive, and opportunity are all present, therefore he was murdered."
+      "reasoning": "Caesar died. His cause of death was stab wounds and exsanguination. Cassius and Brutus conspired to kill him along with other senators, hoping to prevent him becoming a tyrant. They had daggers with which to kill him. And the conspirators used a fake petition to create the opportunity for the murder. Means, motive, and opportunity are all present, therefore he was murdered.",
+      "derivation": "direct"
     },
     {
       "conclusion": "Caesar ignored the warning about the risk of his impending murder.",
       "supporting_fact_ids": ["f002", "f004"],
-      "reasoning": "Caesar was warned by a soothsayer, but continued with his plan to convince the people he was reluctant to take the crown."
+      "reasoning": "Caesar was warned by a soothsayer, but continued with his plan to convince the people he was reluctant to take the crown.",
+      "derivation": "inferred"
     }
   ]
 }
@@ -792,10 +812,19 @@ You are an adversarial evaluator. Cross-examine the conclusions drawn from the r
 
 For each conclusion (skip any already marked "unsupported" — those have a structural
 verdict and need no re-evaluation, but weigh their presence when assessing goal sufficiency):
-- Trace every assertion back to a specific cited fact. If the conclusion asserts
-  something that the cited facts do not establish — additional domain knowledge,
-  comparative judgments, or causal claims without evidence — mark it "unsupported"
-  and identify what it adds beyond the facts.
+- Trace every assertion back to a specific cited fact. Distinguish two kinds of
+  conclusions:
+  - "direct": strict restatement of what the cited facts establish.
+  - "inferred": goes beyond strict restatement to address the user's question,
+    but is a logical consequence of the cited verified facts (e.g., connecting
+    mechanical complexity to likely cost implications).
+- A conclusion is an overclaim ONLY if it introduces domain knowledge not in the
+  facts, makes causal claims without evidentiary basis, or asserts things the
+  cited facts do not logically imply. Mark overclaims "unsupported".
+- A reasoned inference is NOT an overclaim: if the conclusion follows logically
+  from the cited facts and all supporting facts are verified, mark it "verified"
+  — even though it goes beyond strict restatement. The test is "does this follow
+  logically from the cited facts?", not "does this strictly restate the facts?".
 - Cross-reference each fact's claim against the source content provided. If the
   claim misrepresents or overstates what the source said, mark the conclusion
   "unsupported".
@@ -809,15 +838,24 @@ verdict and need no re-evaluation, but weigh their presence when assessing goal 
   is "unsupported", not "contradicted".
 - If one or more supporting facts remain unverified (not yet checked), mark it
   "unverified".
+- Confirm or correct the "derivation" label on each conclusion. Synthesis sets
+  the label initially; your job is to verify it. A "direct" claim that smuggles
+  in inference should be re-labeled to "inferred". An "inferred" claim with
+  sound logic and citation is marked "verified", not "unsupported".
 
-Be precise: a conclusion is an overclaim only if it explicitly goes beyond what the
-supporting facts establish. Well-supported conclusions should be marked "verified".
-The goal is catching genuine grounding failures, not casting doubt on sound reasoning.
+Be precise: a conclusion is an overclaim only if it introduces domain knowledge,
+makes unsupported causal claims, or asserts things the cited facts do not
+logically imply. Well-supported conclusions — including sound reasoned
+inferences — should be marked "verified". The goal is catching genuine grounding
+failures, not casting doubt on sound reasoning.
 
 A conclusion is:
-- "verified": reasoning is sound and all supporting facts are verified
-- "unsupported": the conclusion goes beyond what the supporting facts establish,
-  misrepresents a source, or lacks grounding
+- "verified": reasoning is sound and all supporting facts are verified. This
+  includes both direct restatements AND reasoned inferences that follow
+  logically from the cited facts.
+- "unsupported": the conclusion introduces domain knowledge not in the facts,
+  makes causal claims without evidentiary basis, asserts things the cited facts
+  do not logically imply, or misrepresents a source.
 - "contradicted": a supporting fact is actively refuted by other evidence, or the
   reasoning contains a logical error
 - "unverified": one or more supporting facts are not yet verified
@@ -832,11 +870,14 @@ contradicted conclusions do not undermine that answer.
 
 Respond with ONLY a JSON object, structured exactly like this:
 
-{"conclusion_results": [{"conclusion_id": "c001", "result": "verified", "reason": "why it is valid"}, {"conclusion_id": "c002", "result": "unsupported", "reason": "what it asserts beyond the cited facts"}], "goal_met": true, "goal_assessment": "Explanation of why the goal is or is not met", "route": "accept"}
+{"conclusion_results": [{"conclusion_id": "c001", "result": "verified", "derivation": "direct", "reason": "why it is valid"}, {"conclusion_id": "c002", "result": "unsupported", "derivation": "inferred", "reason": "what it asserts beyond the cited facts"}], "goal_met": true, "goal_assessment": "Explanation of why the goal is or is not met", "route": "accept"}
 
 where each item in conclusion_results has:
 - conclusion_id referencing one of the conclusions you were given
 - result: one of "verified", "unverified", "contradicted", or "unsupported"
+- derivation: either "direct" or "inferred" — confirm or correct the label that
+  synthesis set. A "direct" claim that smuggles in inference should be reported
+  as "inferred". An "inferred" claim with sound logic stays "inferred".
 - reason: your short description of the reason for your result value
 goal_met is either true or false, judging whether the set of verified conclusions
 is sufficient to answer the user's question,
@@ -854,7 +895,7 @@ Question:
 Facts (ID | subject | claim | status | citations):
 {facts_with_statuses}
 
-Conclusions to evaluate (ID | conclusion | supporting fact IDs | reasoning | status):
+Conclusions to evaluate (ID | conclusion | supporting fact IDs | reasoning | status | derivation):
 {conclusions_with_supporting_facts}
 
 Source content (from cited sources — use this to cross-reference claims against what sources actually say):
@@ -875,6 +916,13 @@ Rules:
 - Write the report using ONLY the facts and conclusions in the knowledge model
 - Do NOT use any built-in world knowledge — if a fact is not in the provided facts,
   it does not appear in the report
+- When research did not fully answer the user's question, synthesize the best
+  answer possible from verified facts and reasoned inferences. Do not simply
+  catalog gaps — connect available evidence to build the most helpful answer.
+- Conclusions are labeled with "derivation": "direct" or "inferred". State
+  "direct" conclusions as established fact. State "inferred" conclusions with
+  hedged language ("likely," "probably," "suggests") so the reader understands
+  the degree of support.
 - Write as the agent that performed the research. Do not use phrases like "based on
   the provided evidence" or "the research suggests" — you did the research. Own the
   conclusions.
@@ -889,7 +937,9 @@ Rules:
 {path_instruction}
 
 Respond with a JSON object with these keys:
-- "answer": the narrative answer text with inline [n] citation markers
+- "answer": the COMPLETE narrative report text with inline [n] citation markers.
+  ALL report content must go in this single string. Do NOT split the report into
+  multiple JSON keys — use headings and paragraphs within the "answer" string instead.
 - "citations": list of {id, source, url, title, excerpt} objects
 - "verified_facts": list of the verified facts used in the report
 - "verified_conclusions": list of the verified conclusions used in the report
