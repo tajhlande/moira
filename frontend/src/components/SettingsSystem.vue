@@ -219,7 +219,13 @@ async function resetGroup(group: GroupConfig) {
                 :max="getMax(defn.key)"
                 size="tiny"
                 :show-button="false"
-                class="setting-input"
+                :class="[
+                  'setting-input',
+                  {
+                    'setting-input-wide':
+                      defn.key === 'web_search.cache_ttl_seconds',
+                  },
+                ]"
                 @update:value="
                   (v: number | null) => v != null && saveSetting(defn.key, v)
                 "
@@ -317,6 +323,10 @@ async function resetGroup(group: GroupConfig) {
 .setting-input {
   flex-shrink: 0;
   width: 56px;
+}
+
+.setting-input-wide {
+  width: 80px;
 }
 
 .setting-input :deep(.n-input) {
