@@ -739,5 +739,6 @@ function toggleExpand() {
   font-family: monospace;
   font-size: 0.75em;
   opacity: 0.5;
+  margin-left: auto;
 }
 </style>
