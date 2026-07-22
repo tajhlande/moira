@@ -40,6 +40,33 @@ def _format_facts_with_claims(facts: list) -> str:
     return "\n".join(lines)
 
 
+def _parse_conclusions(parsed: dict) -> list[Conclusion]:
+    """Extract Conclusion objects from parsed model JSON output.
+
+    Normalizes the ``derivation`` field to ``"direct"`` or ``"inferred"``,
+    defaulting to ``"direct"`` when absent or unrecognized so that malformed
+    output cannot smuggle in an unsupported inference label.
+    """
+    conclusions: list[Conclusion] = []
+    for item in parsed.get("conclusions", []):
+        if isinstance(item, dict) and item.get("conclusion"):
+            c_id = next_id("c", conclusions)
+            derivation = item.get("derivation", "direct")
+            if derivation not in ("direct", "inferred"):
+                derivation = "direct"
+            conclusions.append(
+                Conclusion(
+                    id=c_id,
+                    conclusion=item["conclusion"],
+                    supporting_fact_ids=item.get("supporting_fact_ids", []),
+                    reasoning=item.get("reasoning", ""),
+                    status="unverified",
+                    derivation=derivation,
+                )
+            )
+    return conclusions
+
+
 async def synthesis(state: ResearchState, config: RunnableConfig) -> dict:
     """Derive conclusions from discovered facts."""
     _check_stop(NODE_NAME, config)
@@ -141,19 +168,7 @@ async def synthesis(state: ResearchState, config: RunnableConfig) -> dict:
 
     parsed = _parse_json_object(raw)
 
-    conclusions: list[Conclusion] = []
-    for item in parsed.get("conclusions", []):
-        if isinstance(item, dict) and item.get("conclusion"):
-            c_id = next_id("c", conclusions)
-            conclusions.append(
-                Conclusion(
-                    id=c_id,
-                    conclusion=item["conclusion"],
-                    supporting_fact_ids=item.get("supporting_fact_ids", []),
-                    reasoning=item.get("reasoning", ""),
-                    status="unverified",
-                )
-            )
+    conclusions = _parse_conclusions(parsed)
 
     detail["structured_output"] = {"conclusions": [dict(c) for c in conclusions]}
 

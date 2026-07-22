@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, nextTick } from "vue";
+import { computed, ref, watch } from "vue";
 import { NInput, NButton, NAlert, NScrollbar, NText, NSlider } from "naive-ui";
 import { IconAdjustments, IconHandStop, IconRefresh } from "@tabler/icons-vue";
 import { useRoute, useRouter } from "vue-router";
@@ -22,7 +22,6 @@ const router = useRouter();
 const dialog = useDialog();
 const inputText = ref("");
 const showSettings = ref(false);
-const messagesScrollbar = ref<InstanceType<typeof NScrollbar> | null>(null);
 
 // Sync store state with the current route.
 // - /conversation/new → startNewChat()
@@ -53,41 +52,6 @@ watch(
     if (id && route.name === "new-conversation") {
       router.replace({ name: "conversation", params: { id } });
     }
-  },
-);
-
-// Track conversation switches to suppress streaming auto-scroll during
-// the initial data load.
-const justSwitchedConversation = ref(false);
-
-watch(
-  () => store.currentConversationId,
-  () => {
-    justSwitchedConversation.value = true;
-  },
-);
-
-// Clear the flag once messages are loaded for the new conversation so
-// the streaming auto-scroll watcher below resumes normal operation.
-watch(
-  () => store.messages,
-  () => {
-    if (!justSwitchedConversation.value) return;
-    nextTick(() => {
-      justSwitchedConversation.value = false;
-    });
-  },
-);
-
-// Auto-scroll during streaming as new steps/content arrive.
-// Skips the first update after a conversation switch.
-watch(
-  () => [store.activeRun?.execution_steps?.length, store.activeRun?.report],
-  () => {
-    if (justSwitchedConversation.value) return;
-    nextTick(() => {
-      messagesScrollbar.value?.scrollTo({ top: 999999, behavior: "smooth" });
-    });
   },
 );
 
@@ -138,7 +102,7 @@ function confirmRerun(msgId: number) {
       <NText class="chat-title">{{ currentTitle }}</NText>
     </div>
 
-    <NScrollbar ref="messagesScrollbar" class="messages-area">
+    <NScrollbar class="messages-area">
       <div>
         <template v-for="(msg, i) in store.messages" :key="i">
           <!-- Message bubble -->

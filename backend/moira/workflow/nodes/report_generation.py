@@ -48,9 +48,12 @@ def _format_conclusions(conclusions: list) -> str:
     lines = []
     for c in conclusions:
         facts_str = ", ".join(c.get("supporting_fact_ids") or [])
+        # Include derivation so the report model knows which conclusions to
+        # state flatly ("direct") vs. with hedged language ("inferred").
+        derivation = c.get("derivation", "direct")
         lines.append(
             f"{c['id']} | {c['conclusion']} | [{facts_str}] | "
-            f"{c.get('reasoning', '')} | {c['status']}"
+            f"{c.get('reasoning', '')} | {c['status']} | {derivation}"
         )
     return "\n".join(lines)
 
@@ -78,6 +81,50 @@ def _format_citations(citations: list) -> str:
             f"{c.get('title') or ''} | {snippet_str}"
         )
     return "\n".join(lines)
+
+
+# Keys the report schema defines at the top level. Any other string-valued
+# key in the model's JSON output is treated as a misplaced report section
+# and merged into "answer" by _merge_section_keys.
+_KNOWN_ANSWER_KEYS = frozenset(
+    {
+        "answer",
+        "citations",
+        "verified_facts",
+        "verified_conclusions",
+        "contradicted",
+        "unknown_facts",
+        "critiques",
+    }
+)
+
+
+def _merge_section_keys(parsed: dict, raw_answer: str) -> str:
+    """Recover report content the model placed in extra top-level keys.
+
+    Mid-grade models sometimes split the report into multiple JSON keys
+    (e.g., "Strategic Role & Moveset") instead of putting everything in
+    "answer". This merges any unknown string-valued keys into the answer
+    using the key name as a markdown section heading.
+    """
+    extra: list[tuple[str, str]] = []
+    for key, value in parsed.items():
+        if key not in _KNOWN_ANSWER_KEYS and isinstance(value, str) and value.strip():
+            extra.append((key, value))
+    if not extra:
+        return raw_answer
+    parts = [raw_answer] if raw_answer.strip() else []
+    for heading, content in extra:
+        parts.append(f"## {heading}\n\n{content}")
+    merged = "\n\n".join(parts)
+    logger.warning(
+        "REPORT GENERATION: model split answer into %d section keys; "
+        "merged into 'answer' field (%d → %d chars)",
+        len(extra),
+        len(raw_answer),
+        len(merged),
+    )
+    return merged
 
 
 def _prune_and_renumber_citations(
@@ -301,7 +348,8 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
         )
         raise RuntimeError(err_msg)
 
-    raw_answer = parsed.get("answer", "")
+    raw_answer = _merge_section_keys(parsed, parsed.get("answer", ""))
+
     cited_answer, cited_citations, uncited_citations = _prune_and_renumber_citations(
         raw_answer, all_citations
     )
@@ -352,7 +400,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
             thinking = getattr(retry_response, "thinking", "") or ""
             if thinking:
                 detail["thinking"] = thinking[:2000]
-            raw_answer = parsed.get("answer", "")
+            raw_answer = _merge_section_keys(retry_parsed, retry_parsed.get("answer", ""))
             cited_answer, cited_citations, uncited_citations = _prune_and_renumber_citations(
                 raw_answer, all_citations
             )

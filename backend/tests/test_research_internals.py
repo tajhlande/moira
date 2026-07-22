@@ -1862,3 +1862,348 @@ class TestProgressCutoff:
             route = "accept"
 
         assert route == "accept"
+
+
+class TestSynthesisDerivationParsing:
+    """Tests for _parse_conclusions in synthesis.py.
+
+    Verifies that the derivation field is correctly parsed from model
+    output, normalized to "direct" or "inferred", and defaults to "direct"
+    when absent or unrecognized.
+    """
+
+    def test_explicit_direct_derivation(self):
+        from moira.workflow.nodes.synthesis import _parse_conclusions
+
+        parsed = {
+            "conclusions": [
+                {
+                    "conclusion": "X is true",
+                    "supporting_fact_ids": ["f001"],
+                    "reasoning": "f001 says so",
+                    "derivation": "direct",
+                }
+            ]
+        }
+        results = _parse_conclusions(parsed)
+        assert len(results) == 1
+        assert results[0]["derivation"] == "direct"
+
+    def test_explicit_inferred_derivation(self):
+        from moira.workflow.nodes.synthesis import _parse_conclusions
+
+        parsed = {
+            "conclusions": [
+                {
+                    "conclusion": "X likely causes Y",
+                    "supporting_fact_ids": ["f001", "f002"],
+                    "reasoning": "f001 + f002 imply this",
+                    "derivation": "inferred",
+                }
+            ]
+        }
+        results = _parse_conclusions(parsed)
+        assert len(results) == 1
+        assert results[0]["derivation"] == "inferred"
+
+    def test_missing_derivation_defaults_to_direct(self):
+        from moira.workflow.nodes.synthesis import _parse_conclusions
+
+        parsed = {
+            "conclusions": [
+                {
+                    "conclusion": "X is true",
+                    "supporting_fact_ids": ["f001"],
+                    "reasoning": "f001 says so",
+                }
+            ]
+        }
+        results = _parse_conclusions(parsed)
+        assert len(results) == 1
+        assert results[0]["derivation"] == "direct"
+
+    def test_invalid_derivation_defaults_to_direct(self):
+        """Malformed derivation values must not smuggle through — they
+        default to "direct" so downstream nodes apply the stricter standard."""
+        from moira.workflow.nodes.synthesis import _parse_conclusions
+
+        parsed = {
+            "conclusions": [
+                {
+                    "conclusion": "X is true",
+                    "supporting_fact_ids": ["f001"],
+                    "reasoning": "f001 says so",
+                    "derivation": "speculation",
+                }
+            ]
+        }
+        results = _parse_conclusions(parsed)
+        assert len(results) == 1
+        assert results[0]["derivation"] == "direct"
+
+    def test_mixed_derivations(self):
+        """Multiple conclusions with different derivations are all parsed correctly."""
+        from moira.workflow.nodes.synthesis import _parse_conclusions
+
+        parsed = {
+            "conclusions": [
+                {
+                    "conclusion": "Direct fact",
+                    "supporting_fact_ids": ["f001"],
+                    "derivation": "direct",
+                },
+                {
+                    "conclusion": "Inferred claim",
+                    "supporting_fact_ids": ["f001", "f002"],
+                    "derivation": "inferred",
+                },
+                {
+                    "conclusion": "Default conclusion",
+                    "supporting_fact_ids": ["f003"],
+                },
+            ]
+        }
+        results = _parse_conclusions(parsed)
+        assert len(results) == 3
+        assert results[0]["derivation"] == "direct"
+        assert results[1]["derivation"] == "inferred"
+        assert results[2]["derivation"] == "direct"
+
+
+class TestEvaluationDerivationRelabel:
+    """Tests for _apply_conclusion_results in evaluation.py.
+
+    Verifies that the evaluator can re-label derivation from "direct" to
+    "inferred" when synthesis mislabeled it, and that the derivation label
+    is preserved when the evaluator agrees.
+    """
+
+    def test_relabel_direct_to_inferred(self):
+        """Evaluator corrects a 'direct' label to 'inferred' when the
+        conclusion smuggles in inference."""
+        from moira.workflow.nodes.evaluation import _apply_conclusion_results
+
+        conclusions = [
+            {
+                "id": "c001",
+                "conclusion": "X costs more",
+                "supporting_fact_ids": ["f001"],
+                "status": "unverified",
+                "derivation": "direct",
+            }
+        ]
+        results = [
+            {
+                "conclusion_id": "c001",
+                "result": "verified",
+                "derivation": "inferred",
+                "reason": "This is a reasoned inference, not a direct restatement",
+            }
+        ]
+        _apply_conclusion_results(conclusions, results)
+        assert conclusions[0]["derivation"] == "inferred"
+        assert conclusions[0]["status"] == "verified"
+
+    def test_preserves_inferred_label(self):
+        """Evaluator agrees with 'inferred' label — no change."""
+        from moira.workflow.nodes.evaluation import _apply_conclusion_results
+
+        conclusions = [
+            {
+                "id": "c001",
+                "conclusion": "X likely costs more",
+                "supporting_fact_ids": ["f001"],
+                "status": "unverified",
+                "derivation": "inferred",
+            }
+        ]
+        results = [
+            {
+                "conclusion_id": "c001",
+                "result": "verified",
+                "derivation": "inferred",
+                "reason": "Sound inference",
+            }
+        ]
+        _apply_conclusion_results(conclusions, results)
+        assert conclusions[0]["derivation"] == "inferred"
+
+    def test_preserves_direct_label(self):
+        """Evaluator agrees with 'direct' label — no change."""
+        from moira.workflow.nodes.evaluation import _apply_conclusion_results
+
+        conclusions = [
+            {
+                "id": "c001",
+                "conclusion": "f001 says X",
+                "supporting_fact_ids": ["f001"],
+                "status": "unverified",
+                "derivation": "direct",
+            }
+        ]
+        results = [
+            {
+                "conclusion_id": "c001",
+                "result": "verified",
+                "derivation": "direct",
+                "reason": "Direct restatement",
+            }
+        ]
+        _apply_conclusion_results(conclusions, results)
+        assert conclusions[0]["derivation"] == "direct"
+
+    def test_invalid_derivation_preserves_existing(self):
+        """Invalid derivation from evaluator does not overwrite existing label."""
+        from moira.workflow.nodes.evaluation import _apply_conclusion_results
+
+        conclusions = [
+            {
+                "id": "c001",
+                "conclusion": "X is true",
+                "supporting_fact_ids": ["f001"],
+                "status": "unverified",
+                "derivation": "inferred",
+            }
+        ]
+        results = [
+            {
+                "conclusion_id": "c001",
+                "result": "verified",
+                "derivation": "bogus",
+                "reason": "Bad label",
+            }
+        ]
+        _apply_conclusion_results(conclusions, results)
+        assert conclusions[0]["derivation"] == "inferred"
+
+    def test_missing_derivation_preserves_existing(self):
+        """When evaluator doesn't provide derivation, existing label is kept."""
+        from moira.workflow.nodes.evaluation import _apply_conclusion_results
+
+        conclusions = [
+            {
+                "id": "c001",
+                "conclusion": "X is true",
+                "supporting_fact_ids": ["f001"],
+                "status": "unverified",
+                "derivation": "inferred",
+            }
+        ]
+        results = [
+            {
+                "conclusion_id": "c001",
+                "result": "verified",
+                "reason": "Sound reasoning",
+            }
+        ]
+        _apply_conclusion_results(conclusions, results)
+        assert conclusions[0]["derivation"] == "inferred"
+
+
+class TestDerivationFactGateInteraction:
+    """Tests that fact_gate still blocks 'verified' status regardless of derivation.
+
+    The fact_gate is orthogonal to derivation: even if a conclusion is
+    correctly labeled as 'inferred' with sound logic, it cannot be marked
+    'verified' if its supporting facts are not all verified.
+    """
+
+    def test_fact_gate_blocks_inferred_conclusion(self):
+        """An inferred conclusion with blocked facts cannot be verified."""
+        from moira.workflow.nodes.evaluation import _apply_conclusion_results
+
+        conclusions = [
+            {
+                "id": "c001",
+                "conclusion": "X likely causes Y",
+                "supporting_fact_ids": ["f001", "f002"],
+                "status": "unverified",
+                "derivation": "inferred",
+                "fact_gate": "blocked",
+            }
+        ]
+        results = [
+            {
+                "conclusion_id": "c001",
+                "result": "verified",
+                "derivation": "inferred",
+                "reason": "Sound inference",
+            }
+        ]
+        _apply_conclusion_results(conclusions, results)
+        assert conclusions[0]["status"] == "unverified"
+        assert "Cannot verify" in conclusions[0].get("verification_note", "")
+
+    def test_fact_gate_blocks_direct_conclusion(self):
+        """A direct conclusion with blocked facts also cannot be verified."""
+        from moira.workflow.nodes.evaluation import _apply_conclusion_results
+
+        conclusions = [
+            {
+                "id": "c001",
+                "conclusion": "X is true",
+                "supporting_fact_ids": ["f001"],
+                "status": "unverified",
+                "derivation": "direct",
+                "fact_gate": "blocked",
+            }
+        ]
+        results = [
+            {
+                "conclusion_id": "c001",
+                "result": "verified",
+                "derivation": "direct",
+                "reason": "Direct restatement",
+            }
+        ]
+        _apply_conclusion_results(conclusions, results)
+        assert conclusions[0]["status"] == "unverified"
+
+    def test_no_fact_gate_allows_inferred_verified(self):
+        """Without fact_gate blocking, an inferred conclusion can be verified."""
+        from moira.workflow.nodes.evaluation import _apply_conclusion_results
+
+        conclusions = [
+            {
+                "id": "c001",
+                "conclusion": "X likely causes Y",
+                "supporting_fact_ids": ["f001", "f002"],
+                "status": "unverified",
+                "derivation": "inferred",
+            }
+        ]
+        results = [
+            {
+                "conclusion_id": "c001",
+                "result": "verified",
+                "derivation": "inferred",
+                "reason": "Sound inference from verified facts",
+            }
+        ]
+        _apply_conclusion_results(conclusions, results)
+        assert conclusions[0]["status"] == "verified"
+
+    def test_unsupported_status_is_terminal(self):
+        """Conclusions already marked 'unsupported' are not touched by evaluator output."""
+        from moira.workflow.nodes.evaluation import _apply_conclusion_results
+
+        conclusions = [
+            {
+                "id": "c001",
+                "conclusion": "Bad claim",
+                "supporting_fact_ids": ["f001"],
+                "status": "unsupported",
+                "derivation": "direct",
+            }
+        ]
+        results = [
+            {
+                "conclusion_id": "c001",
+                "result": "verified",
+                "derivation": "inferred",
+                "reason": "Should not apply",
+            }
+        ]
+        _apply_conclusion_results(conclusions, results)
+        assert conclusions[0]["status"] == "unsupported"
+        assert conclusions[0]["derivation"] == "direct"

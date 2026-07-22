@@ -278,9 +278,16 @@ function toggleExpand() {
         <div class="conclusions-list">
           <div v-for="c in allConclusions" :key="c.id" class="conclusion-card">
             <div class="fact-header">
-              <span :class="['fact-status', statusClass(c.status)]">{{
-                c.status
-              }}</span>
+              <div class="fact-header-left">
+                <span :class="['fact-status', statusClass(c.status)]">{{
+                  c.status
+                }}</span>
+                <span
+                  v-if="c.derivation === 'inferred'"
+                  class="derivation-badge"
+                  >Inferred</span
+                >
+              </div>
               <span class="fact-id">{{ c.id }}</span>
             </div>
             <div class="conclusion-text">{{ c.conclusion }}</div>
@@ -578,6 +585,12 @@ function toggleExpand() {
   margin-bottom: 2px;
 }
 
+.fact-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .fact-status {
   font-size: 0.8em;
   font-weight: 600;
@@ -604,6 +617,15 @@ function toggleExpand() {
 .fact-status.unknown {
   background-color: var(--moira-border, #eee);
   color: var(--n-text-color-3, #999);
+}
+
+.derivation-badge {
+  font-size: 0.8em;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background-color: var(--n-info-color-suppl, #e8f3ff);
+  color: var(--n-info-color, #2080f0);
 }
 
 .fact-id {

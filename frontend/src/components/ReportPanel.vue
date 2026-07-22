@@ -317,6 +317,9 @@ function handleTooltipLeave() {
           :key="ci"
           class="verified"
         >
+          <span v-if="c.derivation === 'inferred'" class="derivation-badge"
+            >Inferred</span
+          >
           <MarkdownContent :content="c.conclusion" inline />
         </li>
       </ul>
