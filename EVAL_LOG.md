@@ -78,3 +78,19 @@ Scores are recorded manually via `moira_eval.log`.
 
 - Agent model: z-ai/glm-5.2
 - Note: Fixed url_content passing to research step to send 15000 chars, not 500
+
+## 2026-07-22 batch (commit 23c462e6, conclusion-inference)
+
+| Question | Rubric | Score | web_search | Status |
+|----------|--------|-------|------------|--------|
+| flaming-hot-cheetos | general | 15/25 | 10 | FAIL |
+| future-nostalgia | general | 16/25 | 10 | PASS |
+| jazz-trumpeters | general | 16/25 | 10 | PASS |
+| telescope-mount-cost | general | 17/25 | 10 | PASS |
+| trade-policy-manufacturing | general | 19/25 | 10 | FAIL |
+| tyranitar-ou | pokemon | 11/16 | 10 | FAIL |
+| water-blood-pressure | general | 18/25 | 10 | PASS |
+
+- Agent model: z-ai/glm-5.2
+- Note: Added inference as a method for drawing conclusions.
+        `jazz-trumpeters` is an anomaly here - report was thorough but drew on citation snippets, not any of the facts or conclusions as all were unverified.
