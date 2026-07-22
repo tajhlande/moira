@@ -13,13 +13,16 @@
 </pre>
 </div>
 
-MOiRA is a general-purpose research system that can automatically acquire new capabilities through API ingestion.
+MOiRA is a general-purpose research system that constructs structured knowledge models to answer user questions with fully visible traceability from sources to rigorous verification of facts and conclusions. 
 
 ## What it can do
 
 **Structured research workflow**
 
-MOiRA generates verified answers to user questions by reasoning about facts and conclusions, with full traceability.
+MOiRA generates verified answers to user questions by discovering and reasoning about facts and conclusions in a knowledge model, with direct user visibility as MOiRA tracks and verifies them.  
+At each step of the workflow, the user can see the current state of knowledge, which facts are verified or unverified, 
+what facts MOiRA is seeking to find information to learn, and what conclusions can be drawn from those facts to answer
+the user's question.
 
 **Automatic capability acquisition**
 
