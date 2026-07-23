@@ -1,8 +1,9 @@
-"""Planning node: designs a cost-aware tool call plan.
+"""Planning node: designs cost-aware evidence requests.
 
-Receives unknown facts and candidate tools with costs. Produces a
-ToolCallPlan that fits within the remaining budget. Uses the intelligence
-model.
+Receives unknown facts and candidate tools with costs. Produces
+EvidenceRequests that describe what evidence is needed and which tools
+might provide it, leaving query formulation to the research step.
+Uses the intelligence model.
 """
 
 import logging
@@ -11,7 +12,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
 from moira.inference.defaults import DEFAULT_TEMPERATURE
-from moira.models.knowledge import ResearchState, ToolCallPlan
+from moira.models.knowledge import EvidenceRequest, ResearchState
 from moira.prompts import render_prompt
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
@@ -262,17 +263,15 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
         )
 
     parsed = _parse_json_object(raw)
-    tool_call_plan: list[ToolCallPlan] = []
-    for call in parsed.get("calls", []):
-        if isinstance(call, dict) and call.get("tool"):
-            tool_costs = es.get("tool_costs", {})
-            cost = tool_costs.get(call["tool"], 1.0)
-            tool_call_plan.append(
-                ToolCallPlan(
-                    tool=call["tool"],
-                    args=call.get("args", {}),
-                    target_fact_ids=call.get("target_fact_ids", []),
-                    cost=cost,
+    evidence_requests: list[EvidenceRequest] = []
+    for req in parsed.get("evidence_requests", []):
+        if isinstance(req, dict) and req.get("target_fact_ids"):
+            evidence_requests.append(
+                EvidenceRequest(
+                    target_fact_ids=req.get("target_fact_ids", []),
+                    evidence_needed=req.get("evidence_needed", ""),
+                    candidate_tools=req.get("candidate_tools", []),
+                    fallback=req.get("fallback", True),
                 )
             )
 
@@ -292,12 +291,12 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
             },
         }
     )
-    logger.info("PLANNING Complete (%d planned calls)", len(tool_call_plan))
+    logger.info("PLANNING Complete (%d evidence requests)", len(evidence_requests))
 
     return {
         "execution_state": {
             **es,
-            "tool_call_plan": tool_call_plan,
+            "evidence_requests": evidence_requests,
             "budget_remaining": new_budget,
             # Entry-count semantics: increment on every planning entry so
             # the router can limit research retries.  First entry: 0→1.

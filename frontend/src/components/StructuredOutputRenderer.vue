@@ -34,14 +34,14 @@ const FIELD_REGISTRY: Record<string, FieldSpec> = {
   concepts: { type: "pill-list", label: "Concepts" },
   unknown_facts: { type: "fact-cards", label: "Unknown Facts" },
   new_unknown_facts: { type: "string-list", label: "New Unknown Facts" },
-  calls: {
+  evidence_requests: {
     type: "object-list",
-    label: "Planned Calls",
+    label: "Evidence Requests",
     itemFields: [
-      { key: "tool", label: "Tool", type: "text" },
-      { key: "args", label: "Args", type: "key-value" },
       { key: "target_fact_ids", label: "Target Facts", type: "pill-list" },
-      { key: "rationale", label: "Rationale", type: "text" },
+      { key: "evidence_needed", label: "Evidence Needed", type: "text" },
+      { key: "candidate_tools", label: "Candidate Tools", type: "pill-list" },
+      { key: "fallback", label: "Fallback", type: "badge" },
     ],
   },
   conclusions: {

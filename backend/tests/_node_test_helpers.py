@@ -54,7 +54,7 @@ def _build_state(config, question="Test question", facts=None, conclusions=None)
             },
             "execution_state": {
                 "candidate_tools": [],
-                "tool_call_plan": [],
+                "evidence_requests": [],
                 "budget_remaining": float(config.budget.default_limit),
                 "budget_limit": float(config.budget.default_limit),
                 "step_costs": step_costs,
@@ -93,18 +93,18 @@ DECOMPOSITION_RESPONSE = json.dumps(
 
 PLANNING_RESPONSE = json.dumps(
     {
-        "calls": [
+        "evidence_requests": [
             {
-                "tool": "web_search",
-                "args": {"query": "entity1 fact"},
                 "target_fact_ids": ["f001"],
-                "rationale": "Search for entity1 information",
+                "evidence_needed": "entity1 information",
+                "candidate_tools": ["web_search"],
+                "fallback": True,
             },
             {
-                "tool": "web_search",
-                "args": {"query": "entity2 fact"},
                 "target_fact_ids": ["f002"],
-                "rationale": "Search for entity2 information",
+                "evidence_needed": "entity2 information",
+                "candidate_tools": ["web_search"],
+                "fallback": True,
             },
         ],
     }

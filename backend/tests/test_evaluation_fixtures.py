@@ -98,7 +98,7 @@ def _build_state(config, question: str, facts: list[Fact] | None = None) -> Rese
         },
         "execution_state": {
             "candidate_tools": [],
-            "tool_call_plan": [],
+            "evidence_requests": [],
             "budget_remaining": float(config.budget.default_limit),
             "budget_limit": float(config.budget.default_limit),
             "step_costs": step_costs,

@@ -77,11 +77,24 @@ class Conclusion(TypedDict):
     derivation: NotRequired[str]  # "direct" | "inferred"
 
 
-class ToolCallPlan(TypedDict):
-    tool: str
-    args: dict
+class EvidenceRequest(TypedDict):
+    """Evidence-driven plan item produced by the planning node.
+
+    Replaces the former ToolCallPlan approach where the planner pre-baked
+    exact tool calls with exact queries. Instead, the planner describes
+    WHAT evidence is needed and WHICH tools might provide it, leaving
+    query formulation to the research step which has round-by-round
+    context and tool argument schemas.
+
+    candidate_tools is ordered by preference: the first entry is the
+    best tool to try, subsequent entries are fallbacks. web_search
+    typically appears last as the generic fallback.
+    """
+
     target_fact_ids: list[str]
-    cost: float
+    evidence_needed: str
+    candidate_tools: list[str]
+    fallback: bool
 
 
 class ReviewOutcome(TypedDict):
@@ -131,7 +144,7 @@ class Knowledge(TypedDict):
 
 class ExecutionState(TypedDict):
     candidate_tools: list[ToolDefinition]
-    tool_call_plan: list[ToolCallPlan]
+    evidence_requests: list[EvidenceRequest]
     budget_remaining: float
     budget_limit: float
     step_costs: dict[str, float]

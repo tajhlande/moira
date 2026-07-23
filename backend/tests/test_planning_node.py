@@ -35,9 +35,9 @@ class TestPlanning:
 
         result = await planning(state, _make_run_config(config))
 
-        plan = result["execution_state"]["tool_call_plan"]
+        plan = result["execution_state"]["evidence_requests"]
         assert len(plan) == 2
-        assert plan[0]["tool"] == "web_search"
+        assert plan[0]["candidate_tools"] == ["web_search"]
         assert plan[0]["target_fact_ids"] == ["f001"]
         assert plan[1]["target_fact_ids"] == ["f002"]
 
@@ -76,10 +76,10 @@ class TestPlanning:
             await planning(state, _make_run_config(config))
 
     @pytest.mark.asyncio
-    async def test_empty_tool_plan(self, config, mock_writer, mock_model):
+    async def test_empty_evidence_requests(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
         mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps({"calls": []})
+            content=json.dumps({"evidence_requests": []})
         )
 
         from moira.workflow.nodes.planning import planning
@@ -90,7 +90,7 @@ class TestPlanning:
         ]
 
         result = await planning(state, _make_run_config(config))
-        assert result["execution_state"]["tool_call_plan"] == []
+        assert result["execution_state"]["evidence_requests"] == []
 
     @pytest.mark.asyncio
     async def test_malformed_response_gives_empty_plan(self, config, mock_writer, mock_model):
@@ -105,7 +105,7 @@ class TestPlanning:
         ]
 
         result = await planning(state, _make_run_config(config))
-        assert result["execution_state"]["tool_call_plan"] == []
+        assert result["execution_state"]["evidence_requests"] == []
 
 
 class TestPlanningCallLimits:
@@ -166,39 +166,3 @@ class TestPlanningCallLimits:
 
         assert "calls remaining: 7" in result
         assert "(step: 5)" in result
-
-    @pytest.mark.asyncio
-    async def test_planning_uses_tool_costs_from_state(self, config, mock_writer, mock_model):
-        """Planning should produce a tool_call_plan with costs from tool_costs."""
-        _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content=json.dumps(
-                {
-                    "calls": [
-                        {
-                            "tool": "web_search",
-                            "args": {"query": "x"},
-                            "target_fact_ids": ["f001"],
-                        },
-                    ],
-                }
-            )
-        )
-
-        from moira.workflow.nodes.planning import planning
-
-        state = _build_state(config, "Test question")
-        state["knowledge"]["user_goal"] = "Find info"
-        state["knowledge"]["facts"] = [
-            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
-        ]
-        state["execution_state"]["candidate_tools"] = [
-            ToolDefinition(name="web_search", description="Search"),
-        ]
-        state["execution_state"]["tool_costs"] = {"web_search": 5.0}
-
-        result = await planning(state, _make_run_config(config))
-
-        plan = result["execution_state"]["tool_call_plan"]
-        assert len(plan) == 1
-        assert plan[0]["cost"] == 5.0

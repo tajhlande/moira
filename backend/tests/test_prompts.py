@@ -97,7 +97,7 @@ class TestLoadPrompts:
             "research.user",
             user_goal="test goal",
             unknown_facts="fact list",
-            tool_call_plan="plan",
+            evidence_requests="plan",
             tool_descriptions="tools",
         )
         assert "test goal" in rendered

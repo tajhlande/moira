@@ -112,7 +112,7 @@ class TestPromptsFile:
             "research.user": {
                 "user_goal",
                 "unknown_facts",
-                "tool_call_plan",
+                "evidence_requests",
                 "tool_descriptions",
             },
             "research.system_retry_review": {"coverage_assessment", "missing_areas"},
