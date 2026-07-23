@@ -175,7 +175,7 @@ def _build_state(config, budget=None):
         },
         "execution_state": {
             "candidate_tools": [],
-            "tool_call_plan": [],
+            "evidence_requests": [],
             "budget_remaining": limit,
             "budget_limit": limit,
             "step_costs": step_costs,

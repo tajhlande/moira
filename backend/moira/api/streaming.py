@@ -209,7 +209,7 @@ async def send_message(
         },
         "execution_state": {
             "candidate_tools": [],
-            "tool_call_plan": [],
+            "evidence_requests": [],
             "budget_remaining": float(budget_limit),
             "budget_limit": float(budget_limit),
             "step_costs": cost_weights,
@@ -386,7 +386,7 @@ async def rerun_message(
         },
         "execution_state": {
             "candidate_tools": [],
-            "tool_call_plan": [],
+            "evidence_requests": [],
             "budget_remaining": float(budget_limit),
             "budget_limit": float(budget_limit),
             "step_costs": cost_weights,

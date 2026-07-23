@@ -112,11 +112,19 @@ def _format_tool_descriptions(tools: list[ToolDefinition]) -> str:
     return "\n".join(_render(t) for t in tools)
 
 
-def _format_tool_call_plan(plan: list) -> str:
+def _format_evidence_requests(requests: list) -> str:
+    """Format evidence requests for the research prompt.
+
+    Each line describes what evidence is needed for a group of facts and
+    which tools to try, leaving query formulation to the model.
+    """
     lines = []
-    for call in plan:
-        target_ids = ", ".join(call.get("target_fact_ids", []))
-        lines.append(f"- {call['tool']} | args: {call.get('args', {})} | targets: [{target_ids}]")
+    for req in requests:
+        target_ids = ", ".join(req.get("target_fact_ids", []))
+        evidence = req.get("evidence_needed", "")
+        tools = " -> ".join(req.get("candidate_tools", []))
+        fallback = " | fallback: yes" if req.get("fallback") else ""
+        lines.append(f"- Facts [{target_ids}]: {evidence} | tools: {tools}{fallback}")
     return "\n".join(lines)
 
 
@@ -627,7 +635,7 @@ def _process_execution_results(
     citations: list[Citation],
     seen_urls: dict[str, str],
     facts: list[Fact],
-    tool_plan: list,
+    evidence_requests: list,
     tool_results_log: list[dict],
     call_counts: dict[str, int],
     tool_costs: dict[str, float],
@@ -748,8 +756,8 @@ def _process_execution_results(
         )
 
         if result.success and result.output:
-            for planned in tool_plan:
-                if planned["tool"] == name:
+            for planned in evidence_requests:
+                if name in planned.get("candidate_tools", []):
                     target_ids = planned.get("target_fact_ids", [])
                     for fact in facts:
                         if fact["id"] in target_ids and fact["status"] == "unknown":
@@ -836,14 +844,47 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
                 )
         elif disc.get("fact_needed"):
             new_id = next_id("f", facts)
-            facts.append(
-                Fact(
-                    id=new_id,
-                    subject=disc.get("subject", ""),
-                    fact_needed=disc["fact_needed"],
-                    status="unknown",
-                )
+            new_fact = Fact(
+                id=new_id,
+                subject=disc.get("subject", ""),
+                fact_needed=disc["fact_needed"],
+                status="unknown",
             )
+            # If the model also provided a claim (e.g., it discovered an
+            # entity AND resolved it from the same search result), record
+            # it immediately rather than forcing a wasted retry cycle.
+            claim = (disc.get("claim") or "").strip()
+            if claim:
+                new_fact["claim"] = claim
+                new_fact["status"] = "unverified"
+                disc_cites = disc.get("citation_ids", [])
+                if disc_cites:
+                    new_fact["citation_ids"] = sorted(c for c in disc_cites if isinstance(c, str))
+            facts.append(new_fact)
+        elif (disc.get("claim") or "").strip():
+            # Fallback: the model provided a claim with null fact_id but no
+            # fact_needed. Rather than silently dropping the claim, create a
+            # new fact using the claim text as both fact_needed and claim.
+            # This captures information the model worked to extract even when
+            # it doesn't follow the fact_needed convention.
+            claim = (disc.get("claim") or "").strip()
+            logger.warning(
+                "RESEARCH: model returned claim with null fact_id and no "
+                "fact_needed — creating fact from claim: %s",
+                claim[:80],
+            )
+            new_id = next_id("f", facts)
+            new_fact = Fact(
+                id=new_id,
+                subject=disc.get("subject", ""),
+                fact_needed=claim,
+                claim=claim,
+                status="unverified",
+            )
+            disc_cites = disc.get("citation_ids", [])
+            if disc_cites:
+                new_fact["citation_ids"] = sorted(c for c in disc_cites if isinstance(c, str))
+            facts.append(new_fact)
 
 
 def _cleanup_empty_claims(facts: list[Fact]) -> None:
@@ -1128,7 +1169,7 @@ async def _run_native_tool_loop(
     facts: list[Fact],
     citations: list[Citation],
     seen_urls: dict[str, str],
-    tool_plan: list,
+    evidence_requests: list,
     tool_results_log: list[dict],
     new_budget: float,
     total_tool_cost: float,
@@ -1220,7 +1261,7 @@ async def _run_native_tool_loop(
             citations,
             seen_urls,
             facts,
-            tool_plan,
+            evidence_requests,
             tool_results_log,
             call_counts,
             tool_costs,
@@ -1285,7 +1326,7 @@ async def _run_text_tool_loop(
     facts: list[Fact],
     citations: list[Citation],
     seen_urls: dict[str, str],
-    tool_plan: list,
+    evidence_requests: list,
     tool_results_log: list[dict],
     new_budget: float,
     total_tool_cost: float,
@@ -1461,7 +1502,7 @@ async def _run_text_tool_loop(
             citations,
             seen_urls,
             facts,
-            tool_plan,
+            evidence_requests,
             tool_results_log,
             call_counts,
             tool_costs,
@@ -1511,7 +1552,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     """Model-driven multi-round tool calling for fact discovery.
 
     The model decides which tools to call from the candidate set, sees
-    results, and can request additional rounds. The tool_call_plan from
+    results, and can request additional rounds. The evidence_requests from
     planning is provided as guidance, but the model drives execution.
     """
     _check_stop(NODE_NAME, config)
@@ -1568,7 +1609,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     }
 
     candidate_tools = es.get("candidate_tools", [])
-    tool_plan = es.get("tool_call_plan", [])
+    evidence_requests = es.get("evidence_requests", [])
 
     # Get tool executor
     from moira.service_setup import service_provider
@@ -1588,7 +1629,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             "tool_results": [],
             "facts_resolved": [],
             "facts_newly_unknown": [f["id"] for f in facts if f["status"] == "unknown"],
-            "tool_plan_size": len(tool_plan),
+            "evidence_requests_size": len(evidence_requests),
             "executor_available": executor is not None,
             "rounds": 0,
         }
@@ -1649,7 +1690,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             "research.user_native",
             user_goal=knowledge.get("user_goal", knowledge["question"]),
             unknown_facts=_format_unknown_facts(facts),
-            tool_call_plan=_format_tool_call_plan(tool_plan),
+            evidence_requests=_format_evidence_requests(evidence_requests),
         )
     else:
         system_prompt = render_prompt(
@@ -1660,7 +1701,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             "research.user",
             user_goal=knowledge.get("user_goal", knowledge["question"]),
             unknown_facts=_format_unknown_facts(facts),
-            tool_call_plan=_format_tool_call_plan(tool_plan),
+            evidence_requests=_format_evidence_requests(evidence_requests),
             tool_descriptions=_format_tool_descriptions(candidate_tools),
         )
 
@@ -1707,7 +1748,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             facts=facts,
             citations=citations,
             seen_urls=_seen_urls,
-            tool_plan=tool_plan,
+            evidence_requests=evidence_requests,
             tool_results_log=tool_results_log,
             new_budget=new_budget,
             total_tool_cost=total_tool_cost,
@@ -1730,7 +1771,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             facts=facts,
             citations=citations,
             seen_urls=_seen_urls,
-            tool_plan=tool_plan,
+            evidence_requests=evidence_requests,
             tool_results_log=tool_results_log,
             new_budget=new_budget,
             total_tool_cost=total_tool_cost,
@@ -1818,7 +1859,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     detail: dict = {
         "facts_resolved": [f["id"] for f in facts if f["status"] == "unverified"],
         "facts_newly_unknown": [f["id"] for f in facts if f["status"] == "unknown"],
-        "tool_plan_size": len(tool_plan),
+        "evidence_requests_size": len(evidence_requests),
         "executor_available": executor is not None,
         "rounds": round_num + 1 if loop_result.had_valid_calls else round_num,
         "tool_calling_mode": "native" if resolved.native_tool_calling else "emulated",

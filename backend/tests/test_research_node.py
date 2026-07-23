@@ -8,7 +8,7 @@ from _node_test_helpers import _build_state, _inject_services, _make_run_config
 
 from moira.inference.client import ChatResponse
 from moira.inference.registry import ResolvedModel
-from moira.models.knowledge import Fact, ToolCallPlan
+from moira.models.knowledge import EvidenceRequest, Fact
 from moira.service_setup import _services
 from moira.tools.base import ToolCall, ToolDefinition, ToolResult
 
@@ -73,9 +73,12 @@ class TestResearch:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="entity1", fact_needed="some fact", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search", args={"query": "entity1"}, target_fact_ids=["f001"], cost=1.0
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
+                target_fact_ids=["f001"],
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -141,9 +144,12 @@ class TestResearch:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
+                target_fact_ids=["f001"],
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -168,9 +174,12 @@ class TestResearch:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
+                target_fact_ids=["f001"],
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
 
@@ -197,9 +206,12 @@ class TestResearch:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
+                target_fact_ids=["f001"],
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -266,9 +278,12 @@ class TestResearch:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
+                target_fact_ids=["f001"],
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -342,9 +357,12 @@ class TestResearch:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="entity1", fact_needed="some fact", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search", args={"query": "entity1"}, target_fact_ids=["f001"], cost=1.0
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
+                target_fact_ids=["f001"],
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -419,9 +437,12 @@ class TestResearch:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
+                target_fact_ids=["f001"],
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -496,9 +517,12 @@ class TestResearch:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
+                target_fact_ids=["f001"],
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -561,12 +585,12 @@ class TestResearch:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="calculator",
-                args={"expression": "6*7"},
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
                 target_fact_ids=["f001"],
-                cost=1.0,
+                evidence_needed="test evidence",
+                candidate_tools=["calculator"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -644,12 +668,12 @@ class TestResearch:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="url_content",
-                args={"url": "https://example.com/article"},
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
                 target_fact_ids=["f001"],
-                cost=1.0,
+                evidence_needed="test evidence",
+                candidate_tools=["url_content"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -716,12 +740,12 @@ class TestResearch:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="url_content",
-                args={"url": "https://x.com"},
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
                 target_fact_ids=["f001"],
-                cost=1.0,
+                evidence_needed="test evidence",
+                candidate_tools=["url_content"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -812,9 +836,12 @@ class TestResearch:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
+                target_fact_ids=["f001"],
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -916,9 +943,12 @@ class TestResearch:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search", args={"query": "x"}, target_fact_ids=["f001"], cost=1.0
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
+                target_fact_ids=["f001"],
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -1028,7 +1058,7 @@ class TestResearch:
         state = _build_state(config, "Test question")
         state["knowledge"]["user_goal"] = "Find info"
         state["knowledge"]["facts"] = []
-        state["execution_state"]["tool_call_plan"] = []
+        state["execution_state"]["evidence_requests"] = []
 
         result = await research(state, _make_run_config(config))
 
@@ -1059,8 +1089,13 @@ class TestResearch:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(tool="expensive_tool", args={}, target_fact_ids=["f001"], cost=50.0),
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
+                target_fact_ids=["f001"],
+                evidence_needed="test evidence",
+                candidate_tools=["expensive_tool"],
+                fallback=True,
+            ),
         ]
         state["execution_state"]["candidate_tools"] = [
             ToolDefinition(name="expensive_tool", description="Expensive"),
@@ -1133,12 +1168,12 @@ class TestResearch:
                 status="unknown",
             ),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search",
-                args={"query": "sqrt vs log2"},
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
                 target_fact_ids=["f001"],
-                cost=1.0,
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -1234,18 +1269,18 @@ class TestResearchCallLimits:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search",
-                args={"query": "x"},
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
                 target_fact_ids=["f001"],
-                cost=5.0,
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
-            ToolCallPlan(
-                tool="api_tool",
-                args={"q": "y"},
+            EvidenceRequest(
                 target_fact_ids=["f001"],
-                cost=2.0,
+                evidence_needed="test evidence",
+                candidate_tools=["api_tool"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -1305,12 +1340,12 @@ class TestResearchCallLimits:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search",
-                args={"query": "x"},
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
                 target_fact_ids=["f001"],
-                cost=5.0,
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -1367,12 +1402,12 @@ class TestResearchCallLimits:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search",
-                args={"query": "x"},
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
                 target_fact_ids=["f001"],
-                cost=1.0,
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -1442,12 +1477,12 @@ class TestResearchSummaryRound:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search",
-                args={"query": "x"},
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
                 target_fact_ids=["f001"],
-                cost=1.0,
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -1515,12 +1550,12 @@ class TestResearchSummaryRound:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search",
-                args={"query": "x"},
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
                 target_fact_ids=["f001"],
-                cost=1.0,
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -1582,12 +1617,12 @@ class TestResearchSummaryRound:
         state["knowledge"]["facts"] = [
             Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search",
-                args={"query": "x"},
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
                 target_fact_ids=["f001"],
-                cost=1.0,
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["candidate_tools"] = [
@@ -1641,12 +1676,12 @@ class TestResearchSummaryRound:
                 },
             ),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search",
-                args={},
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
                 target_fact_ids=["f001"],
-                cost=1.0,
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
         state["execution_state"]["tool_costs"] = {"web_search": 1.0}
@@ -1677,6 +1712,167 @@ class TestResearchSummaryRound:
 
         # web_search should NOT have been executed (missing required param)
         mock_executor.execute_batch.assert_not_called()
+
+
+class TestNewFactCreation:
+    """Tests for _apply_discovered_facts when the model creates new facts
+    with null fact_id. Verifies that claims are preserved when provided
+    and facts stay 'unknown' when no claim is given."""
+
+    def test_new_fact_with_claim_becomes_unverified(self):
+        """When the model creates a new fact with a claim, the fact should
+        be immediately marked 'unverified' with the claim and citation_ids
+        recorded — avoiding a wasted retry cycle."""
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts: list[Fact] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        parsed = {
+            "discovered_facts": [
+                {
+                    "fact_id": None,
+                    "subject": "Corviknight",
+                    "fact_needed": "Corviknight's type composition",
+                    "claim": "Corviknight is a Flying/Steel-type Pokémon.",
+                    "citation_ids": ["cit001"],
+                }
+            ]
+        }
+        _apply_discovered_facts(parsed, facts)
+
+        # Original fact untouched
+        assert facts[0]["id"] == "f001"
+        assert facts[0]["status"] == "unknown"
+
+        # New fact created with claim
+        assert len(facts) == 2
+        new = facts[1]
+        assert new["id"] == "f002"
+        assert new["subject"] == "Corviknight"
+        assert new["status"] == "unverified"
+        assert new["claim"] == "Corviknight is a Flying/Steel-type Pokémon."
+        assert new["citation_ids"] == ["cit001"]
+
+    def test_new_fact_without_claim_stays_unknown(self):
+        """When the model creates a new fact without a claim, it should
+        remain 'unknown' as a placeholder for future research."""
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts: list[Fact] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        parsed = {
+            "discovered_facts": [
+                {
+                    "fact_id": None,
+                    "subject": "Great Tusk",
+                    "fact_needed": "Great Tusk's abilities",
+                }
+            ]
+        }
+        _apply_discovered_facts(parsed, facts)
+
+        assert len(facts) == 2
+        new = facts[1]
+        assert new["id"] == "f002"
+        assert new["status"] == "unknown"
+        assert "claim" not in new or not new.get("claim")
+
+    def test_new_fact_empty_claim_stays_unknown(self):
+        """An empty string claim should be treated as no claim — fact
+        stays 'unknown'."""
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts: list[Fact] = []
+        parsed = {
+            "discovered_facts": [
+                {
+                    "fact_id": None,
+                    "subject": "Kingambit",
+                    "fact_needed": "Kingambit's tier classification",
+                    "claim": "  ",
+                }
+            ]
+        }
+        _apply_discovered_facts(parsed, facts)
+
+        assert len(facts) == 1
+        assert facts[0]["status"] == "unknown"
+
+    def test_multiple_new_facts_get_sequential_ids(self):
+        """Multiple new facts in one response should get sequential IDs."""
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts: list[Fact] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        parsed = {
+            "discovered_facts": [
+                {
+                    "fact_id": None,
+                    "subject": "Corviknight",
+                    "fact_needed": "type",
+                    "claim": "Flying/Steel",
+                },
+                {
+                    "fact_id": None,
+                    "subject": "Great Tusk",
+                    "fact_needed": "type",
+                    "claim": "Ground/Fighting",
+                },
+            ]
+        }
+        _apply_discovered_facts(parsed, facts)
+
+        assert len(facts) == 3
+        assert facts[1]["id"] == "f002"
+        assert facts[2]["id"] == "f003"
+
+    def test_null_fact_id_claim_only_fallback(self):
+        """When the model provides a claim with null fact_id and no
+        fact_needed, the claim should still be captured as a new fact
+        using the claim text as both fact_needed and claim."""
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts: list[Fact] = []
+        parsed = {
+            "discovered_facts": [
+                {
+                    "fact_id": None,
+                    "subject": "Sand Stream",
+                    "claim": "Sand Stream sets sandstorm on entry.",
+                    "citation_ids": ["cit003"],
+                }
+            ]
+        }
+        _apply_discovered_facts(parsed, facts)
+
+        assert len(facts) == 1
+        f = facts[0]
+        assert f["id"] == "f001"
+        assert f["subject"] == "Sand Stream"
+        assert f["status"] == "unverified"
+        assert f["claim"] == "Sand Stream sets sandstorm on entry."
+        assert f["fact_needed"] == "Sand Stream sets sandstorm on entry."
+        assert f["citation_ids"] == ["cit003"]
+
+    def test_null_fact_id_no_claim_no_fact_needed_dropped(self):
+        """When the model provides null fact_id with neither claim nor
+        fact_needed, the entry should be silently dropped."""
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts: list[Fact] = [
+            Fact(id="f001", subject="x", fact_needed="y", status="unknown"),
+        ]
+        parsed = {
+            "discovered_facts": [
+                {"fact_id": None, "subject": "nothing useful"},
+            ]
+        }
+        _apply_discovered_facts(parsed, facts)
+
+        assert len(facts) == 1  # no new fact created
 
 
 class TestResearchNativeMode:
@@ -1757,9 +1953,12 @@ class TestResearchNativeMode:
         state["execution_state"]["candidate_tools"] = [
             ToolDefinition(name="web_search", description="Search"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search", args={"query": "test"}, target_fact_ids=["f001"], cost=1.0
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
+                target_fact_ids=["f001"],
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
 
@@ -2067,12 +2266,12 @@ class TestResearchNativeMode:
         state["execution_state"]["candidate_tools"] = [
             ToolDefinition(name="web_search", description="Search"),
         ]
-        state["execution_state"]["tool_call_plan"] = [
-            ToolCallPlan(
-                tool="web_search",
-                args={"query": "eiffel"},
+        state["execution_state"]["evidence_requests"] = [
+            EvidenceRequest(
                 target_fact_ids=["f001"],
-                cost=1.0,
+                evidence_needed="test evidence",
+                candidate_tools=["web_search"],
+                fallback=True,
             ),
         ]
 
