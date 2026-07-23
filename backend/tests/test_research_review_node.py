@@ -849,3 +849,211 @@ class TestResearchReview:
         result = await research_review(state, _make_run_config(config))
         conclusions = result["knowledge"]["conclusions"]
         assert conclusions[0].get("fact_gate") == "blocked"
+
+    # --- citation_ids population tests ---
+
+    @pytest.mark.asyncio
+    async def test_review_citation_ids_populated_for_verified(
+        self, config, mock_writer, mock_model
+    ):
+        """When the review model returns structured citation_ids for a
+        verified fact, they are written to the fact."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "verified",
+                        "evidence": "Confirmed by [cit003]",
+                        "citation_ids": ["cit003", "cit007"],
+                    }
+                ],
+                "coverage_assessment": "Complete",
+                "missing_areas": [],
+                "route": "continue",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="x",
+                fact_needed="y",
+                claim="Entity confirmed",
+                status="unverified",
+                citation_ids=[],
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+        fact = result["knowledge"]["facts"][0]
+        assert fact["status"] == "verified"
+        assert fact["citation_ids"] == ["cit003", "cit007"]
+
+    @pytest.mark.asyncio
+    async def test_evidence_fallback_populates_citation_ids(self, config, mock_writer, mock_model):
+        """When the review model omits structured citation_ids but mentions
+        [citNNN] references in the evidence text, they are parsed and
+        populated as a fallback."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "verified",
+                        "evidence": "Sources [cit011] and [cit046] confirm the claim",
+                    }
+                ],
+                "coverage_assessment": "Complete",
+                "missing_areas": [],
+                "route": "continue",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="x",
+                fact_needed="y",
+                claim="Entity confirmed",
+                status="unverified",
+                citation_ids=[],
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+        fact = result["knowledge"]["facts"][0]
+        assert fact["status"] == "verified"
+        assert fact["citation_ids"] == ["cit011", "cit046"]
+
+    @pytest.mark.asyncio
+    async def test_no_citation_fallback_for_unknown_result(self, config, mock_writer, mock_model):
+        """When a fact is reverted to 'unknown', citation_ids must remain
+        empty even if the evidence text mentions citations."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "unknown",
+                        "evidence": "Source [cit005] does not address fact_needed",
+                    }
+                ],
+                "coverage_assessment": "Missing",
+                "missing_areas": ["Need data"],
+                "route": "retry",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="x",
+                fact_needed="y",
+                claim="Some process claim",
+                status="unverified",
+                citation_ids=["cit005"],
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+        fact = result["knowledge"]["facts"][0]
+        assert fact["status"] == "unknown"
+        assert fact["citation_ids"] == []
+
+    @pytest.mark.asyncio
+    async def test_corrected_claim_uses_citation_ids_field(self, config, mock_writer, mock_model):
+        """When a corrected claim has no corrected_citation_ids but does
+        have citation_ids in the review response, use citation_ids."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "contradicted",
+                        "evidence": "Source says 1996 or 1997, not 1997",
+                        "corrected_claim": "Occurred in 1996 or 1997",
+                        "citation_ids": ["cit010", "cit012"],
+                    }
+                ],
+                "coverage_assessment": "Complete after correction",
+                "missing_areas": [],
+                "route": "continue",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="event",
+                fact_needed="when did it happen",
+                claim="Happened in 1997",
+                status="unverified",
+                citation_ids=[],
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+        fact = result["knowledge"]["facts"][0]
+        assert fact["status"] == "verified"
+        assert fact["corrected"] is True
+        assert fact["citation_ids"] == ["cit010", "cit012"]
+
+    @pytest.mark.asyncio
+    async def test_evidence_fallback_deduplicates_citations(self, config, mock_writer, mock_model):
+        """The evidence fallback should deduplicate citation references
+        that appear multiple times in the evidence text."""
+        _inject_services(config, mock_model)
+        review_json = json.dumps(
+            {
+                "fact_results": [
+                    {
+                        "fact_id": "f001",
+                        "result": "verified",
+                        "evidence": "[cit003] confirms X. [cit003] also notes Y. [cit007] adds Z.",
+                    }
+                ],
+                "coverage_assessment": "Complete",
+                "missing_areas": [],
+                "route": "continue",
+            }
+        )
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=review_json)
+
+        from moira.workflow.nodes.research_review import research_review
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["facts"] = [
+            Fact(
+                id="f001",
+                subject="x",
+                fact_needed="y",
+                claim="Entity confirmed",
+                status="unverified",
+                citation_ids=[],
+            ),
+        ]
+
+        result = await research_review(state, _make_run_config(config))
+        fact = result["knowledge"]["facts"][0]
+        assert fact["citation_ids"] == ["cit003", "cit007"]
