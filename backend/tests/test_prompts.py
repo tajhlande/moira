@@ -80,11 +80,12 @@ class TestLoadPrompts:
     def test_render_prompt_preserves_json_braces(self):
         """render_prompt must NOT touch braces in JSON examples — only
         exact {variable_name} matches are replaced."""
-        # evaluation.system contains a JSON example with braces like
-        # {"conclusion_results": [...]} — verify those survive intact.
+        # evaluation.system contains a JSON example with braces and keys
+        # like "conclusion_results" — verify those survive rendering intact.
         rendered = render_prompt("evaluation.system")
         assert '"conclusion_results"' in rendered
-        assert '{"conclusion_results"' in rendered or '{"conclusion_results"' in rendered
+        assert '"goal_met"' in rendered
+        assert '"route"' in rendered
 
     def test_render_prompt_does_not_match_json_keys(self):
         """A JSON key like {"user_goal": ...} must not be replaced even

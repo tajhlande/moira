@@ -8,6 +8,7 @@ This node is tool-free — it evaluates existing evidence only.
 """
 
 import logging
+import re
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
@@ -269,11 +270,27 @@ async def research_review(state: ResearchState, config: RunnableConfig) -> dict:
                     corrected_citations = fr.get("corrected_citation_ids")
                     if corrected_citations:
                         fact["citation_ids"] = corrected_citations
+                    elif fr.get("citation_ids"):
+                        fact["citation_ids"] = fr["citation_ids"]
                     corrections_applied += 1
                 else:
                     fact["status"] = result
+                    # Populate citation_ids from the structured review field.
+                    # The reviewer cross-references claims against source
+                    # content — its citation linkage is authoritative.
+                    if fr.get("citation_ids"):
+                        fact["citation_ids"] = fr["citation_ids"]
                 if evidence:
                     fact["verification_note"] = evidence
+                # Fallback: if citation_ids is still empty but the evidence
+                # text mentions citation references, parse them. The reviewer
+                # often writes "Sources [cit011] and [cit046] confirm..."
+                # in the evidence field even when it omits the structured
+                # citation_ids field.
+                if result != "unknown" and not fact.get("citation_ids") and evidence:
+                    parsed_cites = sorted(set(re.findall(r"\[(cit\d+)\]", evidence)))
+                    if parsed_cites:
+                        fact["citation_ids"] = parsed_cites
                 break
 
     if corrections_applied:
