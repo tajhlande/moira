@@ -246,9 +246,12 @@ def main() -> None:
     else:
         parser.error("Provide --question, --text, or --all.")
 
-    # Invoke each question serially. Abort immediately on any non-completed
-    # status — this prevents concurrent runs that can overload the model
-    # server with overlapping inference requests.
+    # Invoke each question serially. Continue past failures so a single
+    # transient error (bad JSON, model timeout) doesn't waste the entire
+    # batch. A summary is printed at the end; the process exits non-zero
+    # if any questions failed.
+    succeeded = []
+    failed = []
     with httpx.Client(timeout=httpx.Timeout(60.0)) as client:
         for qid, qtext in questions:
             print(f"Invoking {qid}...", file=sys.stderr)
@@ -265,21 +268,38 @@ def main() -> None:
                 status_code = exc.response.status_code
                 body = exc.response.text[:200]
                 print(f"  ERROR ({status_code}): {body}", file=sys.stderr)
-                sys.exit(1)
+                failed.append((qid, f"HTTP {status_code}: {body}"))
+                continue
             except httpx.HTTPError as exc:
                 print(f"  ERROR: {exc}", file=sys.stderr)
-                sys.exit(1)
+                failed.append((qid, str(exc)))
+                continue
+            except Exception as exc:
+                print(f"  ERROR: {exc}", file=sys.stderr)
+                failed.append((qid, str(exc)))
+                continue
 
             status_str = result["status"]
             run_str = result["run_id"][:12] if result["run_id"] else "N/A"
-            print(f"{qid:30s}  run={run_str}  status={status_str}")
 
             if status_str != "completed":
                 print(
-                    f"ERROR: run for {qid} ended with status '{status_str}'. Aborting.",
+                    f"  ERROR: run for {qid} ended with status '{status_str}'.",
                     file=sys.stderr,
                 )
-                sys.exit(1)
+                failed.append((qid, f"status={status_str}"))
+                continue
+
+            print(f"{qid:30s}  run={run_str}  status={status_str}")
+            succeeded.append((qid, result["run_id"]))
+
+    print(file=sys.stderr)
+    print(f"Completed: {len(succeeded)}/{len(questions)}", file=sys.stderr)
+    if failed:
+        print("Failed:", file=sys.stderr)
+        for qid, reason in failed:
+            print(f"  {qid}: {reason}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -44,19 +44,21 @@ _MATCH_PREFIX_LEN = 60
 
 
 def find_run_for_question(db_path: str, question_text: str) -> str | None:
-    """Find the completed run matching the question text that has the most
-    workflow steps.
+    """Find the most recent completed run matching the question text.
 
     Matches on the first ``_MATCH_PREFIX_LEN`` characters of the user
     message content to tolerate minor trailing differences.
 
-    When a run fails and is resumed via the UI's "Retry" button, the
-    resume mechanism creates a new run containing only the retried
-    step(s) — e.g. just ``report_generation``. The original run retains
-    all the research data (tool calls, facts, conclusions) but has
-    ``status='error'``. By ordering on step count DESC, we pick the run
-    with the full research pipeline rather than the single-step resumed
-    run, ensuring the eval captures meaningful metrics.
+    Orders by ``started_at DESC`` so the most recent successful run is
+    always selected. Step count is a secondary tiebreaker for edge cases
+    where multiple runs started at the same timestamp.
+
+    The previous step-count-first ordering caused the eval to score older
+    runs (with more retries = more steps) instead of the freshly invoked
+    runs from ``eval:invoke``. The resume case (failed run resumed via
+    "Retry" creates a thin new run) is handled because the original
+    failed run has ``status='error'`` and is filtered out by the
+    ``WHERE status='completed'`` clause.
     """
     conn = sqlite3.connect(db_path)
     try:
@@ -70,7 +72,7 @@ def find_run_for_question(db_path: str, question_text: str) -> str | None:
             WHERE substr(m.content, 1, ?) = ?
               AND wr.status = 'completed'
             GROUP BY wr.id
-            ORDER BY COUNT(ws.id) DESC, wr.started_at DESC
+            ORDER BY wr.started_at DESC, COUNT(ws.id) DESC
             LIMIT 1
             """,
             (_MATCH_PREFIX_LEN, prefix),
