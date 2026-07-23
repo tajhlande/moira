@@ -107,3 +107,17 @@ Evals above this point have a bug:
 34 out of 106 workflow runs (32%) were scored against the wrong run — not the most recent completed run at the time.
 ==============================================
 
+## 2026-07-23 batch (commit 771b8d59, planning-freedom)
+
+| Question | Rubric | Score | web_search | Status |
+|----------|--------|-------|------------|--------|
+| flaming-hot-cheetos | general | 18/25 | 10 | PASS |
+| future-nostalgia | general | 15/25 | 10 | PASS |
+| jazz-trumpeters | general | 14/25 | 10 | FAIL |
+| telescope-mount-cost | general | 17/25 | 10 | PASS |
+| trade-policy-manufacturing | general | 13/25 | 10 | FAIL |
+| tyranitar-ou | pokemon | 13/16 | 4 | FAIL |
+| water-blood-pressure | general | 18/25 | 3 | PASS |
+
+- Agent model: z-ai/glm-5.2
+- Note: First attempt at planning evidence requests instead of prebaked tool calls - on planning-freedom branch
