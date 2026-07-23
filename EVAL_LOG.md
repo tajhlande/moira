@@ -49,6 +49,13 @@ Scores are recorded manually via `moira_eval.log`.
 - Agent model: z-ai/glm-5.2
 - Note: Added per-step tool calling limits
 
+==============================================
+Evals below this point have a bug:
+34 out of 106 workflow runs (32%) were scored against the wrong run — not the most recent completed run at the time.
+==============================================
+
+
+
 ## 2026-07-20 batch (commit 8105cc0b, main)
 
 | Question                   | Rubric  | Score | web_search | Status |
@@ -94,3 +101,9 @@ Scores are recorded manually via `moira_eval.log`.
 - Agent model: z-ai/glm-5.2
 - Note: Added inference as a method for drawing conclusions.
         `jazz-trumpeters` is an anomaly here - report was thorough but drew on citation snippets, not any of the facts or conclusions as all were unverified.
+
+==============================================
+Evals above this point have a bug:
+34 out of 106 workflow runs (32%) were scored against the wrong run — not the most recent completed run at the time.
+==============================================
+
