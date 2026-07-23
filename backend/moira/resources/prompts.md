@@ -45,6 +45,25 @@ Facts should be specific and verifiable, but should not contain examples or prop
 Avoid vague facts like "general information about X" — instead, enumerate the specific
 data points needed.
 
+For questions that ask to identify, rank, compare, or evaluate entities
+(e.g., "What are the most revered action figures from the 1980s?",
+"Which telescope mount offers the best value?"), include discovery facts
+that direct the research to find candidate entities from external sources:
+- Include at least one fact asking for published lists, rankings, awards,
+  or expert compilations that identify notable entities in the domain
+- Do NOT name specific candidates yourself — the research process will
+  discover them from sources
+- Include facts about the criteria needed to evaluate or compare whatever
+  candidates the research discovers (e.g., "Each figure's production run,
+  character licensing, and collector community reception")
+Research strategy for identification questions:
+- First, search broadly for expert rankings or curated lists that
+  identify candidates
+- Then, research each discovered candidate individually to verify
+  their specific contributions and significance
+This ensures the research searches for actual candidates from external
+sources rather than studying the abstract concept of influence or quality.
+
 Respond with a JSON object with these keys:
 - "user_goal": a one-sentence description of what the user wants to accomplish, written in plain language
 - "topic": the broad domain of the question (e.g., "competitive pokemon", "climate science")
@@ -301,6 +320,13 @@ Search strategy:
   Better: "equatorial mount production volume"
   Better: "why are equatorial mounts expensive"
   Better: "telescope mount cost comparison forum"
+- Do NOT copy the fact_needed text into your search query. fact_needed
+  describes WHAT to find, not HOW to search for it. Reformulate each
+  fact into search-engine-friendly terms.
+  Bad (copies fact text): "whether published lists or rankings of
+    revered 1980s action figures exist"
+  Good: "most revered 1980s action figures list"
+  Good: "best 1980s action figures ranking"
 - Do NOT rephrase a search you have already done. If a query returned poor results,
   try a different angle — a different subject, a source-specific search (site:epa.gov),
   or a broader/narrower term — not the same words in a different order.
@@ -319,6 +345,13 @@ Search strategy:
   - Causal/policy → academic literature, think-tank reports
   - Use site-specific searches (site:reddit.com, site:arxiv.org) when a
     domain-specific source likely has the information
+- When researching identificational or comparative questions (e.g.,
+  "who are the best X?", "which Y is best for Z?"), start with broad
+  discovery searches — find lists, rankings, or expert compilations
+  that identify candidates. Use those results to learn the names of
+  specific entities, then search for facts about each entity
+  individually. Do not search for abstract definitions of influence
+  or quality — search for actual ranked lists from credible sources.
 
 For each fact you discover, record:
 - The ID of the fact this resolves — use the EXACT ID from the unknown facts
@@ -439,9 +472,9 @@ Rules:
   Do not create entries for facts you could not resolve.
 - Never write claims describing the research process — "insufficient data found",
   "no results available", "no studies exist" are NOT factual claims. A claim must
-  be a factual assertion about the subject, extracted FROM a source. "Miles Davis
-  pioneered modal jazz in the 1960s" is a claim. "Insufficient data found about
-  Miles Davis" is not.
+  be a factual assertion about the subject, extracted FROM a source. "He-Man
+  was produced by Mattel beginning in 1982" is a claim. "Insufficient data
+  found about He-Man" is not.
 
 Search strategy:
 - Follow the tool call plan. It maps each search to specific facts.
@@ -451,6 +484,13 @@ Search strategy:
   Better: "equatorial mount production volume"
   Better: "why are equatorial mounts expensive"
   Better: "telescope mount cost comparison forum"
+- Do NOT copy the fact_needed text into your search query. fact_needed
+  describes WHAT to find, not HOW to search for it. Reformulate each
+  fact into search-engine-friendly terms.
+  Bad (copies fact text): "whether published lists or rankings of
+    revered 1980s action figures exist"
+  Good: "most revered 1980s action figures list"
+  Good: "best 1980s action figures ranking"
 - Do NOT rephrase a search you have already done. If a query returned poor results,
   try a different angle — a different subject, a source-specific search (site:epa.gov),
   or a broader/narrower term — not the same words in a different order.
@@ -469,6 +509,13 @@ Search strategy:
   - Causal/policy → academic literature, think-tank reports
   - Use site-specific searches (site:reddit.com, site:arxiv.org) when a
     domain-specific source likely has the information
+- When researching identificational or comparative questions (e.g.,
+  "who are the best X?", "which Y is best for Z?"), start with broad
+  discovery searches — find lists, rankings, or expert compilations
+  that identify candidates. Use those results to learn the names of
+  specific entities, then search for facts about each entity
+  individually. Do not search for abstract definitions of influence
+  or quality — search for actual ranked lists from credible sources.
 
 Extraction discipline:
 - Before concluding a fact cannot be answered, carefully review ALL tool results for
@@ -746,6 +793,10 @@ verified with the corrected claim, avoiding a costly research retry. If the
 evidence is insufficient to write a complete, accurate correction, leave
 corrected_claim empty and the fact will remain contradicted.
 
+When you verify or contradict a fact, include the citation IDs of the sources
+that support your verdict in the citation_ids field. These are the [citNNN]
+IDs from the source content you used to reach your conclusion.
+
 Example: claim "The event happened in 1997", source says "1996 or 1997"
 → result: "contradicted"
 → corrected_claim: "The event occurred in 1996 or 1997"
@@ -768,12 +819,34 @@ If the research is sufficient, recommend continuing to evaluation.
 
 Respond with ONLY a JSON object, structured exactly like this:
 
-{"fact_results": [{"fact_id": "f001", "result": "verified", "evidence": "brief note on what confirmed it"}, {"fact_id": "f002", "result": "contradicted", "evidence": "what contradicted it", "corrected_claim": "the corrected claim that the cited evidence supports"}], "coverage_assessment": "Brief assessment of whether the research sufficiently covered the question", "missing_areas": ["specific description of what is still needed"], "route": "continue"}
+{
+  "fact_results": [
+    {
+      "fact_id": "f001",
+      "result": "verified",
+      "evidence": "brief note on what confirmed it",
+      "citation_ids": ["cit001", "cit003"]
+    },
+    {
+      "fact_id": "f002",
+      "result": "contradicted",
+      "evidence": "what contradicted it",
+      "corrected_claim": "the corrected claim that the cited evidence supports",
+      "citation_ids": ["cit002"]
+    }
+  ],
+  "coverage_assessment": "Brief assessment of whether the research sufficiently covered the question",
+  "missing_areas": ["specific description of what is still needed"],
+  "route": "continue"
+}
 
 where each item in fact_results has:
 - fact_id matching one of the facts you were given
 - result: one of "verified", "contradicted", "unverified", or "unknown"
 - evidence: your short description of the cited evidence supporting the result
+- citation_ids: list of citation IDs (e.g., ["cit001", "cit003"]) from the
+  source content that support your result. These are the [citNNN] IDs you
+  referenced in your evidence.
 - corrected_claim (optional): when result is "contradicted" and the cited
   evidence clearly supports a better claim, the corrected claim that
   accurately reflects what the evidence says. Omit or leave empty when the
@@ -870,7 +943,25 @@ contradicted conclusions do not undermine that answer.
 
 Respond with ONLY a JSON object, structured exactly like this:
 
-{"conclusion_results": [{"conclusion_id": "c001", "result": "verified", "derivation": "direct", "reason": "why it is valid"}, {"conclusion_id": "c002", "result": "unsupported", "derivation": "inferred", "reason": "what it asserts beyond the cited facts"}], "goal_met": true, "goal_assessment": "Explanation of why the goal is or is not met", "route": "accept"}
+{
+  "conclusion_results": [
+    {
+      "conclusion_id": "c001",
+      "result": "verified",
+      "derivation": "direct",
+      "reason": "why it is valid"
+    },
+    {
+      "conclusion_id": "c002",
+      "result": "unsupported",
+      "derivation": "inferred",
+      "reason": "what it asserts beyond the cited facts"
+    }
+  ],
+  "goal_met": true,
+  "goal_assessment": "Explanation of why the goal is or is not met",
+  "route": "accept"
+}
 
 where each item in conclusion_results has:
 - conclusion_id referencing one of the conclusions you were given
