@@ -69,7 +69,7 @@ Evals below this point have a bug:
 | water-blood-pressure       | general | 18/25 | 10         | FAIL   |
 
 - Agent model: z-ai/glm-5.2
-- Note: Completed most improvements from fact-extraction-and-claim-quality.md . 
+- Note: Completed most improvements from fact-extraction-and-claim-quality.md .
 
 ## 2026-07-21 batch (commit 616cad46, main)
 
@@ -107,19 +107,20 @@ Evals above this point have a bug:
 34 out of 106 workflow runs (32%) were scored against the wrong run — not the most recent completed run at the time.
 ==============================================
 
-## 2026-07-23 batch (commit 771b8d59, planning-freedom)
+## 2026-08-11 batch (commit 7d024788, main)
 
 | Question | Rubric | Score | web_search | Status |
 |----------|--------|-------|------------|--------|
-| flaming-hot-cheetos | general | 18/25 | 10 | PASS |
-| future-nostalgia | general | 15/25 | 10 | PASS |
-| jazz-trumpeters | general | 14/25 | 10 | FAIL |
-| telescope-mount-cost | general | 17/25 | 10 | PASS |
-| trade-policy-manufacturing | general | 13/25 | 10 | FAIL |
-| tyranitar-ou | pokemon | 13/16 | 4 | FAIL |
-| water-blood-pressure | general | 18/25 | 3 | PASS |
+| flaming-hot-cheetos | general | 21/25 | 10 | PASS |
+| future-nostalgia | general | 12/25 | 10 | FAIL |
+| jazz-trumpeters | general | 16/25 | 10 | FAIL |
+| telescope-mount-cost | general | 18/25 | 10 | PASS |
+| trade-policy-manufacturing | general | 20/25 | 10 | PASS |
+| tyranitar-ou | pokemon | 14/16 | 10 | PASS |
+| water-blood-pressure | general | 19/25 | 5 | PASS |
 
 - Agent model: z-ai/glm-5.2
+<<<<<<< HEAD
 - Note: First attempt at planning evidence requests instead of prebaked tool calls - on planning-freedom branch
 
 ## 2026-08-12 batch (commit 7d024788, main)
@@ -151,3 +152,11 @@ Evals above this point have a bug:
 
 - Agent model: z-ai/glm-5.2
 - Note: Running on Qwen3.6-35B-A3B Q5_K_XL (on Radeon R9700) to see if the quant helps
+=======
+- Note: This batch was run against Qwen3.6-35B-A3B-MTP-GGUF in the UD-Q8_K_XL quant
+  (as opposed to our usual UD-Q4_K_M quant) to see if the higher quant made any difference
+  in quality. Though there is some difference, its not enough to do all the time, and this
+  benchmark took over 2 1/2 hours to run.  It does, however, point towards
+  possible future work in decomposing the verification tasks into
+  distinct sub-tasks for each conclusion. More thought about task decomposition is needed.
+>>>>>>> 6250368 (Log a batch run against Qwen3.6-35B-A3B-MTP-GGUF UD-Q8_K_XL quant)
