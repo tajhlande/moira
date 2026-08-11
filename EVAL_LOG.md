@@ -88,15 +88,15 @@ Evals below this point have a bug:
 
 ## 2026-07-22 batch (commit 23c462e6, conclusion-inference)
 
-| Question | Rubric | Score | web_search | Status |
-|----------|--------|-------|------------|--------|
-| flaming-hot-cheetos | general | 15/25 | 10 | FAIL |
-| future-nostalgia | general | 16/25 | 10 | PASS |
-| jazz-trumpeters | general | 16/25 | 10 | PASS |
-| telescope-mount-cost | general | 17/25 | 10 | PASS |
-| trade-policy-manufacturing | general | 19/25 | 10 | FAIL |
-| tyranitar-ou | pokemon | 11/16 | 10 | FAIL |
-| water-blood-pressure | general | 18/25 | 10 | PASS |
+| Question                   | Rubric  | Score | web_search | Status |
+|----------------------------|---------|-------|------------|--------|
+| flaming-hot-cheetos        | general | 15/25 | 10         | FAIL   |
+| future-nostalgia           | general | 16/25 | 10         | PASS   |
+| jazz-trumpeters            | general | 16/25 | 10         | PASS   |
+| telescope-mount-cost       | general | 17/25 | 10         | PASS   |
+| trade-policy-manufacturing | general | 19/25 | 10         | FAIL   |
+| tyranitar-ou               | pokemon | 11/16 | 10         | FAIL   |
+| water-blood-pressure       | general | 18/25 | 10         | PASS   |
 
 - Agent model: z-ai/glm-5.2
 - Note: Added inference as a method for drawing conclusions.
@@ -109,15 +109,15 @@ Evals above this point have a bug:
 
 ## 2026-08-11 batch (commit 7d024788, main)
 
-| Question | Rubric | Score | web_search | Status |
-|----------|--------|-------|------------|--------|
-| flaming-hot-cheetos | general | 21/25 | 10 | PASS |
-| future-nostalgia | general | 12/25 | 10 | FAIL |
-| jazz-trumpeters | general | 16/25 | 10 | FAIL |
-| telescope-mount-cost | general | 18/25 | 10 | PASS |
-| trade-policy-manufacturing | general | 20/25 | 10 | PASS |
-| tyranitar-ou | pokemon | 14/16 | 10 | PASS |
-| water-blood-pressure | general | 19/25 | 5 | PASS |
+| Question                   | Rubric  | Score | web_search | Status |
+|----------------------------|---------|-------|------------|--------|
+| flaming-hot-cheetos        | general | 21/25 | 10         | PASS   |
+| future-nostalgia           | general | 12/25 | 10         | FAIL   |
+| jazz-trumpeters            | general | 16/25 | 10         | FAIL   |
+| telescope-mount-cost       | general | 18/25 | 10         | PASS   |
+| trade-policy-manufacturing | general | 20/25 | 10         | PASS   |
+| tyranitar-ou               | pokemon | 14/16 | 10         | PASS   |
+| water-blood-pressure       | general | 19/25 | 5          | PASS   |
 
 - Agent model: z-ai/glm-5.2
 <<<<<<< HEAD
