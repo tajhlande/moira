@@ -107,3 +107,17 @@ Evals above this point have a bug:
 34 out of 106 workflow runs (32%) were scored against the wrong run — not the most recent completed run at the time.
 ==============================================
 
+## 2026-08-12 batch (commit 7d024788, main)
+
+| Question | Rubric | Score | web_search | Status |
+|----------|--------|-------|------------|--------|
+| flaming-hot-cheetos | general | 19/25 | 9 | PASS |
+| future-nostalgia | general | 16/25 | 10 | PASS |
+| jazz-trumpeters | general | 17/25 | 10 | PASS |
+| telescope-mount-cost | general | 17/25 | 10 | PASS |
+| trade-policy-manufacturing | general | 18/25 | 10 | PASS |
+| tyranitar-ou | pokemon | 10/16 | 10 | FAIL |
+| water-blood-pressure | general | 20/25 | 9 | PASS |
+
+- Agent model: z-ai/glm-5.2
+- Note: Reaffirming the current baseline following the bug fix
