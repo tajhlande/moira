@@ -121,3 +121,18 @@ Evals above this point have a bug:
 
 - Agent model: z-ai/glm-5.2
 - Note: Reaffirming the current baseline following the bug fix
+
+## 2026-08-18 batch (commit 32155047, main)
+
+| Question | Rubric | Score | web_search | Status |
+|----------|--------|-------|------------|--------|
+| flaming-hot-cheetos | general | 19/25 | 10 | PASS |
+| future-nostalgia | general | 18/25 | 10 | PASS |
+| jazz-trumpeters | general | 13/25 | 10 | FAIL |
+| telescope-mount-cost | general | 20/25 | 10 | PASS |
+| trade-policy-manufacturing | general | 17/25 | 10 | PASS |
+| tyranitar-ou | pokemon | 12/16 | 10 | FAIL |
+| water-blood-pressure | general | 20/25 | 10 | PASS |
+
+- Agent model: z-ai/glm-5.2
+- Note: Running on Qwen3.6-35B-A3B Q5_K_XL (on Radeon R9700) to see if the quant helps
