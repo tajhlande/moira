@@ -120,43 +120,24 @@ Evals above this point have a bug:
 | water-blood-pressure       | general | 19/25 | 5          | PASS   |
 
 - Agent model: z-ai/glm-5.2
-<<<<<<< HEAD
-- Note: First attempt at planning evidence requests instead of prebaked tool calls - on planning-freedom branch
-
-## 2026-08-12 batch (commit 7d024788, main)
-
-| Question | Rubric | Score | web_search | Status |
-|----------|--------|-------|------------|--------|
-| flaming-hot-cheetos | general | 19/25 | 9 | PASS |
-| future-nostalgia | general | 16/25 | 10 | PASS |
-| jazz-trumpeters | general | 17/25 | 10 | PASS |
-| telescope-mount-cost | general | 17/25 | 10 | PASS |
-| trade-policy-manufacturing | general | 18/25 | 10 | PASS |
-| tyranitar-ou | pokemon | 10/16 | 10 | FAIL |
-| water-blood-pressure | general | 20/25 | 9 | PASS |
-
-- Agent model: z-ai/glm-5.2
-- Note: Reaffirming the current baseline following the bug fix
-
-## 2026-08-18 batch (commit 32155047, main)
-
-| Question | Rubric | Score | web_search | Status |
-|----------|--------|-------|------------|--------|
-| flaming-hot-cheetos | general | 19/25 | 10 | PASS |
-| future-nostalgia | general | 18/25 | 10 | PASS |
-| jazz-trumpeters | general | 13/25 | 10 | FAIL |
-| telescope-mount-cost | general | 20/25 | 10 | PASS |
-| trade-policy-manufacturing | general | 17/25 | 10 | PASS |
-| tyranitar-ou | pokemon | 12/16 | 10 | FAIL |
-| water-blood-pressure | general | 20/25 | 10 | PASS |
-
-- Agent model: z-ai/glm-5.2
-- Note: Running on Qwen3.6-35B-A3B Q5_K_XL (on Radeon R9700) to see if the quant helps
-=======
 - Note: This batch was run against Qwen3.6-35B-A3B-MTP-GGUF in the UD-Q8_K_XL quant
   (as opposed to our usual UD-Q4_K_M quant) to see if the higher quant made any difference
   in quality. Though there is some difference, its not enough to do all the time, and this
   benchmark took over 2 1/2 hours to run.  It does, however, point towards
   possible future work in decomposing the verification tasks into
   distinct sub-tasks for each conclusion. More thought about task decomposition is needed.
->>>>>>> 6250368 (Log a batch run against Qwen3.6-35B-A3B-MTP-GGUF UD-Q8_K_XL quant)
+
+## 2026-08-24 batch (commit cdc7a27b, planning-freedom)
+
+| Question | Rubric | Score | web_search | Status |
+|----------|--------|-------|------------|--------|
+| flaming-hot-cheetos | general | 18/25 | 10 | PASS |
+| future-nostalgia | general | 15/25 | 10 | FAIL |
+| jazz-trumpeters | general | 17/25 | 10 | PASS |
+| telescope-mount-cost | general | 21/25 | 10 | PASS |
+| trade-policy-manufacturing | general | 16/25 | 10 | FAIL |
+| tyranitar-ou | pokemon | 9/16 | 8 | FAIL |
+| water-blood-pressure | general | 18/25 | 10 | PASS |
+
+- Agent model: z-ai/glm-5.2
+- Note: Re-evaluating the planning-freedom branch
