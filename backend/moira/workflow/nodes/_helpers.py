@@ -449,15 +449,56 @@ def _format_prior_conclusions(conclusions: list) -> str:
     return "\n".join(lines)
 
 
-def _format_prior_citations(citations: list) -> str:
-    """Format a compact citation list (ID, title, URL) for retry context.
+def _format_prior_citations(citations: list, facts: list | None = None) -> str:
+    """Format the prior-citation table (markdown) for retry context.
 
-    Omits snippet/content to keep the prompt lean — the model just needs
-    to know which sources were already consulted.
+    Rendered as a markdown table so models interpret it as tabular data
+    without character-escaping surprises. Columns:
+
+    - **id** — citation ID (what ``recall_source`` takes as its argument).
+    - **depth** — how much evidence the stored source holds. ``page Nk``
+      means full fetched page content (~N thousand chars, mined via
+      ``recall_source``). ``snippet`` means only a short search-result
+      excerpt — little left to extract, recalling it is rarely useful.
+    - **linked facts** — fact IDs already extracted from this source.
+      Empty (—) means the source is unmined: deep content with no facts
+      linked yet is the prime ``recall_source`` target.
+
+    The depth and linked-facts columns let the planner judge whether the
+    existing evidence store justifies recall-only retries or is exhausted
+    (snippet-only / fully linked), in which case fresh searches are needed.
+
+    ``facts`` is optional for backward compatibility; when omitted, the
+    linked-facts column shows "—" for every row.
     """
-    lines = []
+    if not citations:
+        return ""
+
+    # Invert fact.citation_ids → citation.id → [fact ids]
+    linked: dict[str, list[str]] = {}
+    if facts:
+        for f in facts:
+            for cit_id in f.get("citation_ids") or []:
+                linked.setdefault(cit_id, []).append(f["id"])
+
+    def _depth(c: dict) -> str:
+        content = c.get("content") or ""
+        if content.strip():
+            return f"page {max(1, len(content) // 1000)}k"
+        return "snippet"
+
+    def _esc(text: str) -> str:
+        # Pipe is the markdown table delimiter — escape so titles can't
+        # inject columns.
+        return text.replace("|", "\\|")
+
+    lines = [
+        "| id | depth | linked facts | title |",
+        "|----|-------|--------------|-------|",
+    ]
     for c in citations:
-        lines.append(f"{c['id']} | {c.get('title') or ''} | {c.get('url') or ''}")
+        fact_ids = " ".join(linked.get(c["id"], [])) or "—"
+        lines.append(f"| {c['id']} | {_depth(c)} | {fact_ids} | {_esc(c.get('title') or '')} |")
     return "\n".join(lines)
 
 

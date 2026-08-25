@@ -12,7 +12,9 @@ adopt / iterate / rollback decision.
 | 0     | Spike: `evidence_requests` replace `ToolCallPlan`                        | Complete (`771b8d5`)            | —                                           |
 | 1     | Baseline evals + run forensics                                           | Complete (07-23, 08-24 batches) | —                                           |
 | 2 | Defect fixes: extraction-fallback corruption, request-bundling guard | Code complete — pending eval confirmation | Junk facts eliminated; unit tests pass |
-| 3     | Traceability: `request_id` echo, strict request matching, retry feedback | Not started                     | Every tool call attributable to one request |
+| 3     | Traceability: `request_id` echo, strict request matching, retry feedback | Complete — verified on 08-25 runs (attribution + carry-over confirmed; recall collapse fixed via 3.1) | Every tool call attributable to one request |
+| 3.1   | Store visibility + recall discipline: citation depth/linked-facts table, within-batch recall dedup | Code complete — runtime verification pending next retry-prone run | Planner sees store depth; no same-batch duplicate recalls |
+| 3.3   | Context budget management: per-result feedback cap, URL-field pruning | Not started (deliberately — held until the 08-25 batch finished on one code state) | No research-loop context overflow on wide fan-out |
 | 4     | Query discipline: mechanical dedup, coverage-driven rounds               | Not started                     | Duplicate queries intercepted mechanically  |
 | 5     | Measurement: planner/researcher dimension metrics in eval harness        | Not started                     | Eval batch emits both dimensions            |
 | 6     | Decision: multi-batch eval vs main 08-18 baseline                        | Not started                     | Adopt / iterate / rollback (criteria below) |
@@ -291,8 +293,161 @@ empty-claim does not lock the fact); full suite 848 passed, ruff clean.
    counts, still-unknown facts) fed to the retry planning prompt, replacing
    bare "still unknown" with *why* it failed.
 
-**Verification:** `workflow_steps.detail` shows request attribution for every
-call; retry prompt contains the per-request failure summary.
+**Implementation (complete):**
+- `EvidenceRequest.id` (`models/knowledge.py`) — mechanically assigned
+  `req0001...` in planning (`_assign_request_ids`); planner never emits IDs.
+- `ToolCall.request_id` (`tools/base.py`) — attribution-only field, never sent
+  to executors. Text-mode parsing reads it from the call dict
+  (`_extract_tool_calls`, `_parse_tool_calls`); native mode pops it out of the
+  model's function arguments in `_validate_and_filter_calls`.
+- Strict promotion in `_process_execution_results`: an attributed successful
+  call promotes only its own request's unknown facts; unattributed and
+  unknown-ID calls promote nothing (`_cleanup_empty_claims` still reverts
+  claimless promotions).
+- Attempt ledger: `ExecutionState.request_attempts`
+  (`{request_id: [{tool, query, success, results}]}`), recorded per call,
+  persisted across research invocations; planning re-links it to regenerated
+  request IDs by target-fact overlap (`_carry_over_attempts`, dedup by
+  tool+query).
+- Retry prompt: new `research.system_request_outcomes` section renders
+  per-request tried queries + unresolved facts, with an explicit
+  change-strategy instruction.
+- Prompts: `request_id` documented in `research.system` tool_calls spec (+
+  example), native-mode instruction + `research.user`/`research.user_native`
+  headers updated to show the ID column.
+
+**Verification:** 15 new unit tests (parsing, argument popping, strict
+promotion — own/unattributed/unknown-ID, ledger recording, outcomes rendering
+incl. resolved/unattempted skips, ID assignment, carry-over overlap + dedup,
+schema augmentation); full suite 863 passed, ruff clean.
+
+**Runtime smoke test (08-25 trade rerun, run `997dbddd`)** — pipeline healthy:
+fresh run (no checkpoint reuse), 3 research passes (10+17+12 calls), retry
+loop worked, 10/15 facts verified (reviewer-driven), 2 verified conclusions,
+zero junk facts. But **request_id echo failed 0/39**: the model never emitted
+the undeclared argument, so the ledger stayed empty and the retry outcomes
+section never fired. Root cause: native tool-calling models emit arguments
+matching the *declared* schema — an undeclared parameter is dropped even when
+the prompt asks for it. Fix: `_augment_tools_with_request_id` declares
+`request_id` as an optional property on every tool schema passed to native
+chat completions (popped before execution as before). Note: zero attribution
+is a benign failure mode — fact verification is reviewer-driven
+(`research_review.py:268`), not auto-promotion-driven, so coverage doesn't
+collapse; only traceability and retry feedback are lost.
+
+**Schema fix verified (08-25 run `08afc2e2`, trade-policy single-pass):**
+attribution now works — the ledger recorded `req0001`–`req0006` (1 attempt
+each across 6 requests; 10 calls total, so 4 calls went unattributed — the
+model echoes request IDs when it follows a request and omits them on
+self-generated supplementary searches). Run itself: clean single pass
+(no retries — outcomes section correctly stayed out of scope), 10/12 facts
+verified, 5 verified conclusions, 0 omitted, 4278-char answer. One residual
+gap found and fixed: `active_run.py` `_handle_event`'s `tool_result` branch
+built a fixed 5-key entry and dropped `request_id` from persisted
+`detail.tool_results` (attribution survived only in the compact ledger
+counts). Added the key passthrough + 3 new tests in
+`backend/tests/test_active_run.py` (new file — module previously untested).
+
+**Retry runs verified (08-25, water `d9e0e892` + telescope `e942fa33`):**
+request_id persisted per call, ledger carry-over across planning
+regenerations confirmed (water pass 3 `req0006: 3`), zero repeated
+web_search queries across passes. Attribution rates: water 11/14, telescope
+18/39 — unattributed calls are model-initiated supplementary searches. But
+these runs exposed a **recall-collapse failure mode**: on retry, planners
+restricted candidate tools to `recall_source` alone, and the water run's
+store held almost nothing relevant (pass-1 searches had returned junk
+arxiv papers on keyword overlap — "water distribution networks", "garbage
+collection"). Water retried 3× recaling the same single relevant citation
+(`cit012`) and finished 2/9 facts verified, 1 conclusion, 1277-char answer.
+Telescope's pass-3 recall mining (20 calls over 41 stored citations) was by
+contrast productive — recall legitimately produces new fact↔citation links
+(both runs' only new links came from recalled content), but it is
+*undirected*: it links what content supports, not what the plan needs.
+
+Fixes applied for this failure mode (Phase 3.1):
+- **Evidence-store visibility for the planner.**
+  `_format_prior_citations` (`_helpers.py`) now renders a markdown table
+  (`id | depth | linked facts | title`) instead of `id | title | URL`.
+  `depth` = `page Nk` (full stored content, mineable) vs `snippet`
+  (search-result excerpt, nothing left to extract); `linked facts` inverts
+  `fact.citation_ids` to show which sources are tapped vs unmined. URLs
+  dropped (planner never fetches); pipes in titles escaped. Both
+  `planning.system_retry_context` and `research.system_retry_context`
+  received column explanations + rules: recall is justified for
+  `page`-depth unmined sources; a store of snippet/fully-linked sources
+  means recall is exhausted — search instead; a retry round shouldn't be
+  recall-only unless multiple `page`-depth sources remain unmined.
+- **Within-batch recall dedup** (`_execute_tools`, research.py): duplicate
+  `recall_source` calls for the same citation in one batch get a synthetic
+  "already recalled above" pointer (no content re-injection, up to 5K chars
+  saved per repeat) and a call-count decrement, mirroring the url_content
+  URL dedup. Scope is deliberately the batch, not the pass: cross-round and
+  cross-pass re-reads stay legal because earlier results scroll out of the
+  model's context. Root cause of same-batch duplicates: planner emits N
+  recall requests for related facts, model best-matches each onto the same
+  only-relevant citation.
+- Tests: 4 dedup tests in `test_research_recall_source.py` (same-batch
+  dedup, count decrement, distinct citations pass through, cross-batch
+  re-read allowed), 3 table-render tests in `test_research_internals.py`,
+  updated retry-context assertions in `test_research_node.py`. Suite 872
+  passed, ruff clean.
+
+Verification pending the next retry-prone run: planner cites depth columns
+when choosing tools; no same-citation duplicate recalls within a batch.
+
+### Phase 3.2 note: root cause upstream of recall collapse
+
+The water run's deeper problem is retrieval quality (pass-1 keyword-stuffed
+queries returned irrelevant sources), which no recall-planning fix can
+recover — see `agent-docs/retrieval-quality.md`. The depth/linked-facts
+table at least makes store poverty *visible* to the planner so it searches
+instead of recalling.
+
+### Phase 3.3: Context budget management
+
+**Incident (08-25 run `fdaeb0e2`, tyranitar):** research pass 2 died with
+`HTTPStatusError: 400 — request (39457 tokens) exceeds the available context
+size (32768)`. Mechanism: the model issued a 7-call fan-out (5×
+`pokeapi__pokemon_retrieve`, 2× `pokeapi__type_retrieve`); `RESTTool`
+returns Path A content up to 10K chars per call (rest_tool.py:170), and the
+native loop feeds each result back *untruncated* (research.py:890 →
+research.py:1545-1546). PokeAPI JSON is token-hostile (every field a full
+URL), so round 2's request hit ~39K tokens: base prompt + retry sections
+(~13K) + ~25K of tool-result feedback. First occurrence in any run to date
+— latent defect independent of planning-freedom; any wide fan-out on a
+JSON API trips it on a 32K-context model.
+
+This phase is scoped separately from 3.1 deliberately: keep commit change
+volume reasonable and let eval deltas attribute cleanly.
+
+1. **Per-result feedback cap (implement first).** Cap each tool-result
+   message fed back into the loop at ~3K chars, with a pointer appended:
+   full content is stored in the citation (`_CITATION_CONTENT_LIMIT` =
+   10K); `recall_source` is the deliberate re-read path. Same rationale as
+   url_content's built-in cap — if the information isn't in the first few
+   thousand chars of cleaned content, odds of it being later are low.
+   Storage stays full-fidelity; only the model-facing copy is capped.
+2. **URL-field pruning at the model-facing boundary (second commit).**
+   General hypermedia rule, not API-specific: prune a `url` field only when
+   a sibling identifying field (`name`/`title`/`id`) exists in the same
+   object — the URL is then a redundant link. When a URL is the sole
+   content of an object, keep it. Apply only to feedback content; citations
+   store the untouched output. Real value is signal density (model reasons
+   over names, not URL walls) more than token savings; the cap alone fixes
+   the incident.
+3. **Rolling compression of older rounds (defer until 1+2 measured).**
+   Demote round ≤ N−1 tool messages to snippets when a new round starts.
+   The cap defers but doesn't eliminate growth (~`calls × cap` per round);
+   only justified if multi-round runs still overflow after 1+2. Most
+   invasive (mutates adapter-tracked history) — needs evidence first.
+
+**Verification:** unit tests for cap + pruning; a wide-fan-out run stays
+under the model context limit; eval delta attributable per commit (cap
+commit separate from pruning commit).
+
+**Deferred (this phase):** a "grep + neighborhood" focused-retrieval tool —
+search stored citation content and return only the relevant section ±
+context. Powerful but complicated; revisit after retrieval-quality work.
 
 ### Phase 4: Query discipline
 
@@ -356,3 +511,8 @@ On adoption: update `core/research-loop-data-flow.md` (still documents
   `fact_needed: "f003|f004"` at the source.
 - **Efficiency metrics beyond facts-per-search** — see
   [`knowledge-efficiency.md`](knowledge-efficiency.md).
+- **"Grep + neighborhood" focused retrieval over stored citation content** —
+  returns only the section matching a query ± surrounding context, as an
+  alternative to re-reading whole pages via `recall_source`. Complicated;
+  see Phase 3.3 deferred note and `retrieval-quality.md` (passage-level
+  retrieval).

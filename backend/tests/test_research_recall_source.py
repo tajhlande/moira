@@ -225,6 +225,124 @@ class TestExecuteToolsRecallPartition:
         assert "cit001" in results[0].output
 
 
+class TestExecuteToolsRecallDedup:
+    """Tests for within-batch recall_source dedup.
+
+    Recall content is static within a round, so duplicate recalls of the
+    same citation in one batch are intercepted: first call gets the
+    stored content, repeats get a short pointer result and don't count
+    against per-run/per-step limits. Separate batches (later rounds or
+    retry passes with reset context) may re-read the same citation.
+    """
+
+    @staticmethod
+    def _make_recall_call(citation_id: str, call_id: str = "rc1") -> ToolCall:
+        return ToolCall(
+            id=call_id,
+            name="recall_source",
+            arguments={"citation_id": citation_id},
+        )
+
+    async def test_same_batch_duplicate_recalled_once(self):
+        """Two recalls of cit001 in one batch: first gets content, second
+        gets a deduped pointer result."""
+        from moira.workflow.nodes.research import _execute_tools
+
+        citations: list[Citation] = [
+            Citation(id="cit001", source="url_content", content="Stored body"),
+            Citation(id="cit002", source="url_content", content="Other body"),
+        ]
+        calls = [
+            self._make_recall_call("cit001", "rc1"),
+            self._make_recall_call("cit001", "rc2"),
+        ]
+        executor = AsyncMock()
+
+        results = await _execute_tools(calls, {}, executor, citations, {"recall_source": 2})
+
+        assert len(results) == 2
+        # First: full content, success
+        assert results[0].success is True
+        assert "Stored body" in results[0].output
+        assert results[0].metadata.get("deduped") is None
+        # Second: deduped pointer, failure, no content re-injection
+        assert results[1].success is False
+        assert "already recalled" in results[1].output
+        assert "Stored body" not in results[1].output
+        assert results[1].metadata.get("deduped") is True
+        assert results[1].metadata.get("synthetic") is True
+
+    async def test_duplicate_recalls_decrement_call_counts(self):
+        """Deduped recalls are free against call limits — the count for
+        recall_source reflects only the executed (content-bearing) call."""
+        from moira.workflow.nodes.research import _execute_tools
+
+        citations: list[Citation] = [
+            Citation(id="cit001", source="url_content", content="Stored body"),
+        ]
+        calls = [
+            self._make_recall_call("cit001", "rc1"),
+            self._make_recall_call("cit001", "rc2"),
+            self._make_recall_call("cit001", "rc3"),
+        ]
+        executor = AsyncMock()
+
+        # _validate_and_filter_calls would have incremented the count to 3
+        call_counts = {"recall_source": 3}
+        await _execute_tools(calls, {}, executor, citations, call_counts)
+
+        # Two deduped calls decremented: 3 - 2 = 1
+        assert call_counts["recall_source"] == 1
+
+    async def test_distinct_citations_not_deduped(self):
+        """Recalls of different citations in one batch all get content."""
+        from moira.workflow.nodes.research import _execute_tools
+
+        citations: list[Citation] = [
+            Citation(id="cit001", source="url_content", content="Body one"),
+            Citation(id="cit002", source="url_content", content="Body two"),
+        ]
+        calls = [
+            self._make_recall_call("cit001", "rc1"),
+            self._make_recall_call("cit002", "rc2"),
+        ]
+        executor = AsyncMock()
+
+        results = await _execute_tools(calls, {}, executor, citations, {"recall_source": 2})
+
+        assert results[0].success is True
+        assert "Body one" in results[0].output
+        assert results[1].success is True
+        assert "Body two" in results[1].output
+
+    async def test_cross_batch_reread_allowed(self):
+        """A second _execute_tools batch (later round) may recall the same
+        citation again — dedup scope is the batch, not the pass."""
+        from moira.workflow.nodes.research import _execute_tools
+
+        citations: list[Citation] = [
+            Citation(id="cit001", source="url_content", content="Stored body"),
+        ]
+        executor = AsyncMock()
+        call_counts = {"recall_source": 1}
+
+        # Round 1
+        r1 = await _execute_tools(
+            [self._make_recall_call("cit001", "rc1")], {}, executor, citations, call_counts
+        )
+        assert r1[0].success is True
+        assert "Stored body" in r1[0].output
+
+        # Round 2 — fresh batch, recall allowed again
+        call_counts["recall_source"] = 2
+        r2 = await _execute_tools(
+            [self._make_recall_call("cit001", "rc2")], {}, executor, citations, call_counts
+        )
+        assert r2[0].success is True
+        assert "Stored body" in r2[0].output
+        assert r2[0].metadata.get("deduped") is None
+
+
 class TestProcessExecutionResultsRecallSource:
     """Tests that _process_execution_results handles recall_source correctly:
     no new citations, no budget charge, but summary + log are produced."""

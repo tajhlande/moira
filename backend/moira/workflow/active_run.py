@@ -626,6 +626,10 @@ class ActiveRun:
                 "result": payload.get("output", ""),
                 "duration_ms": payload.get("duration_ms", 0),
                 "success": payload.get("success", False),
+                # Attribution: which evidence request this call served.
+                # Absent for unattributed calls (research pops request_id
+                # out of args before execution, so it only survives here).
+                "request_id": payload.get("request_id"),
             }
 
             if self._current_step:

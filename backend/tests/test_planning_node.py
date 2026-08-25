@@ -325,3 +325,156 @@ class TestPlanningCallLimits:
 
         assert "calls remaining: 7" in result
         assert "(step: 5)" in result
+
+
+class TestAssignRequestIds:
+    """Tests for mechanical request-ID assignment in planning."""
+
+    def test_sequential_ids_assigned(self):
+        from moira.workflow.nodes.planning import _assign_request_ids
+
+        requests = [
+            {
+                "target_fact_ids": ["f001"],
+                "evidence_needed": "a",
+                "candidate_tools": [],
+                "fallback": True,
+            },
+            {
+                "target_fact_ids": ["f002"],
+                "evidence_needed": "b",
+                "candidate_tools": [],
+                "fallback": True,
+            },
+        ]
+        result = _assign_request_ids(requests)
+        assert [r["id"] for r in result] == ["req0001", "req0002"]
+
+    def test_existing_ids_overwritten(self):
+        """IDs are always regenerated — stale IDs from a previous plan must
+        never survive into a new one."""
+        from moira.workflow.nodes.planning import _assign_request_ids
+
+        requests = [
+            {"target_fact_ids": ["f001"], "evidence_needed": "a", "id": "req0009"},
+        ]
+        result = _assign_request_ids(requests)
+        assert result[0]["id"] == "req0001"
+
+
+class TestCarryOverAttempts:
+    """Tests for re-linking the attempt ledger across plan regeneration."""
+
+    @staticmethod
+    def _old_setup():
+        old_requests = [
+            {
+                "id": "req0001",
+                "target_fact_ids": ["f001"],
+                "evidence_needed": "a",
+                "candidate_tools": [],
+                "fallback": True,
+            },
+            {
+                "id": "req0002",
+                "target_fact_ids": ["f002"],
+                "evidence_needed": "b",
+                "candidate_tools": [],
+                "fallback": True,
+            },
+        ]
+        old_attempts = {
+            "req0001": [
+                {
+                    "tool": "web_search",
+                    "query": "cast iron pan weight",
+                    "success": True,
+                    "results": 0,
+                },
+            ],
+            "req0002": [
+                {"tool": "web_search", "query": "q2", "success": True, "results": 1},
+            ],
+        }
+        return old_requests, old_attempts
+
+    def test_carry_over_by_fact_overlap(self):
+        from moira.workflow.nodes.planning import _carry_over_attempts
+
+        old_requests, old_attempts = self._old_setup()
+        # Retry plan: f001 got a new request ID; f003 is new.
+        new_requests = [
+            {
+                "id": "req0001",
+                "target_fact_ids": ["f001"],
+                "evidence_needed": "a",
+                "candidate_tools": [],
+                "fallback": True,
+            },
+            {
+                "id": "req0002",
+                "target_fact_ids": ["f003"],
+                "evidence_needed": "c",
+                "candidate_tools": [],
+                "fallback": True,
+            },
+        ]
+        carried = _carry_over_attempts(old_attempts, new_requests, old_requests)
+        assert carried == {
+            "req0001": [
+                {
+                    "tool": "web_search",
+                    "query": "cast iron pan weight",
+                    "success": True,
+                    "results": 0,
+                },
+            ]
+        }
+
+    def test_carry_over_dedupes_shared_attempts(self):
+        """A new request overlapping two old requests gets the union of
+        their attempts, deduplicated by (tool, query)."""
+        from moira.workflow.nodes.planning import _carry_over_attempts
+
+        old_requests = [
+            {
+                "id": "req0001",
+                "target_fact_ids": ["f001"],
+                "evidence_needed": "a",
+                "candidate_tools": [],
+                "fallback": True,
+            },
+            {
+                "id": "req0002",
+                "target_fact_ids": ["f002"],
+                "evidence_needed": "b",
+                "candidate_tools": [],
+                "fallback": True,
+            },
+        ]
+        old_attempts = {
+            "req0001": [{"tool": "web_search", "query": "q", "success": True, "results": 1}],
+            "req0002": [
+                {"tool": "web_search", "query": "q", "success": True, "results": 1},
+                {"tool": "web_search", "query": "other", "success": True, "results": 2},
+            ],
+        }
+        new_requests = [
+            {
+                "id": "req0001",
+                "target_fact_ids": ["f001", "f002"],
+                "evidence_needed": "ab",
+                "candidate_tools": [],
+                "fallback": True,
+            },
+        ]
+        carried = _carry_over_attempts(old_attempts, new_requests, old_requests)
+        queries = [a["query"] for a in carried["req0001"]]
+        assert sorted(queries) == ["other", "q"]
+
+    def test_empty_ledger_returns_empty(self):
+        from moira.workflow.nodes.planning import _carry_over_attempts
+
+        old_requests, _ = self._old_setup()
+        new_requests = [{"id": "req0001", "target_fact_ids": ["f001"]}]
+        assert _carry_over_attempts({}, new_requests, old_requests) == {}

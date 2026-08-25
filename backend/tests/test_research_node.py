@@ -2375,9 +2375,12 @@ class TestResearchRetryContext:
         # Prior conclusions context
         assert "c001" in system_prompt
         assert "Company A manufactures" in system_prompt
-        # Prior citations context
+        # Prior citations context (markdown table: id/depth/linked facts/title)
         assert "cit001" in system_prompt
-        assert "https://company-a.com" in system_prompt
+        assert "Company A Site" in system_prompt
+        assert "| id | depth | linked facts | title |" in system_prompt
+        # Excerpt-only citation → snippet depth, no page content stored
+        assert "| snippet |" in system_prompt
         # Review feedback
         assert "Missing retailer information" in system_prompt
         # Unverified fact should appear in user prompt

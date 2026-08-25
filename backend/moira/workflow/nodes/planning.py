@@ -86,6 +86,63 @@ def _split_bundled_requests(requests: list[EvidenceRequest], facts: list) -> lis
     return result
 
 
+def _assign_request_ids(requests: list[EvidenceRequest]) -> list[EvidenceRequest]:
+    """Assign sequential IDs (req0001, req0002, ...) to evidence requests.
+
+    IDs are mechanical pipeline metadata: the research prompt shows them,
+    the model echoes them on tool calls, and ``_process_execution_results``
+    attributes results to requests. Always assigns fresh IDs — requests
+    are regenerated on every planning entry, so stale IDs would be
+    meaningless. Attempt history is re-linked separately by
+    ``_carry_over_attempts``.
+    """
+    return [EvidenceRequest(**{**req, "id": f"req{i + 1:04d}"}) for i, req in enumerate(requests)]
+
+
+def _carry_over_attempts(
+    old_attempts: dict[str, list[dict]],
+    new_requests: list[EvidenceRequest],
+    old_requests: list[EvidenceRequest],
+) -> dict[str, list[dict]]:
+    """Re-link attempt history from the previous plan to regenerated requests.
+
+    Retries re-enter through planning, which regenerates evidence
+    requests with fresh IDs. The attempt ledger keyed by those IDs would
+    then be orphaned. Re-link by target-fact overlap: attempts recorded
+    against an old request attach to a new request when they share at
+    least one target fact. This preserves "what was tried for this fact"
+    across plan regeneration, feeding the retry prompt's failure summary
+    and suppressing repeated queries.
+
+    Entries are deduplicated by (tool, query) so an old request and a
+    new request sharing facts don't double-count the same attempt.
+    """
+    if not old_attempts:
+        return {}
+    old_request_by_id = {r.get("id"): r for r in old_requests if r.get("id")}
+    carried: dict[str, list[dict]] = {}
+    seen: dict[str, set[tuple[str, str]]] = {}
+    for new_req in new_requests:
+        new_id = new_req.get("id")
+        if not new_id:
+            continue
+        new_targets = set(new_req.get("target_fact_ids", []))
+        if not new_targets:
+            continue
+        for old_id, attempts in old_attempts.items():
+            old_req = old_request_by_id.get(old_id)
+            if old_req is None or not (new_targets & set(old_req.get("target_fact_ids", []))):
+                continue
+            for attempt in attempts:
+                key = (attempt.get("tool", ""), attempt.get("query", ""))
+                dupes = seen.setdefault(new_id, set())
+                if key in dupes:
+                    continue
+                dupes.add(key)
+                carried.setdefault(new_id, []).append(attempt)
+    return carried
+
+
 def _format_unknown_facts(facts: list) -> str:
     """Format non-verified facts for the planning prompt.
 
@@ -248,7 +305,9 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
                 "planning.system_retry_context",
                 established_facts=_format_established_facts(knowledge["facts"]),
                 prior_conclusions=_format_prior_conclusions(knowledge.get("conclusions", [])),
-                prior_citations=_format_prior_citations(knowledge.get("citations", [])),
+                prior_citations=_format_prior_citations(
+                    knowledge.get("citations", []), knowledge.get("facts", [])
+                ),
             )
 
     # Prior conversation context (multi-turn)
@@ -330,6 +389,14 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
     # Mechanical backstop for the prompt's one-fact-per-request rule:
     # splits bundles, drops dangling fact references.
     evidence_requests = _split_bundled_requests(raw_requests, knowledge["facts"])
+    # Fresh sequential IDs each planning entry; attempt history is
+    # re-linked to the new IDs by target-fact overlap below.
+    previous_requests = es.get("evidence_requests", [])
+    previous_attempts = es.get("request_attempts", {})
+    evidence_requests = _assign_request_ids(evidence_requests)
+    request_attempts = _carry_over_attempts(
+        previous_attempts, evidence_requests, previous_requests
+    )
 
     detail["structured_output"] = parsed
 
@@ -353,6 +420,7 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
         "execution_state": {
             **es,
             "evidence_requests": evidence_requests,
+            "request_attempts": request_attempts,
             "budget_remaining": new_budget,
             # Entry-count semantics: increment on every planning entry so
             # the router can limit research retries.  First entry: 0→1.

@@ -240,16 +240,27 @@ Previously established facts (ID | subject | claim | citations):
 Conclusions already drawn (ID | conclusion | supporting facts | status):
 {prior_conclusions}
 
-Sources already consulted (citation ID | title | URL):
+Sources already consulted:
+
 {prior_citations}
 
-The sources above may contain information that was not fully extracted in
-the first pass — their full content is available via the `recall_source`
-tool. Before planning new evidence requests, consider whether existing
-sources contain additional facts that address the missing areas. Include
-`recall_source` in candidate_tools for citations likely to hold relevant
-unextracted data, alongside new searches for genuinely missing
-information.
+Column meanings:
+- **id** — the citation ID (`recall_source` takes this as its argument).
+- **depth** — how much evidence the stored source holds. `page Nk` = full
+  fetched page content (~N thousand chars) that can be re-read via
+  `recall_source`. `snippet` = only a short search-result excerpt was ever
+  retrieved — there is little left to extract from it.
+- **linked facts** — fact IDs already extracted from this source. `—` means
+  the source is unmined.
+
+Use these columns to judge whether the existing evidence store justifies a
+recall-first retry. Sources with `page` depth and no linked facts are the
+prime `recall_source` targets: full content is stored but nothing has been
+extracted from it yet. If the sources relevant to a missing area are all
+`snippet` depth or already fully linked, the store is exhausted for that
+area — plan a new search instead; recalling cannot produce evidence that
+was never retrieved. A retry round should not consist solely of
+`recall_source` requests unless multiple `page`-depth sources remain unmined.
 
 Do not include url_content in candidate_tools for URLs already listed
 above — use `recall_source` to re-read their content instead.
@@ -406,8 +417,11 @@ tool description shows the parameter "query (string, required)", your args must 
 key "query", not "q" or any other abbreviation.
 
 The JSON object must have exactly these keys:
-- "tool_calls": array of objects, each with "tool" (string) and "args" (object). Use
-  an empty array [] when you are done researching.
+- "tool_calls": array of objects, each with "tool" (string), "args" (object), and
+  "request_id" (string) — the ID of the evidence request this call serves, copied
+  from the request ID at the start of each evidence request line (e.g., "req0001").
+  Include request_id on EVERY tool call. Use an empty array [] for tool_calls
+  when you are done researching.
 - "discovered_facts": array of objects with "fact_id", "subject", "claim",
   optionally "relation" and "value", and "citation_ids" — a list of the source
   IDs (e.g., ["cit001"]) that support the claim. Source IDs are shown in
@@ -422,7 +436,7 @@ The JSON object must have exactly these keys:
   "title", and "excerpt" (relevant snippet from the tool output).
 
 Example response:
-{"tool_calls": [{"tool": "web_search", "args": {"query": "example search"}}], "discovered_facts": [], "sources": []}
+{"tool_calls": [{"tool": "web_search", "args": {"query": "example search"}, "request_id": "req0001"}], "discovered_facts": [], "sources": []}
 
 When you are done researching and have no more tool calls to make:
 {"tool_calls": [], "discovered_facts": [{"fact_id": "f001", "subject": "Example", "claim": "Specific claim here", "relation": "has_property", "value": "the value", "citation_ids": ["cit001"]}], "sources": [{"source": "web_search", "url": "https://example.com", "title": "Example", "excerpt": "Relevant snippet"}]}
@@ -439,7 +453,8 @@ User goal: {user_goal}
 Unknown facts (ID | subject | fact_needed):
 {unknown_facts}
 
-Evidence requests (target facts | evidence needed | candidate tools):
+Evidence requests (request ID | target facts | evidence needed | candidate tools).
+Echo the request ID in every tool call you make:
 {evidence_requests}
 
 Available tools:
@@ -614,6 +629,11 @@ Example response (claims extracted while continuing to call tools):
 The tool calls go through the native tool calling interface (not in the JSON). The JSON
 in your text content carries only discovered_facts and sources.
 
+When you make a tool call, include one extra argument named "request_id" set to the ID
+of the evidence request the call serves (the ID at the start of each evidence request
+line, e.g., "req0001"). It is stripped from the arguments before execution — it exists
+so the pipeline can attribute results to requests. Include it on EVERY tool call.
+
 ## research.user_native
 
 User goal: {user_goal}
@@ -621,7 +641,8 @@ User goal: {user_goal}
 Unknown facts (ID | subject | fact_needed):
 {unknown_facts}
 
-Evidence requests (target facts | evidence needed | candidate tools):
+Evidence requests (request ID | target facts | evidence needed | candidate tools).
+Pass the request ID as the "request_id" argument of every tool call:
 {evidence_requests}
 
 ## research.system_retry_review
@@ -662,17 +683,40 @@ Previously established facts (ID | subject | claim | citations):
 Conclusions already drawn (ID | conclusion | supporting facts | status):
 {prior_conclusions}
 
-Sources already consulted (citation ID | title | URL):
+Sources already consulted:
+
 {prior_citations}
 
-The sources above may contain information that was not fully extracted in
-the first pass. Use `recall_source` with a citation ID to re-read the full
-stored content of any source. Extract additional facts from existing
-sources before searching for new information.
+Column meanings:
+- **id** — the citation ID (pass this to `recall_source`).
+- **depth** — `page Nk` = full stored page content (~N thousand chars)
+  re-readable via `recall_source`; `snippet` = only a short search-result
+  excerpt — little left to extract.
+- **linked facts** — fact IDs already extracted from this source; `—` means
+  unmined.
+
+Prefer `recall_source` on `page`-depth sources with no linked facts — that
+is stored evidence nobody has read closely yet. Recalling a `snippet`-depth
+source cannot produce evidence that was never retrieved; search instead.
+Do not recall the same citation more than once in a single round — the
+content does not change between reads.
 
 Do not re-fetch URLs that have already been consulted (listed above) — use
 `recall_source` instead. Focus new searches on genuinely missing
 information identified in the review.
+
+## research.system_request_outcomes
+
+What was already tried for each still-unresolved evidence request in the previous
+research pass:
+
+{request_outcomes}
+
+For each listed request, the queries above already ran and cannot find the missing
+information. Do NOT repeat them or close paraphrases of them. Change strategy
+meaningfully: different phrasing style (natural-language question vs. keyword
+phrase), different source type (forums, reviews, specs, academic), or different
+scope (broader industry-level, narrower product-level).
 
 ## research.fact_extraction.system
 

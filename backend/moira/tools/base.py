@@ -61,6 +61,12 @@ class ToolCall:
     id: str
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
+    # Planning attribution only: the evidence-request ID this call serves.
+    # Parsed from the model output (text mode) or popped from arguments
+    # (native mode, where the model passes it as an extra function
+    # argument). Never forwarded to tool executors — tools don't know
+    # about evidence requests.
+    request_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.id or not self.id.strip():

@@ -89,12 +89,18 @@ class EvidenceRequest(TypedDict):
     candidate_tools is ordered by preference: the first entry is the
     best tool to try, subsequent entries are fallbacks. web_search
     typically appears last as the generic fallback.
+
+    ``id`` is assigned mechanically at parse time (req0001, req0002, ...)
+    so the research model can echo it on each tool call and the pipeline
+    can attribute results to requests — the fact-level traceability link
+    the old ToolCallPlan provided. The planner never generates it.
     """
 
     target_fact_ids: list[str]
     evidence_needed: str
     candidate_tools: list[str]
     fallback: bool
+    id: NotRequired[str]
 
 
 class ReviewOutcome(TypedDict):
@@ -154,6 +160,12 @@ class ExecutionState(TypedDict):
     tool_call_step_limits: dict[str, int]
     tool_call_counts: dict[str, int]
     total_tool_cost_consumed: float
+    # Rolling ledger of tool attempts per evidence-request ID, persisted
+    # across research invocations so retry rounds see what was already
+    # tried: {request_id: [{tool, query, success, results}, ...]}.
+    # Planning carries it across request regeneration by matching target
+    # fact overlap.
+    request_attempts: dict[str, list[dict]]
     error: str
     research_retry_count: int
     research_count: int

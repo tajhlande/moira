@@ -1024,15 +1024,61 @@ class TestRetryContextHelpers:
             {"id": "cit002", "title": "Source B", "url": "https://b.com"},
         ]
         result = _format_prior_citations(citations)
+        # Markdown table with header row
+        assert "| id | depth | linked facts | title |" in result
         assert "cit001" in result
         assert "Source A" in result
-        assert "https://a.com" in result
         assert "cit002" in result
+        # No facts passed → linked facts column shows em-dash placeholder
+        assert "| — |" in result
+        # snippet-only citations (no content) are labeled as such
+        assert "snippet" in result
 
     def test_format_prior_citations_empty(self):
         from moira.workflow.nodes._helpers import _format_prior_citations
 
         assert _format_prior_citations([]) == ""
+
+    def test_format_prior_citations_depth_and_linked_facts(self):
+        """Depth column distinguishes page content from snippets; linked
+        facts column inverts fact.citation_ids; pipe in title is escaped."""
+        from moira.workflow.nodes._helpers import _format_prior_citations
+
+        citations = [
+            {
+                "id": "cit001",
+                "title": "Deep page | with pipe",
+                "content": "x" * 2500,  # ~2.5k chars → page 2k
+            },
+            {"id": "cit002", "title": "Snippet only"},
+        ]
+        facts = [
+            {"id": "f001", "citation_ids": ["cit001"]},
+            {"id": "f002", "citation_ids": ["cit001", "cit002"]},
+        ]
+        result = _format_prior_citations(citations, facts)
+        lines = result.splitlines()
+        assert lines[0] == "| id | depth | linked facts | title |"
+        row1 = lines[2]
+        assert row1.startswith("| cit001 | page 2k |")
+        assert "f001 f002" in row1
+        # Pipe inside title escaped so it can't break the table columns
+        assert "Deep page \\| with pipe" in row1
+        row2 = lines[3]
+        assert row2.startswith("| cit002 | snippet | f002 |")
+
+    def test_format_prior_citations_cross_subject_facts(self):
+        """Facts are a flat list of dict-like entries; every fact linking a
+        citation appears in that citation's linked-facts cell."""
+        from moira.workflow.nodes._helpers import _format_prior_citations
+
+        citations = [{"id": "cit001", "title": "T", "content": "y" * 1200}]
+        facts = [
+            {"id": "f003", "citation_ids": []},
+            {"id": "f004", "citation_ids": ["cit001"]},
+        ]
+        result = _format_prior_citations(citations, facts)
+        assert "| cit001 | page 1k | f004 | T |" in result
 
 
 class TestPartitionUrlContentCalls:
@@ -2505,3 +2551,298 @@ class TestDerivationFactGateInteraction:
         _apply_conclusion_results(conclusions, results)
         assert conclusions[0]["status"] == "unsupported"
         assert conclusions[0]["derivation"] == "direct"
+
+
+class TestRequestIdAttribution:
+    """Tests for request_id attribution: parsing, native-argument popping,
+    strict fact promotion, and the attempt ledger."""
+
+    def test_extract_tool_calls_reads_request_id(self):
+        """Text-mode tool_calls entries carry request_id onto the ToolCall."""
+        from moira.workflow.nodes.research import _extract_tool_calls
+
+        parsed = {
+            "tool_calls": [
+                {"tool": "web_search", "args": {"query": "x"}, "request_id": "req0001"},
+                {"tool": "web_search", "args": {"query": "y"}},
+            ]
+        }
+        calls = _extract_tool_calls(parsed)
+        assert calls[0].request_id == "req0001"
+        assert calls[1].request_id is None
+
+    def test_parse_tool_calls_reads_request_id(self):
+        """Fallback array parsing also threads request_id through."""
+        from moira.workflow.nodes.research import _parse_tool_calls
+
+        text = '[{"tool": "web_search", "args": {"query": "x"}, "request_id": "req0002"}]'
+        calls = _parse_tool_calls(text)
+        assert len(calls) == 1
+        assert calls[0].request_id == "req0002"
+
+    def test_validate_pops_request_id_from_arguments(self):
+        """Native mode: request_id rides inside arguments; validation must
+        promote it to the ToolCall field and strip it before execution."""
+        from moira.workflow.nodes.research import _validate_and_filter_calls
+
+        call = ToolCall(
+            id="tc1",
+            name="web_search",
+            arguments={"query": "x", "request_id": "req0001"},
+        )
+        valid, _ = _validate_and_filter_calls(
+            [call],
+            {"web_search"},
+            {"web_search": 10},
+            {},
+            {"web_search": {"query"}},
+        )
+        assert len(valid) == 1
+        assert valid[0].request_id == "req0001"
+        assert "request_id" not in valid[0].arguments
+
+    @staticmethod
+    def _promotion_setup():
+        """Shared fixtures: two requests, three unknown facts."""
+        from moira.workflow.nodes.research import _process_execution_results
+
+        evidence_requests = [
+            {
+                "id": "req0001",
+                "target_fact_ids": ["f001", "f002"],
+                "evidence_needed": "e1",
+                "candidate_tools": ["web_search"],
+                "fallback": False,
+            },
+            {
+                "id": "req0002",
+                "target_fact_ids": ["f003"],
+                "evidence_needed": "e2",
+                "candidate_tools": ["web_search"],
+                "fallback": False,
+            },
+        ]
+        facts = [
+            Fact(id="f001", subject="a", fact_needed="n1", status="unknown"),
+            Fact(id="f002", subject="b", fact_needed="n2", status="unknown"),
+            Fact(id="f003", subject="c", fact_needed="n3", status="unknown"),
+        ]
+        return _process_execution_results, evidence_requests, facts
+
+    def test_strict_attribution_promotes_only_own_request(self):
+        """A successful call promotes facts of ITS request only — not every
+        request listing the tool (the old loose matching)."""
+        _per, evidence_requests, facts = self._promotion_setup()
+        call = ToolCall(
+            id="tc1",
+            name="web_search",
+            arguments={"query": "x"},
+            request_id="req0001",
+        )
+        result = ToolResult(
+            tool_name="web_search",
+            output="some results",
+            metadata={"results": [{"url": "https://a", "snippet": "s"}]},
+        )
+        _per(
+            [result],
+            [call],
+            lambda _e: None,
+            [],
+            {},
+            facts,
+            evidence_requests,
+            [],
+            {},
+            {},
+            100.0,
+            0.0,
+        )
+        assert facts[0]["status"] == "unverified"
+        assert facts[1]["status"] == "unverified"
+        assert facts[2]["status"] == "unknown"
+
+    def test_unattributed_call_promotes_nothing(self):
+        """Without request_id, a successful call promotes no facts — coverage
+        is no longer overstated by loose tool matching."""
+        _per, evidence_requests, facts = self._promotion_setup()
+        call = ToolCall(id="tc1", name="web_search", arguments={"query": "x"})
+        result = ToolResult(
+            tool_name="web_search",
+            output="some results",
+            metadata={"results": [{"url": "https://a", "snippet": "s"}]},
+        )
+        _per(
+            [result],
+            [call],
+            lambda _e: None,
+            [],
+            {},
+            facts,
+            evidence_requests,
+            [],
+            {},
+            {},
+            100.0,
+            0.0,
+        )
+        assert all(f["status"] == "unknown" for f in facts)
+
+    def test_unknown_request_id_promotes_nothing(self):
+        """A request_id that matches no known request promotes nothing."""
+        _per, evidence_requests, facts = self._promotion_setup()
+        call = ToolCall(
+            id="tc1",
+            name="web_search",
+            arguments={"query": "x"},
+            request_id="req9999",
+        )
+        result = ToolResult(
+            tool_name="web_search",
+            output="some results",
+            metadata={"results": [{"url": "https://a", "snippet": "s"}]},
+        )
+        _per(
+            [result],
+            [call],
+            lambda _e: None,
+            [],
+            {},
+            facts,
+            evidence_requests,
+            [],
+            {},
+            {},
+            100.0,
+            0.0,
+        )
+        assert all(f["status"] == "unknown" for f in facts)
+
+    def test_attempt_ledger_recorded(self):
+        """Attributed calls append to the request_attempts ledger and the
+        tool_results_log entries carry request_id."""
+        _per, evidence_requests, facts = self._promotion_setup()
+        ledger: dict[str, list[dict]] = {}
+        log: list[dict] = []
+        call = ToolCall(
+            id="tc1",
+            name="web_search",
+            arguments={"query": "why are cast iron pans heavy"},
+            request_id="req0001",
+        )
+        result = ToolResult(
+            tool_name="web_search",
+            output="results",
+            metadata={"results": [{"url": f"https://a/{i}", "snippet": "s"} for i in range(3)]},
+        )
+        _per(
+            [result],
+            [call],
+            lambda _e: None,
+            [],
+            {},
+            facts,
+            evidence_requests,
+            log,
+            {},
+            {},
+            100.0,
+            0.0,
+            request_attempts=ledger,
+        )
+        assert len(ledger["req0001"]) == 1
+        entry = ledger["req0001"][0]
+        assert entry["tool"] == "web_search"
+        assert entry["query"] == "why are cast iron pans heavy"
+        assert entry["success"] is True
+        assert entry["results"] == 3
+        assert log[0]["request_id"] == "req0001"
+
+    def test_format_request_outcomes_lists_tried_queries(self):
+        """Outcomes render per-request: unresolved facts + queries tried."""
+        from moira.workflow.nodes.research import _format_request_outcomes
+
+        requests = [
+            {
+                "id": "req0001",
+                "target_fact_ids": ["f001"],
+                "evidence_needed": "cast iron pan weight",
+                "candidate_tools": ["web_search"],
+                "fallback": False,
+            },
+            {
+                "id": "req0002",
+                "target_fact_ids": ["f002"],
+                "evidence_needed": "never attempted",
+                "candidate_tools": ["web_search"],
+                "fallback": False,
+            },
+        ]
+        attempts = {
+            "req0001": [
+                {
+                    "tool": "web_search",
+                    "query": "cast iron pan weight",
+                    "success": True,
+                    "results": 0,
+                },
+            ]
+        }
+        facts = [
+            Fact(id="f001", subject="a", fact_needed="n1", status="unknown"),
+            Fact(id="f002", subject="b", fact_needed="n2", status="unknown"),
+        ]
+        out = _format_request_outcomes(requests, attempts, facts)
+        assert "req0001" in out
+        assert "f001" in out
+        assert "cast iron pan weight" in out
+        # req0002 has no attempts -> not rendered
+        assert "req0002" not in out
+
+    def test_format_request_outcomes_skips_resolved(self):
+        """Requests whose target facts are all resolved are not rendered."""
+        from moira.workflow.nodes.research import _format_request_outcomes
+
+        requests = [
+            {
+                "id": "req0001",
+                "target_fact_ids": ["f001"],
+                "evidence_needed": "x",
+                "candidate_tools": ["web_search"],
+                "fallback": False,
+            }
+        ]
+        attempts = {
+            "req0001": [
+                {"tool": "web_search", "query": "q", "success": True, "results": 5},
+            ]
+        }
+        facts = [
+            Fact(id="f001", subject="a", fact_needed="n1", status="verified"),
+        ]
+        assert _format_request_outcomes(requests, attempts, facts) == ""
+
+    def test_augment_tools_declares_optional_request_id(self):
+        """Schema augmentation adds request_id as an optional property so
+        native tool-calling models are willing to emit it; original tool
+        definitions are not mutated."""
+        from moira.tools.base import ToolDefinition
+        from moira.workflow.nodes.research import _augment_tools_with_request_id
+
+        tool = ToolDefinition(
+            name="web_search",
+            description="search",
+            argument_schema={
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        )
+        out = _augment_tools_with_request_id([tool])
+        assert "request_id" in out[0].argument_schema["properties"]
+        assert "request_id" not in out[0].argument_schema.get("required", [])
+        # original untouched
+        assert "request_id" not in tool.argument_schema["properties"]
+        # idempotent on second pass
+        again = _augment_tools_with_request_id(out)
+        assert "request_id" in again[0].argument_schema["properties"]

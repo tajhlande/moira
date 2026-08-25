@@ -14,10 +14,11 @@ The model returns a JSON object each round with keys:
 Discovered facts and sources are applied each round, not just at the end.
 """
 
+import json
 import logging
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, cast
 
 from langchain_core.runnables import RunnableConfig
@@ -116,15 +117,56 @@ def _format_evidence_requests(requests: list) -> str:
     """Format evidence requests for the research prompt.
 
     Each line describes what evidence is needed for a group of facts and
-    which tools to try, leaving query formulation to the model.
+    which tools to try, leaving query formulation to the model. The
+    request ID prefixes each line so the model can echo it on tool calls
+    (attribution) and the retry prompt can reference specific requests.
     """
     lines = []
     for req in requests:
+        rid = req.get("id") or ""
         target_ids = ", ".join(req.get("target_fact_ids", []))
         evidence = req.get("evidence_needed", "")
         tools = " -> ".join(req.get("candidate_tools", []))
         fallback = " | fallback: yes" if req.get("fallback") else ""
-        lines.append(f"- Facts [{target_ids}]: {evidence} | tools: {tools}{fallback}")
+        lines.append(f"- {rid} | Facts [{target_ids}]: {evidence} | tools: {tools}{fallback}")
+    return "\n".join(lines)
+
+
+def _format_request_outcomes(
+    requests: list,
+    request_attempts: dict[str, list[dict]],
+    facts: list[Fact],
+) -> str:
+    """Render a per-request failure summary for the retry prompt.
+
+    Only requests that have recorded attempts AND still-unresolved target
+    facts are shown — resolved requests and never-attempted requests add
+    noise, not signal. Queries already tried are listed so the model can
+    formulate genuinely different strategies instead of re-rolling
+    near-duplicates.
+    """
+    unresolved = {f["id"] for f in facts if f.get("status") != "verified"}
+    lines = []
+    for req in requests:
+        rid = req.get("id")
+        if not rid:
+            continue
+        attempts = request_attempts.get(rid) or []
+        if not attempts:
+            continue
+        target_ids = [t for t in req.get("target_fact_ids", []) if t in unresolved]
+        if not target_ids:
+            continue
+        evidence = (req.get("evidence_needed") or "").strip()
+        if len(evidence) > 100:
+            evidence = evidence[:97] + "..."
+        lines.append(f"{rid} (Facts [{', '.join(target_ids)}] — {evidence}): still unresolved.")
+        for att in attempts:
+            status = "ok" if att.get("success") else "failed"
+            lines.append(
+                f'  Tried: {att.get("tool", "?")} "{att.get("query", "")}" '
+                f"({att.get('results', 0)} results, {status})"
+            )
     return "\n".join(lines)
 
 
@@ -142,7 +184,7 @@ def _format_unknown_facts(facts: list[Fact]) -> str:
     return "\n".join(lines)
 
 
-def _make_tool_call(name: str, args: object) -> ToolCall | None:
+def _make_tool_call(name: str, args: object, request_id: str | None = None) -> ToolCall | None:
     """Build a ToolCall with a generated ID, or return None if name is empty."""
     if not name:
         return None
@@ -150,7 +192,19 @@ def _make_tool_call(name: str, args: object) -> ToolCall | None:
         id=f"tc_{uuid.uuid4().hex[:8]}",
         name=name,
         arguments=args if isinstance(args, dict) else {},
+        request_id=request_id,
     )
+
+
+def _request_id_from(call: dict) -> str | None:
+    """Extract a clean request_id from a model-emitted call dict, if any."""
+    rid = call.get("request_id")
+    return _clean_request_id(rid)
+
+
+def _clean_request_id(rid: object) -> str | None:
+    """Normalize a raw request_id value to a non-empty stripped string."""
+    return rid.strip() if isinstance(rid, str) and rid.strip() else None
 
 
 def _parse_tool_calls(text: str) -> list[ToolCall]:
@@ -163,8 +217,6 @@ def _parse_tool_calls(text: str) -> list[ToolCall]:
     Generates a unique ``id`` for each call so downstream code never
     needs to check for missing IDs.
     """
-    import json
-
     match = re.search(r"\[.*\]", text, re.DOTALL)
     if match:
         try:
@@ -176,7 +228,7 @@ def _parse_tool_calls(text: str) -> list[ToolCall]:
                         continue
                     name = call.get("tool") or call.get("name", "")
                     args = call.get("args") or call.get("arguments", {})
-                    tc = _make_tool_call(name, args)
+                    tc = _make_tool_call(name, args, _request_id_from(call))
                     if tc:
                         result.append(tc)
                 if result:
@@ -198,7 +250,7 @@ def _parse_tool_calls(text: str) -> list[ToolCall]:
                         if isinstance(call, dict):
                             name = call.get("tool") or call.get("name", "")
                             args = call.get("args") or call.get("arguments", {})
-                            tc = _make_tool_call(name, args)
+                            tc = _make_tool_call(name, args, _request_id_from(call))
                             if tc:
                                 result.append(tc)
                     continue
@@ -209,7 +261,7 @@ def _parse_tool_calls(text: str) -> list[ToolCall]:
                 obj = json.loads(line)
                 name = obj.get("tool") or obj.get("name", "")
                 args = obj.get("args") or obj.get("arguments", {})
-                tc = _make_tool_call(name, args)
+                tc = _make_tool_call(name, args, _request_id_from(obj))
                 if tc:
                     result.append(tc)
             except (json.JSONDecodeError, TypeError):
@@ -247,7 +299,7 @@ def _extract_tool_calls(parsed: dict) -> list[ToolCall]:
             continue
         name = call.get("tool", "")
         args = call.get("args", {})
-        tc = _make_tool_call(name, args)
+        tc = _make_tool_call(name, args, _request_id_from(call))
         if tc:
             result.append(tc)
     return result
@@ -284,6 +336,14 @@ def _validate_and_filter_calls(
     valid_calls: list[ToolCall] = []
     rejected: list[ToolCall] = []
     for call in parsed_calls:
+        # Native mode: the model passes request_id as a regular function
+        # argument (tool schemas don't declare it). Promote it to the
+        # dedicated ToolCall field and strip it from arguments so tool
+        # executors never see — or reject — an unknown parameter.
+        if "request_id" in call.arguments:
+            rid = call.arguments.pop("request_id")
+            if call.request_id is None:
+                call.request_id = _clean_request_id(rid)
         if call.name not in allowed_names:
             rejected.append(call)
             continue
@@ -568,10 +628,24 @@ async def _execute_tools(
 ) -> list[ToolResult]:
     """Execute tool calls with recall_source interception and url_content dedup.
 
-    Partitions ``recall_source`` calls out before they reach the executor —
-    these are synthesized from in-scope citations (free, no HTTP fetch).
-    Remaining calls go through :func:`_execute_with_url_dedup` which handles
-    url_content URL dedup and real execution for all other tools.
+    Partitioning happens in three layers:
+
+    1. ``recall_source`` calls are synthesized from in-scope citations
+       (free, no HTTP fetch) — never executed.
+    2. Within a single batch, duplicate ``recall_source`` calls for the
+       same citation ID are deduped: the first gets the stored content,
+       repeats get a short "already recalled above" pointer. Recall
+       content doesn't change between reads in the same round — the
+       model sees the first result in this batch's context — so repeats
+       only bloat context. Mirrors the url_content URL dedup, including
+       decrementing ``call_counts`` for the deduped calls.
+    3. Remaining calls go through :func:`_execute_with_url_dedup` which
+       handles url_content URL dedup and real execution.
+
+    Dedup scope is the batch, NOT the research pass: a later round (or a
+    retry pass with reset context) may legitimately re-read the same
+    citation because earlier results have scrolled out of the model's
+    context window.
 
     Returns results in the same order as ``valid_calls``.
     """
@@ -588,8 +662,31 @@ async def _execute_tools(
     else:
         results_by_id = {}
 
-    # Synthesize recall_source results from in-scope citations
+    # Synthesize recall_source results from in-scope citations, deduping
+    # repeated citation IDs within this batch.
+    recalled_ids: set[str] = set()
     for call in recall_calls:
+        citation_id = call.arguments.get("citation_id", "")
+        if citation_id and citation_id in recalled_ids:
+            results_by_id[call.id] = ToolResult(
+                tool_name=_RECALL_SOURCE_TOOL_NAME,
+                output=(
+                    f"Citation '{citation_id}' was already recalled earlier in this "
+                    "batch — the stored content is unchanged and appears above. "
+                    "Recall a different source or take a different approach."
+                ),
+                success=False,
+                duration_ms=0,
+                metadata={"synthetic": True, "deduped": True},
+            )
+            # Deduped recall is free against per-run/per-step limits,
+            # mirroring the url_content dedup decrement.
+            prev = call_counts.get(call.name, 0)
+            if prev > 0:
+                call_counts[call.name] = prev - 1
+            continue
+        if citation_id:
+            recalled_ids.add(citation_id)
         results_by_id[call.id] = _build_recall_source_result(call, citations)
 
     # Reassemble in original valid_calls order
@@ -628,6 +725,71 @@ def _update_fetched_urls(
         }
 
 
+def _augment_tools_with_request_id(tools: list[ToolDefinition]) -> list[ToolDefinition]:
+    """Return tool copies whose argument schemas declare ``request_id``.
+
+    Native tool-calling models emit arguments matching the declared
+    schema — an undeclared parameter gets dropped even when the prompt
+    asks for it (measured 0/39 attribution on the 08-25 trade run).
+    Declaring ``request_id`` as an optional parameter on every tool
+    aligns the schema with the prompt instruction;
+    ``_validate_and_filter_calls`` pops it back off before execution so
+    tool executors never see it.
+    """
+    augmented: list[ToolDefinition] = []
+    for t in tools:
+        schema = t.argument_schema if isinstance(t.argument_schema, dict) else {}
+        props = schema.get("properties")
+        if isinstance(props, dict) and "request_id" in props:
+            augmented.append(t)
+            continue
+        new_schema = dict(schema)
+        new_props = dict(props) if isinstance(props, dict) else {}
+        new_props["request_id"] = {
+            "type": "string",
+            "description": (
+                "ID of the evidence request this call serves "
+                "(e.g. 'req0001'), copied from the evidence request list"
+            ),
+        }
+        new_schema["properties"] = new_props
+        augmented.append(replace(t, argument_schema=new_schema))
+    return augmented
+
+
+def _record_request_attempt(
+    ledger: dict[str, list[dict]],
+    rid: str,
+    name: str,
+    args: dict[str, Any],
+    result: ToolResult,
+) -> None:
+    """Append one attempt record to the per-request attempt ledger.
+
+    The ledger feeds two consumers: the retry prompt (queries already
+    tried, so the model changes strategy instead of re-rolling
+    near-duplicates) and future mechanical query-dedup. ``query`` is the
+    most query-like argument (query/url), falling back to a compact
+    argument dump for tools like calculator.
+    """
+    query = args.get("query") or args.get("url") or ""
+    if not query and args:
+        try:
+            query = json.dumps(args, sort_keys=True)
+        except (TypeError, ValueError):
+            query = str(args)
+    structured = result.metadata.get("results") if result.metadata else None
+    n_results = len(structured) if isinstance(structured, list) else (1 if result.output else 0)
+    ledger.setdefault(rid, []).append(
+        {
+            "tool": name,
+            "query": str(query)[:80],
+            "success": bool(result.success),
+            "results": n_results,
+        }
+    )
+
+
 def _process_execution_results(
     results: list,
     valid_calls: list[ToolCall],
@@ -641,17 +803,29 @@ def _process_execution_results(
     tool_costs: dict[str, float],
     new_budget: float,
     total_tool_cost: float,
+    request_attempts: dict[str, list[dict]] | None = None,
 ) -> tuple[list[str], float, float]:
     """Process execution results into citations, summaries, and cost tracking.
 
     Mutates ``citations``, ``seen_urls``, ``facts``, ``tool_results_log``,
-    and ``call_counts`` in place. Returns ``(tool_summary_parts,
-    new_budget, total_tool_cost)``.
+    ``call_counts``, and (when provided) ``request_attempts`` in place.
+    Returns ``(tool_summary_parts, new_budget, total_tool_cost)``.
+
+    Fact auto-promotion (unknown → unverified) is STRICT: a successful
+    call only promotes facts of the evidence request it was attributed
+    to via ``call.request_id``. Unattributed calls promote nothing — the
+    post-loop ``_cleanup_empty_claims`` safety net then reverts any
+    claimless promotion, so coverage reflects what actually ran, not
+    "some call somewhere used this tool" (the old loose matching).
     """
     tool_summary_parts: list[str] = []
+    request_by_id = {r.get("id"): r for r in evidence_requests if r.get("id")}
     for result, call in zip(results, valid_calls):
         name = call.name
         args = call.arguments
+        rid = call.request_id
+        if request_attempts is not None and rid:
+            _record_request_attempt(request_attempts, rid, name, args, result)
         writer(
             {
                 "event": "tool_result",
@@ -663,6 +837,8 @@ def _process_execution_results(
                     "success": result.success,
                     "node": NODE_NAME,
                     "metadata": result.metadata,
+                    # Attribution: which evidence request this call served.
+                    "request_id": rid,
                 },
             }
         )
@@ -681,6 +857,7 @@ def _process_execution_results(
                     "duration_ms": result.duration_ms,
                     "success": result.success,
                     "metadata": result.metadata,
+                    "request_id": rid,
                 }
             )
             continue
@@ -752,16 +929,27 @@ def _process_execution_results(
                 "duration_ms": result.duration_ms,
                 "success": result.success,
                 "metadata": result.metadata,
+                "request_id": rid,
             }
         )
 
+        # STRICT attribution: only the request this call served gets its
+        # facts promoted. Unattributed / unknown-ID calls promote nothing;
+        # the model's own discovered_facts entries (with claims+citations)
+        # remain the primary path for real resolution.
         if result.success and result.output:
-            for planned in evidence_requests:
-                if name in planned.get("candidate_tools", []):
-                    target_ids = planned.get("target_fact_ids", [])
-                    for fact in facts:
-                        if fact["id"] in target_ids and fact["status"] == "unknown":
-                            fact["status"] = "unverified"
+            planned = request_by_id.get(rid) if rid else None
+            if planned is not None:
+                target_ids = planned.get("target_fact_ids", [])
+                for fact in facts:
+                    if fact["id"] in target_ids and fact["status"] == "unknown":
+                        fact["status"] = "unverified"
+            elif rid:
+                logger.warning(
+                    "Tool call %s referenced unknown request %s — facts not promoted",
+                    call.id,
+                    rid,
+                )
 
         # call_counts is now incremented in _validate_and_filter_calls
         # at validation time, so it is already up-to-date here.
@@ -1250,6 +1438,7 @@ async def _run_native_tool_loop(
     step_limits: dict[str, int] | None = None,
     step_baseline: dict[str, int] | None = None,
     fetched_urls: dict[str, dict[str, Any]] | None = None,
+    request_attempts: dict[str, list[dict]] | None = None,
 ) -> _LoopResult:
     """Run the native tool-calling loop.
 
@@ -1281,7 +1470,7 @@ async def _run_native_tool_loop(
             messages=messages,
             model=resolved.model_id,
             temperature=DEFAULT_TEMPERATURE,
-            tools=candidate_tools,
+            tools=_augment_tools_with_request_id(candidate_tools),
         )
         total_call_count += 1
         last_response = response
@@ -1341,6 +1530,7 @@ async def _run_native_tool_loop(
             tool_costs,
             new_budget,
             total_tool_cost,
+            request_attempts=request_attempts,
         )
 
         # Record url_content outcomes for future dedup. Runs after
@@ -1407,6 +1597,7 @@ async def _run_text_tool_loop(
     step_limits: dict[str, int] | None = None,
     step_baseline: dict[str, int] | None = None,
     fetched_urls: dict[str, dict[str, Any]] | None = None,
+    request_attempts: dict[str, list[dict]] | None = None,
 ) -> _LoopResult:
     """Run the text-based tool-calling loop.
 
@@ -1582,6 +1773,7 @@ async def _run_text_tool_loop(
             tool_costs,
             new_budget,
             total_tool_cost,
+            request_attempts=request_attempts,
         )
 
         # Record url_content outcomes for future dedup
@@ -1684,6 +1876,12 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
 
     candidate_tools = es.get("candidate_tools", [])
     evidence_requests = es.get("evidence_requests", [])
+    # Per-request attempt ledger, carried across planning regenerations
+    # (see _carry_over_attempts). Copy inner lists so appends here never
+    # mutate the LangGraph-state lists in place.
+    request_attempts: dict[str, list[dict]] = {
+        rid: list(attempts) for rid, attempts in (es.get("request_attempts") or {}).items()
+    }
 
     # Get tool executor
     from moira.service_setup import service_provider
@@ -1795,8 +1993,17 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             "research.system_retry_context",
             established_facts=_format_established_facts(facts),
             prior_conclusions=_format_prior_conclusions(knowledge.get("conclusions", [])),
-            prior_citations=_format_prior_citations(citations),
+            prior_citations=_format_prior_citations(citations, facts),
         )
+        # Per-request failure summary: which requests got attempts, what
+        # queries ran, which facts are still unresolved. This is the
+        # feedback loop the reviewer's aggregate assessment can't provide.
+        request_outcomes = _format_request_outcomes(evidence_requests, request_attempts, facts)
+        if request_outcomes:
+            system_prompt += "\n\n" + render_prompt(
+                "research.system_request_outcomes",
+                request_outcomes=request_outcomes,
+            )
 
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
@@ -1829,6 +2036,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             step_limits=step_limits,
             step_baseline=step_call_baseline,
             fetched_urls=_fetched_urls,
+            request_attempts=request_attempts,
         )
     else:
         loop_result = await _run_text_tool_loop(
@@ -1852,6 +2060,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             step_limits=step_limits,
             step_baseline=step_call_baseline,
             fetched_urls=_fetched_urls,
+            request_attempts=request_attempts,
         )
 
     total_call_count = loop_result.total_call_count
@@ -1939,6 +2148,8 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
         "tool_calling_mode": "native" if resolved.native_tool_calling else "emulated",
         "prompt": user_prompt,
         "model": last_model_id,
+        # Compact attempt counts (full ledger lives in execution_state).
+        "request_attempt_counts": {rid: len(v) for rid, v in request_attempts.items()},
     }
     if last_response is not None:
         detail["response"] = last_response.content or ""
@@ -1977,6 +2188,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             "budget_remaining": new_budget,
             "tool_call_counts": call_counts,
             "total_tool_cost_consumed": total_tool_cost,
+            "request_attempts": request_attempts,
             "research_count": es.get("research_count", 0) + 1,
         },
     }
