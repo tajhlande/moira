@@ -2,6 +2,10 @@
 
 > **Status:** Brainstorm / pre-plan. Captures findings and design directions.
 > Not yet phased. Related to but separate from the goal-alignment plan.
+> Sibling pre-plan [retrieval-quality.md](retrieval-quality.md) covers the
+> retrieval side (query generation, fan-out, passage ranking); this document
+> covers the verification side (source classification, credibility rules).
+> The two share the source-type taxonomy defined below.
 
 ## Problem
 
@@ -208,7 +212,11 @@ difference between a claim that can be evaluated and one that can't.
 **Related:** Phase 2 URL dedup (commit `ce33f98`) already deduplicates
 url_content calls. The model IS using url_content (42 calls deduped across 7
 eval runs), but the ratio of url_content to web_search calls hasn't been
-measured. This is worth investigating before adding prompt guidance.
+measured. This is worth investigating before adding prompt guidance —
+[retrieval-quality.md](retrieval-quality.md)'s retrieval-isolation harness
+will emit this ratio, and its passage-level retrieval proposal (ranked
+passages returned from web_search) would make the url_content prompt nudge
+mostly obsolete by getting richer evidence to the evaluator structurally.
 
 ## Open questions
 

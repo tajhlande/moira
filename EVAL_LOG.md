@@ -129,30 +129,45 @@ Evals above this point have a bug:
 
 ## 2026-08-24 batch (commit cdc7a27b, planning-freedom)
 
-| Question | Rubric | Score | web_search | Status |
-|----------|--------|-------|------------|--------|
-| flaming-hot-cheetos | general | 18/25 | 10 | PASS |
-| future-nostalgia | general | 15/25 | 10 | FAIL |
-| jazz-trumpeters | general | 17/25 | 10 | PASS |
-| telescope-mount-cost | general | 21/25 | 10 | PASS |
-| trade-policy-manufacturing | general | 16/25 | 10 | FAIL |
-| tyranitar-ou | pokemon | 9/16 | 8 | FAIL |
-| water-blood-pressure | general | 18/25 | 10 | PASS |
+| Question                   | Rubric  | Score | web_search | Status |
+|----------------------------|---------|-------|------------|--------|
+| flaming-hot-cheetos        | general | 18/25 | 10         | PASS   |
+| future-nostalgia           | general | 15/25 | 10         | FAIL   |
+| jazz-trumpeters            | general | 17/25 | 10         | PASS   |
+| telescope-mount-cost       | general | 21/25 | 10         | PASS   |
+| trade-policy-manufacturing | general | 16/25 | 10         | FAIL   |
+| tyranitar-ou               | pokemon | 9/16  | 8          | FAIL   |
+| water-blood-pressure       | general | 18/25 | 10         | PASS   |
 
 - Agent model: z-ai/glm-5.2
 - Note: Re-evaluating the planning-freedom branch
 
 ## 2026-08-24 batch (commit d0dcd2fb, planning-freedom)
 
-| Question | Rubric | Score | web_search | Status |
-|----------|--------|-------|------------|--------|
-| flaming-hot-cheetos | general | 19/25 | 10 | PASS |
-| future-nostalgia | general | 17/25 | 10 | PASS |
-| jazz-trumpeters | general | 15/25 | 10 | FAIL |
-| telescope-mount-cost | general | 15/25 | 10 | FAIL |
-| trade-policy-manufacturing | general | 17/25 | 10 | PASS |
-| tyranitar-ou | pokemon | 12/16 | 7 | FAIL |
-| water-blood-pressure | general | 21/25 | 10 | PASS |
+| Question                   | Rubric  | Score | web_search | Status |
+|----------------------------|---------|-------|------------|--------|
+| flaming-hot-cheetos        | general | 19/25 | 10         | PASS   |
+| future-nostalgia           | general | 17/25 | 10         | PASS   |
+| jazz-trumpeters            | general | 15/25 | 10         | FAIL   |
+| telescope-mount-cost       | general | 15/25 | 10         | FAIL   |
+| trade-policy-manufacturing | general | 17/25 | 10         | PASS   |
+| tyranitar-ou               | pokemon | 12/16 | 7          | FAIL   |
+| water-blood-pressure       | general | 21/25 | 10         | PASS   |
 
 - Agent model: z-ai/glm-5.2
 - Note: Evaluating phase 2 of planning-freedom branch
+
+## 2026-08-25 batch (commit 1e5ebc7e, planning-freedom)
+
+| Question                   | Rubric  | Score | web_search | Status |
+|----------------------------|---------|-------|------------|--------|
+| flaming-hot-cheetos        | general | 21/25 | 10         | PASS   |
+| future-nostalgia           | general | 17/25 | 10         | FAIL   |
+| jazz-trumpeters            | general | 18/25 | 10         | PASS   |
+| telescope-mount-cost       | general | 17/25 | 10         | PASS   |
+| trade-policy-manufacturing | general | 19/25 | 0          | FAIL   |
+| tyranitar-ou               | pokemon | 15/16 | 10         | PASS   |
+| water-blood-pressure       | general | 18/25 | 10         | FAIL   |
+
+- Agent model: z-ai/glm-5.2
+- Note: Evaluating phase 2.1 of planning-freedom branch
