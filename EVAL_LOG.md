@@ -141,3 +141,18 @@ Evals above this point have a bug:
 
 - Agent model: z-ai/glm-5.2
 - Note: Re-evaluating the planning-freedom branch
+
+## 2026-08-24 batch (commit d0dcd2fb, planning-freedom)
+
+| Question | Rubric | Score | web_search | Status |
+|----------|--------|-------|------------|--------|
+| flaming-hot-cheetos | general | 19/25 | 10 | PASS |
+| future-nostalgia | general | 17/25 | 10 | PASS |
+| jazz-trumpeters | general | 15/25 | 10 | FAIL |
+| telescope-mount-cost | general | 15/25 | 10 | FAIL |
+| trade-policy-manufacturing | general | 17/25 | 10 | PASS |
+| tyranitar-ou | pokemon | 12/16 | 7 | FAIL |
+| water-blood-pressure | general | 21/25 | 10 | PASS |
+
+- Agent model: z-ai/glm-5.2
+- Note: Evaluating phase 2 of planning-freedom branch

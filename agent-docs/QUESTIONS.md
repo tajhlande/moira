@@ -7,6 +7,52 @@ relevant plan documents and code.
 
 ---
 
+## Planning freedom — open questions
+
+**Discovered during:** writing
+[`planning-freedom.md`](./planning-freedom.md) (retroactive plan for the
+`planning-freedom` branch).
+
+### Should fallback cascade behavior ever be mechanically enforced?
+
+The `fallback` flag on `EvidenceRequest` is planning-level *cascade
+permission* — advisory only. Nothing verifies the researcher actually tries
+the next candidate tool before falling to web_search. Phase 5 will measure
+cascade behavior; if cascades don't happen, the options are prompt
+strengthening (cheap, unreliable) or code-level enforcement (e.g., budget
+gating web_search until preferred candidates are tried or refused).
+
+**Question:** If measurement shows cascades aren't happening, enforce
+mechanically or accept advisory semantics?
+
+---
+
+## Hierarchical decomposition — open questions
+
+**Discovered during:** brainstorming
+[`hierarchical-decomposition.md`](./hierarchical-decomposition.md).
+
+### Merge semantics: how do child conclusions compose into the parent?
+
+The gating design decision for any hierarchical/multi-branch research
+(Options 1/2/3 detailed in the plan doc): child conclusions as parent facts
+(status laundering risk), verified-facts-only rollup (discards child
+synthesis), or hybrid with provenance (needs a concept the knowledge model
+doesn't have). Overlaps with the budget-exhausted-conclusions question below
+— settle together.
+
+**Question:** Which merge semantic, and does `Conclusion` need a provenance
+field to support it?
+
+### Budget allocation across branches
+
+Per-branch budgets vs shared pool; early-exhaustion handling; whether
+evaluation-level retry re-enters finished branches.
+
+**Question:** Decide before Level 1 (map-reduce) work begins.
+
+---
+
 ## Budget-exhausted reports lose all synthesis work
 
 **Discovered during:** Claim validation Phase 4 review (run

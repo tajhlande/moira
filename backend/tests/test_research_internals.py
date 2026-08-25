@@ -96,6 +96,304 @@ class TestResearchHelpers:
 
         assert facts[0]["status"] == "unknown"
 
+    def test_is_fact_id_reference_variants(self):
+        """_is_fact_id_reference matches ID-reference patterns and rejects
+        ordinary prose. "f003|f004" style fact_needed values come from the
+        model mimicking the pipe-delimited facts display format."""
+        from moira.workflow.nodes.research import _is_fact_id_reference
+
+        assert _is_fact_id_reference("f003|f004")
+        assert _is_fact_id_reference("f003, f004")
+        assert _is_fact_id_reference("f003 and f004")
+        assert _is_fact_id_reference("f003 & f004")
+        assert _is_fact_id_reference("F003|F004")
+        assert _is_fact_id_reference("f003")
+        # Ordinary descriptions never match, even when they mention an ID
+        assert not _is_fact_id_reference("Measured effect of tariffs on prices")
+        assert not _is_fact_id_reference("Whether f001 pricing applies broadly")
+        assert not _is_fact_id_reference("and or")
+
+    def test_apply_discovered_facts_id_reference_fact_needed_treated_as_missing(self):
+        """A new-fact fact_needed that only references other fact IDs
+        ("f003|f004") must be treated as missing. With a cited claim the
+        entry falls through to the cited-claim fallback; without one it is
+        dropped entirely. Neither path may store the ID-reference string as
+        fact_needed (the f012-f014 corruption from the 08-24 eval)."""
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts = [
+            Fact(id="f001", subject="A", fact_needed="x", status="unknown"),
+        ]
+
+        # Uncited ID-reference entry: dropped, no fact created
+        _apply_discovered_facts(
+            {
+                "discovered_facts": [
+                    {
+                        "fact_id": None,
+                        "fact_needed": "f002|f003",
+                        "claim": "Studies use SVAR methods",
+                    }
+                ]
+            },
+            facts,
+        )
+        assert len(facts) == 1
+
+        # Cited ID-reference entry: salvaged via claim fallback — fact_needed
+        # is the claim text, never the ID reference
+        _apply_discovered_facts(
+            {
+                "discovered_facts": [
+                    {
+                        "fact_id": None,
+                        "subject": "Trade",
+                        "fact_needed": "f002|f003",
+                        "claim": "Tariff passthrough raised input prices",
+                        "citation_ids": ["cit004"],
+                    }
+                ]
+            },
+            facts,
+        )
+        assert len(facts) == 2
+        new_fact = facts[1]
+        assert new_fact["id"] == "f002"
+        assert new_fact["fact_needed"] == "Tariff passthrough raised input prices"
+        assert new_fact["status"] == "unverified"
+        assert new_fact["citation_ids"] == ["cit004"]
+
+    def test_apply_discovered_facts_new_fact_uncited_claim_stays_unknown(self):
+        """A new fact (real fact_needed) whose immediate claim has no
+        citations must enter as 'unknown' with no claim — not as an
+        unsourced 'unverified' fact that leaks into the report."""
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts = []
+
+        _apply_discovered_facts(
+            {
+                "discovered_facts": [
+                    {
+                        "fact_id": None,
+                        "subject": "Trade",
+                        "fact_needed": "Measured tariff passthrough rate",
+                        "claim": "Passthrough was roughly 20 percent",
+                        "citation_ids": [],
+                    }
+                ]
+            },
+            facts,
+        )
+
+        assert len(facts) == 1
+        assert facts[0]["status"] == "unknown"
+        assert facts[0].get("claim", "") == ""
+        assert facts[0].get("citation_ids", []) == []
+        assert facts[0]["fact_needed"] == "Measured tariff passthrough rate"
+
+    def test_apply_discovered_facts_new_fact_cited_claim_recorded(self):
+        """A new fact with a real fact_needed AND a cited claim is recorded
+        immediately as 'unverified' — the intended no-wasted-retry path."""
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts = []
+
+        _apply_discovered_facts(
+            {
+                "discovered_facts": [
+                    {
+                        "fact_id": None,
+                        "subject": "Trade",
+                        "fact_needed": "Measured tariff passthrough rate",
+                        "claim": "Passthrough was roughly 20 percent",
+                        "citation_ids": ["cit002"],
+                    }
+                ]
+            },
+            facts,
+        )
+
+        assert len(facts) == 1
+        assert facts[0]["status"] == "unverified"
+        assert facts[0]["claim"] == "Passthrough was roughly 20 percent"
+        assert facts[0]["citation_ids"] == ["cit002"]
+
+    def test_apply_discovered_facts_claim_only_fallback_requires_citation(self):
+        """Claim-only entries (null fact_id, no fact_needed) are created only
+        when cited; uncited ones are dropped."""
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts = []
+
+        # Cited claim-only entry: created with claim as fact_needed
+        _apply_discovered_facts(
+            {
+                "discovered_facts": [
+                    {
+                        "fact_id": None,
+                        "subject": "Trade",
+                        "claim": "Retaliation targeted agricultural exports",
+                        "citation_ids": ["cit001"],
+                    }
+                ]
+            },
+            facts,
+        )
+        assert len(facts) == 1
+        assert facts[0]["status"] == "unverified"
+        assert facts[0]["fact_needed"] == "Retaliation targeted agricultural exports"
+        assert facts[0]["citation_ids"] == ["cit001"]
+
+        # Uncited claim-only entry: dropped
+        _apply_discovered_facts(
+            {
+                "discovered_facts": [
+                    {
+                        "fact_id": None,
+                        "subject": "Trade",
+                        "claim": "Uncited assertion",
+                    }
+                ]
+            },
+            facts,
+        )
+        assert len(facts) == 1
+
+    def test_apply_discovered_facts_multiple_cited_entries_same_fact_id(self):
+        """Multiple cited entries for the same fact_id in ONE response: the
+        first updates the fact; each subsequent cited entry becomes a new
+        fact instead of clobbering the first claim.
+
+        Regression test for the 08-24 telescope run: the model emitted ~18
+        discovered_facts entries with distinct subjects attached to a handful
+        of existing fact IDs, and last-write-wins left an arbitrary survivor.
+        """
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts = [
+            Fact(
+                id="f001",
+                subject="Cost",
+                fact_needed="Typical price range of X",
+                status="unknown",
+            ),
+        ]
+
+        _apply_discovered_facts(
+            {
+                "discovered_facts": [
+                    {
+                        "fact_id": "f001",
+                        "subject": "Cost",
+                        "claim": "X retails for $400-$600",
+                        "citation_ids": ["cit001"],
+                    },
+                    {
+                        "fact_id": "f001",
+                        "subject": "Drive mechanics",
+                        "claim": "X uses a 360:1 worm gear drive",
+                        "citation_ids": ["cit002"],
+                    },
+                    {
+                        "fact_id": "f001",
+                        "subject": "Component weight",
+                        "claim": "The heaviest part of X weighs 110 pounds",
+                        "citation_ids": ["cit003"],
+                    },
+                ]
+            },
+            facts,
+        )
+
+        # First entry owns the existing fact
+        assert facts[0]["id"] == "f001"
+        assert facts[0]["claim"] == "X retails for $400-$600"
+        assert facts[0]["status"] == "unverified"
+        assert facts[0]["citation_ids"] == ["cit001"]
+
+        # Overflow entries were split into new facts, each with its own
+        # subject, claim, and citation — not dropped, not clobbering f001.
+        new_facts = facts[1:]
+        assert len(new_facts) == 2
+        assert new_facts[0]["subject"] == "Drive mechanics"
+        assert new_facts[0]["claim"] == "X uses a 360:1 worm gear drive"
+        assert new_facts[0]["fact_needed"] == "X uses a 360:1 worm gear drive"
+        assert new_facts[0]["status"] == "unverified"
+        assert new_facts[0]["citation_ids"] == ["cit002"]
+        assert new_facts[1]["subject"] == "Component weight"
+        assert new_facts[1]["citation_ids"] == ["cit003"]
+
+    def test_apply_discovered_facts_uncited_overflow_entry_dropped(self):
+        """An overflow entry (fact already updated this response) without a
+        citation is dropped — uncited claims cannot be verified or cited in
+        the report, so they must not become new facts either."""
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts = [
+            Fact(
+                id="f001",
+                subject="Cost",
+                fact_needed="Typical price range of X",
+                status="unknown",
+            ),
+        ]
+
+        _apply_discovered_facts(
+            {
+                "discovered_facts": [
+                    {
+                        "fact_id": "f001",
+                        "subject": "Cost",
+                        "claim": "X retails for $400-$600",
+                        "citation_ids": ["cit001"],
+                    },
+                    {
+                        "fact_id": "f001",
+                        "subject": "Misc",
+                        "claim": "Uncited side detail",
+                    },
+                ]
+            },
+            facts,
+        )
+
+        assert len(facts) == 1
+        assert facts[0]["claim"] == "X retails for $400-$600"
+
+    def test_apply_discovered_facts_empty_claim_does_not_lock_fact(self):
+        """A skipped entry (empty claim) must NOT mark the fact as updated,
+        so a later cited entry in the same response can still claim it."""
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts = [
+            Fact(
+                id="f001",
+                subject="Cost",
+                fact_needed="Typical price range of X",
+                status="unknown",
+            ),
+        ]
+
+        _apply_discovered_facts(
+            {
+                "discovered_facts": [
+                    {"fact_id": "f001", "subject": "Cost", "claim": ""},
+                    {
+                        "fact_id": "f001",
+                        "subject": "Cost",
+                        "claim": "X retails for $400-$600",
+                        "citation_ids": ["cit001"],
+                    },
+                ]
+            },
+            facts,
+        )
+
+        assert len(facts) == 1
+        assert facts[0]["claim"] == "X retails for $400-$600"
+        assert facts[0]["status"] == "unverified"
+
     def test_cleanup_empty_claims_reverts_unverified_to_unknown(self):
         """_cleanup_empty_claims reverts 'unverified' facts with empty claims
         back to 'unknown' so the gap is visible to research_review."""

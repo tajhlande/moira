@@ -33,6 +33,59 @@ logger = logging.getLogger(__name__)
 NODE_NAME = "planning"
 
 
+def _split_bundled_requests(requests: list[EvidenceRequest], facts: list) -> list[EvidenceRequest]:
+    """Split multi-fact evidence requests into one request per fact.
+
+    Bundled requests (several target_fact_ids behind one evidence_needed)
+    produced vague, hard-to-query evidence descriptions in the 08-24 eval:
+    one description serving several facts dissolves into generality. A
+    per-fact request keeps each description actionable. The planning prompt
+    asks for one fact per request; this parse-time split is the mechanical
+    backstop, not a rewrite of model output.
+
+    Also drops target IDs that reference nonexistent facts — a request
+    aimed at a dangling ID can never be satisfied or matched. A request
+    whose targets are all unknown is dropped entirely (with a log).
+
+    Split requests copy candidate_tools and fallback from the original.
+    evidence_needed becomes the target fact's own fact_needed (the precise
+    description of what must be established), falling back to the original
+    bundle description when the fact has none.
+    """
+    fact_needed_by_id = {f["id"]: (f.get("fact_needed") or "").strip() for f in facts}
+    result: list[EvidenceRequest] = []
+    for req in requests:
+        target_ids = [t for t in req.get("target_fact_ids", []) if isinstance(t, str)]
+        known_ids = []
+        for tid in target_ids:
+            if tid in fact_needed_by_id:
+                known_ids.append(tid)
+            else:
+                logger.warning(
+                    "PLANNING: evidence request references unknown fact %s — dropping that target",
+                    tid,
+                )
+        if not known_ids:
+            logger.warning(
+                "PLANNING: dropping evidence request with no valid target facts: %s",
+                req.get("evidence_needed", "")[:80],
+            )
+            continue
+        if len(known_ids) == 1:
+            result.append({**req, "target_fact_ids": known_ids})
+            continue
+        for tid in known_ids:
+            result.append(
+                EvidenceRequest(
+                    target_fact_ids=[tid],
+                    evidence_needed=fact_needed_by_id[tid] or req.get("evidence_needed", ""),
+                    candidate_tools=req.get("candidate_tools", []),
+                    fallback=req.get("fallback", True),
+                )
+            )
+    return result
+
+
 def _format_unknown_facts(facts: list) -> str:
     """Format non-verified facts for the planning prompt.
 
@@ -263,10 +316,10 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
         )
 
     parsed = _parse_json_object(raw)
-    evidence_requests: list[EvidenceRequest] = []
+    raw_requests: list[EvidenceRequest] = []
     for req in parsed.get("evidence_requests", []):
         if isinstance(req, dict) and req.get("target_fact_ids"):
-            evidence_requests.append(
+            raw_requests.append(
                 EvidenceRequest(
                     target_fact_ids=req.get("target_fact_ids", []),
                     evidence_needed=req.get("evidence_needed", ""),
@@ -274,6 +327,9 @@ async def planning(state: ResearchState, config: RunnableConfig) -> dict:
                     fallback=req.get("fallback", True),
                 )
             )
+    # Mechanical backstop for the prompt's one-fact-per-request rule:
+    # splits bundles, drops dangling fact references.
+    evidence_requests = _split_bundled_requests(raw_requests, knowledge["facts"])
 
     detail["structured_output"] = parsed
 

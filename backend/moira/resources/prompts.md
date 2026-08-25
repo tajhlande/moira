@@ -47,7 +47,7 @@ data points needed.
 
 For questions that ask to identify, rank, compare, or evaluate entities
 (e.g., "What are the most revered action figures from the 1980s?",
-"Which telescope mount offers the best value?"), include discovery facts
+"Which bicycle mount offers the best value?"), include discovery facts
 that direct the research to find candidate entities from external sources:
 - Include at least one fact asking for published lists, rankings, awards,
   or expert compilations that identify notable entities in the domain
@@ -66,12 +66,12 @@ sources rather than studying the abstract concept of influence or quality.
 
 Respond with a JSON object with these keys:
 - "user_goal": a one-sentence description of what the user wants to accomplish, written in plain language
-- "topic": the broad domain of the question (e.g., "competitive pokemon", "climate science")
+- "topic": the broad domain of the question (e.g., "home cooking techniques", "climate science")
 - "entities": list of specific named entities mentioned or implied in the question or needed to answer it
 - "concepts": list of abstract concepts involved with the question or that will be needed to answer it
 - "unknown_facts": list of objects, each with:
   - "subject": what entity or topic this fact is about
-  - "fact_needed": a specific description of what needs to be known (e.g., "Tyranitar's typing", "OU legality rules for Gen9")
+  - "fact_needed": a specific description of what needs to be known (e.g., "Measured effect of dopamine on test performance", "Expert consensus on egg boiling technique")
 
 Produce enough specific facts to materially answer the question. Do not pad the list
 with facts that are merely interesting about the domain but not needed for the answer.
@@ -154,14 +154,15 @@ queries based on your evidence descriptions and the tool argument schemas. Your 
 is to describe WHAT evidence is needed and WHICH tools are most likely to provide it.
 
 Rules:
+- Target ONE fact per evidence request. Each request should describe the
+  evidence needed to resolve a single fact. (Exception: only when several
+  facts are genuinely resolved by the exact same single lookup, e.g.,
+  height AND weight from one product spec sheet — but when in doubt, split.)
 - Each evidence request must describe ONE type of evidence findable from a single
   search or tool call
-- Multiple target_fact_ids are allowed only when they are genuinely resolved by
-  that same evidence source (e.g., typing, weaknesses, and resistances from one
-  type chart lookup)
 - List candidate tools in priority order: specialized tools first, web_search last
 - Set fallback to true if web_search should be tried when specialized tools fail
-- Prefer specialized tools over generic ones (e.g., a Pokemon API over web_search)
+- Prefer specialized tools over generic ones (e.g., a specific topical API over web_search)
 - Do not plan beyond the available budget
 - Respect call limits — if a tool has already been called up to its limit this run,
   omit it from candidate_tools
@@ -174,8 +175,8 @@ Reference facts by their IDs in your plan.
 
 Respond with a JSON object with key "evidence_requests": a list of objects, each with:
 - "target_fact_ids": a list of fact IDs this request aims to resolve (e.g., ["f001", "f003"])
-- "evidence_needed": a short phrase describing what evidence would satisfy these facts (e.g., "Tyranitar's type chart (weaknesses & resistances)")
-- "candidate_tools": tools to try in priority order (e.g., ["pikalytics", "smogon", "web_search"])
+- "evidence_needed": a short phrase describing what evidence would satisfy these facts (e.g., "Egg boiling step by step procedures from known experts")
+- "candidate_tools": tools to try in priority order (e.g., ["serious_eats", "allrecipes", "web_search"])
 - "fallback": true if the research step should cascade to the next tool when one fails
 
 ## planning.user
@@ -274,7 +275,7 @@ This is provided for context only. The most recent prior report is provided sepa
 
 ## tool_discovery.query_rewrite.system
 
-You are a search query optimizer for a tool discovery system. Your job is to rewrite a research plan into one or more medium-length search queries that would match descriptions of API tools or data sources. Focus on what DATA the plan needs, not how to analyze it. Each query should be a concise noun phrase describing the data source (e.g. "pokemon species stats and abilities", "weather forecast historical data", "stock price API"). Do not mention tools by name. Respond with 1 to 3 queries, one per line, no numbering, no explanation. Ensure you substantially cover the semantic space and content of the research plan for the user's question in your queries.
+You are a search query optimizer for a tool discovery system. Your job is to rewrite a research plan into one or more medium-length search queries that would match descriptions of API tools or data sources. Focus on what DATA the plan needs, not how to analyze it. Each query should be a concise noun phrase describing the data source (e.g. "home cooking technique forum", "weather forecast historical data", "stock price API"). Do not mention tools by name. Respond with 1 to 3 queries, one per line, no numbering, no explanation. Ensure you substantially cover the semantic space and content of the research plan for the user's question in your queries.
 
 ## tool_discovery.query_rewrite.user
 
@@ -327,18 +328,23 @@ Search strategy:
 - Use the evidence requests as guidance: each describes the evidence needed for a
   group of facts and lists candidate tools in priority order. Try the first tool; if
   it fails or returns nothing, cascade to the next.
-- When an evidence request targets a category (e.g., 'candidate Pokémon'),
+- When an evidence request targets a category (e.g., 'planets with liquid water'),
   first discover specific entities from search results, then create new facts for
-  each one using `null` fact_id and provide `fact_needed`. Fact IDs will be
-  assigned automatically. If you already have evidence for the new fact from
-  the search results, include a `claim` and `citation_ids` — the fact will be
-  marked unverified immediately, avoiding a wasted retry.
+  each one using `null` fact_id and provide `fact_needed`: a plain-English
+  description of the fact itself,
+  never a reference to other fact IDs like "f003|f004" — that is meaningless
+  as a description. Fact IDs will be assigned automatically. Immediate claims
+  are recorded only when cited: include a `claim` AND at least one
+  `citation_ids` entry from the tool results — the fact will be marked
+  unverified immediately, avoiding a wasted retry. An uncited claim still
+  creates the fact (as unknown), but the claim itself is not recorded until
+  a source supports it.
 - Use concise queries: 3-6 words, focused noun phrases.
-  Too long (doesn't work): "telescope mount manufacturing production volume
-    economies of scale market demand pricing"
-  Better: "equatorial mount production volume"
-  Better: "why are equatorial mounts expensive"
-  Better: "telescope mount cost comparison forum"
+  Too long (doesn't work): "egg boiling technique water temperature timing
+    doneness heat transfer cooking method comparison"
+  Better: "Navel orange seasonal shipping volume"
+  Better: "why are shipping ports dredged deeply"
+  Better: "Egg boiling technique comparison forum"
 - Do NOT simply copy the fact_needed text into your search query. fact_needed
   describes WHAT to find, not HOW to search for it. Formulate queries in search-engine-friendly terms.
   Bad example(copies fact text): "whether published lists or rankings of
@@ -379,11 +385,16 @@ For each fact you discover, record:
   claim using the exact ID.
 - If you cannot find any information for a fact, simply omit it from
   discovered_facts. Do not create entries for facts you could not resolve.
-- The subject it is about
-- A specific, precise claim (e.g., "Tyranitar is Rock/Dark type", not "Tyranitar has
-  a type")
-- An optional relation (e.g., "has_type", "weak_to", "has_ability")
-- An optional value (e.g., "Rock/Dark", "Fighting x4")
+- A claim must answer its fact's question — what the fact_needed asks for.
+  If you found a related detail that does not answer an existing fact's
+  question, do not force it onto that fact: record it as a new fact
+  ("fact_id": null, with its own subject, fact_needed, and cited claim).
+  One entry per fact per response — if you found several distinct details,
+  each becomes its own new fact.
+- The subject it is about (e.g. "Venus")
+- A specific, precise claim (e.g., "Venus has no liquid water, but does have water vapor", not "Water exists on Venus")
+- An optional relation (e.g., "has_property", "is_part_of", "caused_by")
+- An optional value (e.g., "water", "scientific consensus")
 
 IMPORTANT — RESPONSE FORMAT:
 You must respond with a single JSON object. Do NOT use XML tags, markdown formatting,
@@ -401,7 +412,12 @@ The JSON object must have exactly these keys:
   optionally "relation" and "value", and "citation_ids" — a list of the source
   IDs (e.g., ["cit001"]) that support the claim. Source IDs are shown in
   square brackets at the start of each tool result above (e.g., "[cit001]").
-  For newly identified facts, use "fact_id": null and include "fact_needed".
+  Every claim MUST include at least one citation ID — claims without a cited
+  source are dropped. If you cannot cite a source for a claim, omit it.
+  For newly identified facts, use "fact_id": null and include "fact_needed":
+  a plain-English description of what needs to be known, written as a complete
+  phrase (e.g., "Measured effect of dopamine on test performance"). Never reference other fact IDs in fact_needed — "f003|f004" is
+  meaningless as a description.
 - "sources": array of objects with "source" (tool name), "url" (if applicable),
   "title", and "excerpt" (relevant snippet from the tool output).
 
@@ -410,6 +426,11 @@ Example response:
 
 When you are done researching and have no more tool calls to make:
 {"tool_calls": [], "discovered_facts": [{"fact_id": "f001", "subject": "Example", "claim": "Specific claim here", "relation": "has_property", "value": "the value", "citation_ids": ["cit001"]}], "sources": [{"source": "web_search", "url": "https://example.com", "title": "Example", "excerpt": "Relevant snippet"}]}
+
+Good new-fact entry (plain-English fact_needed, cited claim):
+{"fact_id": null, "subject": "Dopamine effect", "fact_needed": "Measured effect of dopamine on test performance", "claim": "Dopamine has been found to improve performance on pattern recognition and general cognition tests, but worsens performance in knowledge recall and logic application", "citation_ids": ["cit003"]}
+Bad new-fact entry (ID reference as fact_needed, uncited claim — both are dropped):
+{"fact_id": null, "fact_needed": "f003|f004", "claim": "Studies use SVAR methods"}
 
 ## research.user
 
@@ -499,18 +520,23 @@ Search strategy:
 - Use the evidence requests as guidance: each describes the evidence needed for a
   group of facts and lists candidate tools in priority order. Try the first tool; if
   it fails or returns nothing, cascade to the next.
-- When an evidence request targets a category (e.g., 'candidate Pokémon'),
+- When an evidence request targets a category (e.g., 'planets with liquid water'),
   first discover specific entities from search results, then create new facts for
-  each one using `null` fact_id and provide `fact_needed`. Fact IDs will be
-  assigned automatically. If you already have evidence for the new fact from
-  the search results, include a `claim` and `citation_ids` — the fact will be
-  marked unverified immediately, avoiding a wasted retry.
+  each one using `null` fact_id and provide `fact_needed`: a plain-English
+  description of the fact itself (e.g., "Dopamine impact on test performance"),
+  never a reference to other fact IDs like "f003|f004" — that is meaningless
+  as a description. Fact IDs will be assigned automatically. Immediate claims
+  are recorded only when cited: include a `claim` AND at least one
+  `citation_ids` entry from the tool results — the fact will be marked
+  unverified immediately, avoiding a wasted retry. An uncited claim still
+  creates the fact (as unknown), but the claim itself is not recorded until
+  a source supports it.
 - Use concise queries: 3-6 words, focused noun phrases.
-  Too long (doesn't work): "telescope mount manufacturing production volume
-    economies of scale market demand pricing"
-  Better: "equatorial mount production volume"
-  Better: "why are equatorial mounts expensive"
-  Better: "telescope mount cost comparison forum"
+  Too long (doesn't work): "egg boiling technique water temperature timing
+    doneness heat transfer cooking method comparison"
+  Better: "Navel orange seasonal shipping volume"
+  Better: "why are shipping ports dredged deeply"
+  Better: "Egg boiling technique comparison forum"
 - Do NOT copy the fact_needed text into your search query. fact_needed
   describes WHAT to find, not HOW to search for it. Reformulate each
   fact into search-engine-friendly terms.
@@ -553,6 +579,12 @@ Extraction discipline:
   silently discard tool results by returning empty content.
 - Even partial information is valuable. If a source mentions the subject but does not
   fully answer fact_needed, extract what it does say and omit what it does not.
+- A claim must answer its fact's question — what the fact_needed asks for.
+  If you found a related detail that does not answer an existing fact's
+  question, do not force it onto that fact: record it as a new fact
+  ("fact_id": null, with its own subject, fact_needed, and cited claim).
+  One entry per fact per response — if you found several distinct details,
+  each becomes its own new fact.
 
 In every response after receiving tool results, include your discovered_facts and
 sources as a JSON object in your text content. Do NOT include tool_calls in the
@@ -563,7 +595,12 @@ The JSON object must have exactly these keys:
   optionally "relation" and "value", and "citation_ids" — a list of the source
   IDs (e.g., ["cit001"]) that support the claim. Source IDs are shown in
   square brackets at the start of each tool result above (e.g., "[cit001]").
-  For newly identified facts, use "fact_id": null and include "fact_needed".
+  Every claim MUST include at least one citation ID — claims without a cited
+  source are dropped. If you cannot cite a source for a claim, omit it.
+  For newly identified facts, use "fact_id": null and include "fact_needed":
+  a plain-English description of what needs to be known, written as a complete
+  phrase (e.g., "Measured effect of dopamine on test performance"). Never reference other fact IDs in fact_needed — "f003|f004" is
+  meaningless as a description.
 - "sources": array of objects with "source" (tool name), "url" (if applicable),
   "title", and "excerpt" (relevant snippet from the tool output).
 
@@ -604,17 +641,15 @@ fill the missing areas. Each search should target a different missing area, not
 the same gap restated multiple ways.
 
 When prior searches didn't find the information, try alternative strategies:
-- Natural-language phrasings: "why are equatorial mounts expensive" instead of
-  "equatorial mount manufacturing cost"
+- Natural-language phrasings: "why are navel oranges dying" instead of
+  "navel orange death reasons"
 - Indirect sources: forums, reviews, product comparisons, pricing pages, or
   manufacturer specs — these often discuss specifics that encyclopedic sources omit
 - Terminology variation: colloquial terms, hobbyist jargon, or industry-specific
   vocabulary the original query may have missed
-- Scope shifts: broaden to industry-level analysis ("telescope mount market
-  pricing") or narrow to a specific comparison ("Celestron vs Sky-Watcher mount
-  cost")
+- Scope shifts: broaden to industry-level analysis ("Navel orange futures market pricing") or narrow to a specific comparison ("Egg boiling preheating vs cold start")
 - Site-specific searches: target domains known for the topic
-  (site:reddit.com/r/telescopes, site:cloudynights.com)
+  (site:reddit.com/r/cooking, site:seriouseats.com)
 
 ## research.system_retry_context
 
@@ -708,18 +743,16 @@ Rules:
   "derivation": "direct".
 - You MAY derive new claims that logically follow from the supplied facts.
 - You should then derive conclusions from the facts and the derived claims.
-- You MUST NOT introduce additional domain knowledge that does not come from the supplied facts. For example, if fact f005 says "X is weak to Y" and fact f008
-  says "Z resists Y", you may conclude "Z covers X's weakness to Y" but you may NOT
-  conclude "Z is a good teammate for X" without additional facts about team
+- You MUST NOT introduce additional domain knowledge that does not come from the supplied facts. For example, if fact f005 says "X is a specific form of Y" and fact f008
+  says "Z is dangerous to X", you may conclude "Z is dangerous to some forms of Y" but you may NOT
+  conclude "Z is dangerous to X" without additional facts about team
   evaluation criteria.
 - Be precise. Avoid vague conclusions that could be interpreted multiple ways.
 
 Example of reasoned inference (derivation: "inferred"):
-  If f002 says "equatorial mounts require precision tolerances" and f004 says
-  "they use specialized single-axis tracking motors," you may conclude "The
-  mechanical complexity of equatorial mounts (precision tolerances + specialized
-  tracking) likely contributes to their higher cost compared to simpler
-  alt-azimuth designs." This is permitted — it follows logically from the cited
+  If f002 says "Orange juice container ships must be refrigerated" and f004 says
+  "Orange juice shipping costs are higher than other liquids", you may conclude "The
+  refrigeration costs of shipping orange juice likely contributes to its higher cost compared to other container shipping." This is permitted — it follows logically from the cited
   facts. What is NOT permitted: asserting the cost difference is due to "supply
   and demand" or other domain knowledge not in the facts.
 

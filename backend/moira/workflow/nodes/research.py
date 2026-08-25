@@ -777,6 +777,23 @@ def _process_execution_results(
     return tool_summary_parts, new_budget, total_tool_cost
 
 
+def _is_fact_id_reference(text: str) -> bool:
+    """True when text consists solely of fact IDs and connectors.
+
+    The research prompt displays the facts list pipe-delimited
+    ("f003 | Trade | effect of tariffs on prices"), and models sometimes
+    mimic that display format in fact_needed ("f003|f004", "f003 and f004").
+    Such a value is a reference to other facts, not a description of what
+    needs to be known, and would be meaningless if facts were renumbered.
+    Requires at least one fact-ID token so ordinary prose never matches.
+    """
+    tokens = [t for t in re.split(r"[^A-Za-z0-9]+", text.lower()) if t]
+    if not tokens:
+        return False
+    has_fact_id = any(re.fullmatch(r"f\d+", t) for t in tokens)
+    return has_fact_id and all(re.fullmatch(r"f\d+", t) or t in ("and", "or") for t in tokens)
+
+
 def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
     """Apply discovered_facts from a model response to the facts list.
 
@@ -791,6 +808,15 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
     Letting them reach the reviewer is more robust than regex patterns: the
     reviewer understands any phrasing without pattern maintenance.
 
+    When the model emits multiple cited entries for the same fact_id in one
+    response (observed 2026-08-24 telescope run: ~18 entries across 6 fact
+    IDs, each a distinct-subject detail adjacent to the fact's question),
+    only the FIRST cited entry updates the fact. Each subsequent cited entry
+    is split off into a new fact keyed by its own subject — the merge logic
+    mirrors the prompt rule "a claim must answer its fact's question;
+    related details go in new facts," so a true-but-irrelevant detail no
+    longer clobbers a relevant claim (last-write-wins) or vanishes.
+
     For new facts (fact_id is null/missing with fact_needed), appends them.
 
     Also applies to "unverified" facts so the model can improve a claim that
@@ -800,17 +826,21 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
     discovered = parsed.get("discovered_facts", [])
     if not isinstance(discovered, list):
         return
+    # fact IDs already updated by a cited entry earlier in this response —
+    # later entries for these IDs become new facts instead of overwrites.
+    updated_this_response: set[str] = set()
     for disc in discovered:
         if not isinstance(disc, dict):
             continue
         fact_id = disc.get("fact_id")
-        if fact_id:
+        claim = (disc.get("claim") or "").strip()
+        disc_cites = sorted(c for c in disc.get("citation_ids", []) if isinstance(c, str))
+        if fact_id and fact_id not in updated_this_response:
             matched = False
             for fact in facts:
                 if fact["id"] == fact_id and fact["status"] in ("unknown", "unverified"):
                     matched = True
-                    new_claim = (disc.get("claim") or "").strip()
-                    if not new_claim:
+                    if not claim:
                         # Model returned no claim for this fact.  Skip the
                         # entire update so the fact keeps its current state.
                         # Without this guard, status would be set to
@@ -821,7 +851,7 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
                             fact_id,
                         )
                         break
-                    fact["claim"] = new_claim
+                    fact["claim"] = claim
                     if disc.get("relation"):
                         fact["relation"] = disc["relation"]
                     if disc.get("value"):
@@ -829,12 +859,16 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
                     # Merge citation_ids from the model's response into the
                     # fact's existing set. The model references source IDs
                     # (e.g., "cit001") that were labeled in the tool feedback.
-                    disc_cites = disc.get("citation_ids", [])
                     if disc_cites:
                         existing = set(fact.get("citation_ids", []))
-                        existing.update(c for c in disc_cites if isinstance(c, str))
+                        existing.update(disc_cites)
                         fact["citation_ids"] = sorted(existing)
                     fact["status"] = "unverified"
+                    if disc_cites:
+                        # Mark this fact claimed-by-a-cited-entry so any
+                        # later entries for the same ID in this response
+                        # are diverted to new facts rather than overwriting.
+                        updated_this_response.add(fact_id)
                     break
             if not matched:
                 logger.warning(
@@ -842,49 +876,89 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
                     "existing fact — claim will be dropped",
                     fact_id,
                 )
-        elif disc.get("fact_needed"):
-            new_id = next_id("f", facts)
-            new_fact = Fact(
-                id=new_id,
-                subject=disc.get("subject", ""),
-                fact_needed=disc["fact_needed"],
-                status="unknown",
-            )
-            # If the model also provided a claim (e.g., it discovered an
-            # entity AND resolved it from the same search result), record
-            # it immediately rather than forcing a wasted retry cycle.
-            claim = (disc.get("claim") or "").strip()
-            if claim:
-                new_fact["claim"] = claim
-                new_fact["status"] = "unverified"
-                disc_cites = disc.get("citation_ids", [])
-                if disc_cites:
-                    new_fact["citation_ids"] = sorted(c for c in disc_cites if isinstance(c, str))
-            facts.append(new_fact)
-        elif (disc.get("claim") or "").strip():
-            # Fallback: the model provided a claim with null fact_id but no
-            # fact_needed. Rather than silently dropping the claim, create a
-            # new fact using the claim text as both fact_needed and claim.
-            # This captures information the model worked to extract even when
-            # it doesn't follow the fact_needed convention.
-            claim = (disc.get("claim") or "").strip()
+        elif fact_id and fact_id in updated_this_response and claim and disc_cites:
+            # Overflow entry: a cited detail for a fact already updated in
+            # this response. Split into a new fact so the detail is kept
+            # without clobbering the first claim.
             logger.warning(
-                "RESEARCH: model returned claim with null fact_id and no "
-                "fact_needed — creating fact from claim: %s",
+                "RESEARCH: multiple cited entries for %s in one response — "
+                "splitting overflow entry into a new fact: %s",
+                fact_id,
                 claim[:80],
             )
+            subject = (disc.get("subject") or "").strip()
             new_id = next_id("f", facts)
             new_fact = Fact(
                 id=new_id,
-                subject=disc.get("subject", ""),
+                subject=subject,
                 fact_needed=claim,
                 claim=claim,
                 status="unverified",
             )
-            disc_cites = disc.get("citation_ids", [])
-            if disc_cites:
-                new_fact["citation_ids"] = sorted(c for c in disc_cites if isinstance(c, str))
+            new_fact["citation_ids"] = disc_cites
             facts.append(new_fact)
+        else:
+            fact_needed = (disc.get("fact_needed") or "").strip()
+            # ID-reference rejection: "f003|f004" is the model mimicking the
+            # pipe-delimited facts display, not a description of what needs
+            # to be known. Treat it as absent so the entry falls through to
+            # the citation-gated claim paths below.
+            if fact_needed and _is_fact_id_reference(fact_needed):
+                logger.warning(
+                    "RESEARCH: new-fact fact_needed=%r is only fact-ID "
+                    "references — treating as missing",
+                    fact_needed,
+                )
+                fact_needed = ""
+
+            if fact_needed:
+                new_id = next_id("f", facts)
+                new_fact = Fact(
+                    id=new_id,
+                    subject=disc.get("subject", ""),
+                    fact_needed=fact_needed,
+                    status="unknown",
+                )
+                # Record an immediately-resolved claim only when it is
+                # backed by at least one citation. The 08-24 planning-freedom
+                # eval showed uncited immediate claims become unsourced
+                # "unverified" facts that leak into the report. An uncited
+                # claim still enters as a bare unknown fact (with its
+                # fact_needed) so a later round can extract it properly.
+                if claim and disc_cites:
+                    new_fact["claim"] = claim
+                    new_fact["status"] = "unverified"
+                    new_fact["citation_ids"] = disc_cites
+                facts.append(new_fact)
+            elif claim and disc_cites:
+                # Fallback: the model provided a cited claim with null
+                # fact_id and no fact_needed. Rather than silently dropping
+                # the model's extraction work, create a new fact using the
+                # claim text as both fact_needed and claim.
+                logger.warning(
+                    "RESEARCH: model returned cited claim with null fact_id "
+                    "and no fact_needed — creating fact from claim: %s",
+                    claim[:80],
+                )
+                new_id = next_id("f", facts)
+                new_fact = Fact(
+                    id=new_id,
+                    subject=disc.get("subject", ""),
+                    fact_needed=claim,
+                    claim=claim,
+                    status="unverified",
+                )
+                new_fact["citation_ids"] = disc_cites
+                facts.append(new_fact)
+            elif claim:
+                # Uncited claim-only entries are dropped: without a source
+                # the claim cannot be verified or cited in the report, and
+                # admitting it as "unverified" pollutes the knowledge model
+                # (the f012-f014 failure mode from the 08-24 eval).
+                logger.warning(
+                    "RESEARCH: dropping uncited claim with null fact_id (no citation_ids): %s",
+                    claim[:80],
+                )
 
 
 def _cleanup_empty_claims(facts: list[Fact]) -> None:

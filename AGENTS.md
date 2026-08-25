@@ -71,6 +71,10 @@ The system must prioritize:
 - Always use Context7 MCP when I need library or API documentation, code generation, setup, or configuration steps, without me having to explicitly ask to use Context7.
 - If you are making judgments about the severity of an issue, and the prevalence of the issue can be determined by looking at the database of previous workflow runs, examine the prevalence before reporting the issue as a priority. 
 
+## Prompts
+- Prompts in `backend/moira/resources/prompts.md` must NOT use question content from the evaluation set (see `EVAL_LOG.md`) as guiding examples. Eval-derived examples tilt the eval toward those specific questions and away from more generic value.
+- Examples in the prompts should use subject matter that is NOT in the evaluation set topics.
+
 ## Codebase Workflow
 - Read files before editing them.
 - Use `rg` to locate relevant sections before opening large files.
