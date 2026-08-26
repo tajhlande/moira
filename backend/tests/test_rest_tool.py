@@ -484,3 +484,80 @@ class TestRESTToolMetadata:
         assert entry["snippet"]
         assert entry["content"]
         assert "result" in entry["content"]
+
+
+class TestSerializeJsonTruncatedPruning:
+    """Phase 3.3.2: URL walls are pruned at serialization time.
+
+    Pruning must happen on the parsed object (pre-truncation) — downstream
+    consumers only see string slices, and a mid-JSON slice no longer parses,
+    so post-hoc pruning of stored content silently no-ops. These tests pin
+    that contract at the source.
+    """
+
+    def test_redundant_relationship_urls_pruned(self):
+        """PokeAPI-style relationship walls (types/stats/abilities with
+        sibling name fields) disappear from the serialized output."""
+        from moira.tools.rest_tool import _serialize_json_truncated
+
+        payload = {
+            "abilities": [
+                {
+                    "ability": {
+                        "name": "sand-stream",
+                        "url": "https://pokeapi.co/api/v2/ability/45/",
+                    },
+                    "is_hidden": False,
+                }
+            ],
+            "types": [
+                {"slot": 1, "type": {"name": "rock", "url": "https://pokeapi.co/api/v2/type/6/"}}
+            ],
+            "stats": [
+                {
+                    "base_stat": 134,
+                    "stat": {"name": "attack", "url": "https://pokeapi.co/api/v2/stat/2/"},
+                }
+            ],
+        }
+        out = _serialize_json_truncated(payload)
+        assert "pokeapi.co" not in out
+        assert '"rock"' in out
+        assert "sand-stream" in out
+        assert "attack" in out
+        assert "134" in out
+        # Output remains valid JSON after pruning
+        import json
+
+        json.loads(out)
+
+    def test_sole_content_urls_kept(self):
+        """Media asset objects (sprites/cries) whose values ARE urls survive
+        — the URL is the content, not a redundant link."""
+        from moira.tools.rest_tool import _serialize_json_truncated
+
+        payload = {
+            "name": "tyranitar",
+            "sprites": {"front_default": "https://raw.githubusercontent.com/x/front.png"},
+        }
+        out = _serialize_json_truncated(payload)
+        assert "front.png" in out
+
+    def test_trimming_rounds_operate_on_pruned_data(self):
+        """Aggressive array/string trimming still applies after pruning, and
+        the result still parses as JSON."""
+        from moira.tools.rest_tool import _serialize_json_truncated
+
+        payload = {
+            "moves": [
+                {"move": {"name": f"move-{i}", "url": f"https://pokeapi.co/api/v2/move/{i}/"}}
+                for i in range(200)
+            ]
+        }
+        out = _serialize_json_truncated(payload, max_chars=2000)
+        import json
+
+        parsed = json.loads(out)
+        assert "pokeapi.co" not in out
+        # First trimming round caps arrays at 10 items
+        assert len(parsed["moves"]) <= 11

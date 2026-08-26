@@ -14,7 +14,7 @@ adopt / iterate / rollback decision.
 | 2 | Defect fixes: extraction-fallback corruption, request-bundling guard | Code complete — pending eval confirmation | Junk facts eliminated; unit tests pass |
 | 3     | Traceability: `request_id` echo, strict request matching, retry feedback | Complete — verified on 08-25 runs (attribution + carry-over confirmed; recall collapse fixed via 3.1) | Every tool call attributable to one request |
 | 3.1   | Store visibility + recall discipline: citation depth/linked-facts table, within-batch recall dedup | Code complete — runtime verification pending next retry-prone run | Planner sees store depth; no same-batch duplicate recalls |
-| 3.3   | Context budget management: per-result feedback cap, citation limit retune, URL-field pruning | 3.3.1 cap + 3.3.1a limit retune complete (smoke-tested); 3.3.2 pruning + 3.3.3 rolling compression deferred | No research-loop context overflow on wide fan-out |
+| 3.3   | Context budget management: per-result feedback cap, citation limit retune, URL-field pruning | 3.3.1 cap + 3.3.1a limit retune + 3.3.2 pruning complete; 3.3.3 rolling compression deferred | No research-loop context overflow on wide fan-out |
 | 4     | Query discipline: mechanical dedup, coverage-driven rounds               | Not started                     | Duplicate queries intercepted mechanically  |
 | 5     | Measurement: planner/researcher dimension metrics in eval harness        | Not started                     | Eval batch emits both dimensions            |
 | 6     | Decision: multi-batch eval vs main 08-18 baseline                        | Not started                     | Adopt / iterate / rollback (criteria below) |
@@ -474,10 +474,51 @@ volume reasonable and let eval deltas attribute cleanly.
    General hypermedia rule, not API-specific: prune a `url` field only when
    a sibling identifying field (`name`/`title`/`id`) exists in the same
    object — the URL is then a redundant link. When a URL is the sole
-   content of an object, keep it. Apply only to feedback content; citations
-   store the untouched output. Real value is signal density (model reasons
-   over names, not URL walls) more than token savings; the cap alone fixes
-   the incident.
+   content of an object, keep it. Real value is signal density (model
+   reasons over names, not URL walls) more than token savings; the cap alone
+   fixes the incident.
+
+   **Implemented (3.3.2):** shared module `moira/tools/url_pruning.py`
+   (`prune_url_fields` on parsed objects, `prune_redundant_urls` on JSON
+   strings; prose and sole-content URLs untouched; prefix+suffix field
+   matching covers `url_front` and `sprite_url` variants alike).
+   **Deviation from the original spec, with rationale:** pruning had to run
+   *inside* `_serialize_json_truncated` (rest_tool.py) on the parsed
+   object, not on feedback copies after the fact — the metadata `content`
+   slice (`output[:_CONTENT_LIMIT]`) chops mid-JSON, so stored content no
+   longer parses and post-hoc pruning silently no-ops (measured: 0% pruned
+   against the d5222b28 PokeAPI citations when applied at recall time
+   only). Consequently RESTTool citations store *pruned* output, not
+   untouched output: redundant relationship URLs never serve re-reads, and
+   pruning-before-truncation means the 5K window carries identifying data
+   (types/stats/abilities) instead of link walls. url_content citations
+   (markdown prose) are untouched by construction. research.py still prunes
+   valid-JSON model-facing copies (`_cap_feedback_body`, recall_source
+   serving) for any JSON that reaches it unpruned. PokeAPI-shaped payload
+   measured: relationship walls eliminated, media-asset URLs (sprites/
+   cries — URL is the content) retained by the sole-content rule, output
+   remains valid JSON. Tests: `TestPruneRedundantUrls` (8, in
+   test_research_internals.py) + `TestSerializeJsonTruncatedPruning` (3, in
+   test_rest_tool.py). 887 passed, ruff clean.
+
+   **Measured effect (08-26 tyranitar run `065e23cc`, vs live re-fetches of
+   the same three endpoints):** URL chars in the 3×3K feedback windows fell
+   2,542 → 165 (28% → 1.8% of window); in the 5K store/recall window,
+   4,642 → 215. Total reclaimed ~6.8K chars ≈ ~1.7K tokens (~5% of the 32K
+   context) — real but modest as a *size* win; the *density* win is the
+   story: windows now carry names (abilities, damage relations) instead of
+   link walls. Run outcome vs the pre-prune crash run `c815f4a1` /
+   post-cap run `d5222b28`: 1 research pass instead of 3, 20 facts (14
+   verified) vs 9 (6), 4 pokeapi-backed verified facts — 3 from
+   `type_retrieve`'s now-URL-free `damage_relations`. Single run; no
+   causal claim. Known limit, accepted deliberately: `pokemon_retrieve`'s
+   `types`/`stats` sit behind a 150-entry `moves` array (~379K chars even
+   pruned) and remain out of window — the agent worked around it via
+   `type_retrieve` + web_search. Per project decision: no API-specific
+   tuning (no array-key reordering, no per-endpoint rules); impenetrable
+   payload structure is "how the web works" and the agent adapts around
+   it. Evidence base is a single JSON domain (PokeAPI) — treat the
+   percentages as indicative until more APIs are exercised.
 3. **Rolling compression of older rounds (defer until 1+2 measured).**
    Demote round ≤ N−1 tool messages to snippets when a new round starts.
    The cap defers but doesn't eliminate growth (~`calls × cap` per round);

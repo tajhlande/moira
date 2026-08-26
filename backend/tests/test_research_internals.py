@@ -2972,3 +2972,140 @@ class TestRequestIdAttribution:
         # idempotent on second pass
         again = _augment_tools_with_request_id(out)
         assert "request_id" in again[0].argument_schema["properties"]
+
+
+class TestPruneRedundantUrls:
+    """Tests for the hypermedia URL-pruning rule (Phase 3.3.2).
+
+    The rule: drop a URL-bearing field only when a sibling identifying
+    field (name/title/id/...) exists in the same object; keep URLs that
+    are the sole content of an object. Applies only to model-facing
+    copies; storage is untouched.
+    """
+
+    def test_url_pruned_when_identifying_sibling_present(self):
+        """Object with name + url keeps name, drops url."""
+        from moira.workflow.nodes.research import _prune_redundant_urls
+
+        body = json.dumps(
+            {
+                "name": "Excadrill",
+                "url": "https://pokeapi.co/api/v2/pokemon/excadrill",
+                "id": 530,
+            }
+        )
+        # Pad past the prune minimum so it isn't skipped as small
+        body = body + " " * 2500 if len(body) < 2000 else body
+        result = _prune_redundant_urls(body)
+        assert "pokeapi.co" not in result
+        assert "Excadrill" in result
+
+    def test_url_kept_when_sole_content(self):
+        """URL with no identifying sibling is preserved — it IS the data."""
+        from moira.workflow.nodes.research import _prune_redundant_urls
+
+        body = json.dumps({"url": "https://example.com/sole-content"})
+        body = body + " " * 2500  # exceed prune minimum
+        result = _prune_redundant_urls(body)
+        assert "example.com/sole-content" in result
+
+    def test_nested_objects_pruned_recursively(self):
+        """URL walls inside nested lists/dicts are pruned when siblings exist."""
+        from moira.workflow.nodes.research import _prune_redundant_urls
+
+        body = json.dumps(
+            {
+                "types": [
+                    {
+                        "slot": 1,
+                        "type": {
+                            "name": "rock",
+                            "url": "https://pokeapi.co/api/v2/type/6/",
+                        },
+                    },
+                    {
+                        "slot": 2,
+                        "type": {
+                            "name": "dark",
+                            "url": "https://pokeapi.co/api/v2/type/17/",
+                        },
+                    },
+                ],
+                "stats": [
+                    {
+                        "base_stat": 134,
+                        "stat": {"name": "attack", "url": "https://pokeapi.co/api/v2/stat/2/"},
+                    }
+                ],
+            }
+        )
+        body = body + " " * 2500
+        result = _prune_redundant_urls(body)
+        assert "pokeapi.co" not in result
+        assert '"rock"' in result
+        assert '"dark"' in result
+        assert "attack" in result
+
+    def test_prose_body_untouched(self):
+        """Non-JSON bodies (markdown/prose with URLs) pass through unchanged."""
+        from moira.workflow.nodes.research import _prune_redundant_urls
+
+        body = "Check https://example.com/page for details. " * 100
+        assert _prune_redundant_urls(body) == body
+
+    def test_short_body_skipped(self):
+        """Bodies under the prune minimum are returned as-is (cost guard)."""
+        from moira.workflow.nodes.research import _prune_redundant_urls
+
+        body = json.dumps({"name": "x", "url": "https://pokeapi.co/api/v2/x"})
+        assert len(body) < 2000
+        assert _prune_redundant_urls(body) == body
+
+    def test_storage_not_pruned_via_find_or_merge(self):
+        """Citation storage keeps the un-pruned body even when feedback is
+        pruned — recall_source serves the pruned copy at read time, not the
+        store."""
+        from moira.workflow.nodes.research import _prune_redundant_urls
+
+        # The pruning contract: _cap_feedback_body prunes; the citation
+        # stores what it was given (un-pruned). This test pins the helper
+        # boundary so a future refactor can't silently prune storage.
+        raw = json.dumps({"name": "Moltres", "url": "https://pokeapi.co/api/v2/pokemon/146"})
+        raw = raw + " " * 2500
+        assert "pokeapi.co" in raw
+        pruned = _prune_redundant_urls(raw)
+        assert "pokeapi.co" not in pruned
+        # And the cap pipeline prunes before capping:
+        from moira.workflow.nodes.research import _cap_feedback_body
+
+        out = _cap_feedback_body(raw, "cit001")
+        assert "pokeapi.co" not in out or len(out) <= 3000
+
+    def test_non_string_url_values_untouched(self):
+        """Numeric/null url-ish fields and non-URL strings pass through."""
+        from moira.workflow.nodes.research import _prune_redundant_urls
+
+        body = json.dumps({"name": "x", "url_count": 5, "linked": "not-a-url", "id": 1})
+        body = body + " " * 2500
+        result = _prune_redundant_urls(body)
+        assert '"url_count": 5' in result
+        assert '"linked": "not-a-url"' in result
+
+    def test_url_prefix_variants_covered(self):
+        """Fields like sprite_url / href / link are pruned when redundant."""
+        from moira.workflow.nodes.research import _prune_redundant_urls
+
+        body = json.dumps(
+            {
+                "name": "pixel art",
+                "sprite_url": "https://raw.githubusercontent.com/x/y.png",
+                "href": "https://example.com/a",
+                "link": "https://example.com/b",
+            }
+        )
+        body = body + " " * 2500
+        result = _prune_redundant_urls(body)
+        assert "githubusercontent" not in result
+        assert "example.com/a" not in result
+        assert "example.com/b" not in result
+        assert "pixel art" in result

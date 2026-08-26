@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from moira.tools.base import BaseTool, ToolResult
+from moira.tools.url_pruning import prune_url_fields
 
 logger = logging.getLogger(__name__)
 
@@ -82,10 +83,17 @@ def _serialize_json_truncated(
 ) -> str:
     """Serialize *data* as indented JSON, truncating if over *max_chars*.
 
+    Prunes redundant URL fields first (hypermedia rule — see
+    moira.tools.url_pruning) so the truncation window carries identifying
+    data instead of link walls. Pruning must happen here, on the parsed
+    object: downstream consumers only see string slices, and a mid-JSON
+    slice no longer parses, so post-hoc pruning would silently no-op.
+
     Applies progressively more aggressive array/string limits until the
     serialized output fits.  Falls back to character truncation only if
     all rounds fail (extremely rare).
     """
+    data = prune_url_fields(data)
     full = json.dumps(data, indent=2)
     if len(full) <= max_chars:
         return full

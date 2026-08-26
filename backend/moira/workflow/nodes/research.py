@@ -35,6 +35,13 @@ from moira.models.knowledge import Citation, Fact, ResearchState, next_id
 from moira.prompts import render_prompt
 from moira.tools.base import ToolCall, ToolDefinition, ToolResult
 from moira.tools.executor import ToolExecutor
+
+# Hypermedia URL pruning lives in the shared module (moira.tools.url_pruning)
+# so RESTTool can prune at serialization time — pre-truncation, while the
+# JSON still parses — and research can prune model-facing copies (feedback
+# bodies, recall_source serving). The alias preserves the module-local name
+# used by tests.
+from moira.tools.url_pruning import prune_redundant_urls as _prune_redundant_urls
 from moira.workflow.budget import can_execute, deduct_cost
 from moira.workflow.nodes._helpers import (
     _SNIPPET_MAX_LENGTH,
@@ -105,12 +112,15 @@ def _truncate_for_display(text: str | None, limit: int = _DISPLAY_OUTPUT_LIMIT) 
 def _cap_feedback_body(body: str, cit_id: str) -> str:
     """Bound a tool-result body fed back into the loop's message history.
 
-    Full content is already stored in the citation (up to
-    _CITATION_CONTENT_LIMIT); this cap only limits the copy the model sees in
-    its next request. The appended pointer names the citation so the model can
-    deliberately re-read the rest with recall_source instead of the full text
-    sitting in context unrequested.
+    Prunes redundant URL fields first (hypermedia rule — see
+    _prune_redundant_urls) so the surviving window carries identifying data
+    rather than link walls, then caps at _TOOL_RESULT_FEEDBACK_LIMIT. Full
+    content is already stored in the citation (up to
+    _CITATION_CONTENT_LIMIT); the appended pointer names the citation so the
+    model can deliberately re-read the rest with recall_source instead of
+    the full text sitting in context unrequested.
     """
+    body = _prune_redundant_urls(body)
     if len(body) <= _TOOL_RESULT_FEEDBACK_LIMIT:
         return body
     omitted = len(body) - _TOOL_RESULT_FEEDBACK_LIMIT
@@ -581,7 +591,12 @@ def _build_recall_source_result(call: ToolCall, citations: list[Citation]) -> To
 
             content = c.get("content", "")
             if content and content.strip():
-                parts.append(f"\nPage content:\n{content}")
+                # Prune redundant URL fields from the model-facing copy —
+                # recall re-injects up to _CITATION_CONTENT_LIMIT chars and
+                # URL-heavy JSON wastes most of that window on link walls
+                # (the 08-26 c815f4a1 overflow was 10 PokeAPI recalls).
+                # Storage in the citation is untouched.
+                parts.append(f"\nPage content:\n{_prune_redundant_urls(content)}")
 
             return ToolResult(
                 tool_name=_RECALL_SOURCE_TOOL_NAME,
