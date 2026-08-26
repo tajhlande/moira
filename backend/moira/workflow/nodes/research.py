@@ -28,6 +28,9 @@ from moira.inference.adapters import get_adapter
 from moira.inference.client import ChatResponse
 from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.inference.registry import ResolvedModel
+from moira.models.knowledge import (
+    CITATION_CONTENT_LIMIT as _CITATION_CONTENT_LIMIT,
+)
 from moira.models.knowledge import Citation, Fact, ResearchState, next_id
 from moira.prompts import render_prompt
 from moira.tools.base import ToolCall, ToolDefinition, ToolResult
@@ -66,9 +69,24 @@ _RECALL_SOURCE_TOOL_NAME = "recall_source"
 _DISPLAY_OUTPUT_LIMIT = 2000
 
 # Cap for Citation.content — the source text stored for downstream
-# cross-referencing in review/evaluation.  Larger than excerpt (500) because
-# this is the substantive body, but bounded to avoid state-size bloat.
-_CITATION_CONTENT_LIMIT = 10_000
+# cross-referencing in review/evaluation. Canonical definition lives with
+# the Citation schema (models/knowledge.py CITATION_CONTENT_LIMIT); this
+# alias keeps the historical module-local name. Larger than excerpt
+# (_SNIPPET_MAX_LENGTH) because this is the substantive body, but bounded
+# to avoid state-size bloat and to keep recall_source re-injection safe
+# for the workflow model's context window.
+
+# Cap for tool-result text fed BACK into the research loop's message history.
+# Storage (Citation.content) keeps the full body up to _CITATION_CONTENT_LIMIT,
+# but the model-facing copy is bounded so a wide parallel fan-out (e.g. seven
+# 10K-char REST payloads in one round) cannot blow the workflow model's context
+# window — observed as a 39,457-token request vs a 32,768 limit in run
+# fdaeb0e2. Truncated results carry a pointer to the stored citation so the
+# model can deliberately re-read via recall_source. recall_source results are
+# exempt: they are the re-read path itself (already bounded by
+# _CITATION_CONTENT_LIMIT and within-batch dedup), and capping them would
+# make stored content above the feedback cap permanently unreachable.
+_TOOL_RESULT_FEEDBACK_LIMIT = 3_000
 
 
 def _truncate_for_display(text: str | None, limit: int = _DISPLAY_OUTPUT_LIMIT) -> str:
@@ -82,6 +100,25 @@ def _truncate_for_display(text: str | None, limit: int = _DISPLAY_OUTPUT_LIMIT) 
     if len(text) <= limit:
         return text
     return text[:limit] + f"\n... ({len(text) - limit:,} more chars not shown)"
+
+
+def _cap_feedback_body(body: str, cit_id: str) -> str:
+    """Bound a tool-result body fed back into the loop's message history.
+
+    Full content is already stored in the citation (up to
+    _CITATION_CONTENT_LIMIT); this cap only limits the copy the model sees in
+    its next request. The appended pointer names the citation so the model can
+    deliberately re-read the rest with recall_source instead of the full text
+    sitting in context unrequested.
+    """
+    if len(body) <= _TOOL_RESULT_FEEDBACK_LIMIT:
+        return body
+    omitted = len(body) - _TOOL_RESULT_FEEDBACK_LIMIT
+    return (
+        body[:_TOOL_RESULT_FEEDBACK_LIMIT]
+        + f"\n... [{omitted:,} more chars stored as {cit_id} — use recall_source"
+        f' with {{"citation_id": "{cit_id}"}} to read the rest]'
+    )
 
 
 def _format_tool_descriptions(tools: list[ToolDefinition]) -> str:
@@ -847,6 +884,8 @@ def _process_execution_results(
         # create new citations or charge budget. The synthetic flag also
         # prevents cost charging below, but we short-circuit here to skip
         # the structured/unstructured citation creation branches entirely.
+        # Feedback-cap exempt: recall IS the deliberate re-read path (see
+        # _TOOL_RESULT_FEEDBACK_LIMIT rationale).
         if name == _RECALL_SOURCE_TOOL_NAME:
             tool_summary_parts.append(result.output)
             tool_results_log.append(
@@ -876,18 +915,25 @@ def _process_execution_results(
                     url=sr.get("url") or None,
                     title=sr.get("title") or None,
                     snippet=sr.get("snippet") or None,
-                    content=sr.get("content") or sr.get("snippet") or None,
+                    # Enforce the pipeline cap at the storage boundary —
+                    # tool-side metadata limits mirror it by name but are
+                    # not trusted to match (they drifted historically).
+                    content=(sr.get("content") or sr.get("snippet") or "")[
+                        :_CITATION_CONTENT_LIMIT
+                    ]
+                    or None,
                 )
                 status = "SUCCESS" if result.success else "FAILED"
                 recurring = "" if is_new else " (recurring source)"
                 # Fetch tools (url_content, RESTTool) provide a "content"
                 # field with the full retrieved body. Discovery tools
-                # (web_search) only provide "snippet". Feed the full
-                # content to the model when available — the whole point of
-                # a fetch tool is to get the body, so returning a snippet
-                # in response to a url_content call would discard exactly
-                # the data the model asked for.
-                body = sr.get("content") or sr.get("snippet", "")
+                # (web_search) only provide "snippet". Feed the content to
+                # the model when available — the whole point of a fetch tool
+                # is to get the body — but bounded by the feedback cap: wide
+                # parallel fan-outs of large payloads must not blow the
+                # model's context window (see _TOOL_RESULT_FEEDBACK_LIMIT).
+                # The full body remains available via recall_source.
+                body = _cap_feedback_body(sr.get("content") or sr.get("snippet", ""), cit_id)
                 label = "Content" if sr.get("content") else "Snippet"
                 tool_summary_parts.append(
                     f"[{cit_id}] Tool: {name}\nStatus: {status}{recurring}\n"
@@ -918,7 +964,10 @@ def _process_execution_results(
             )
             status = "SUCCESS" if result.success else "FAILED"
             tool_summary_parts.append(
-                f"[{cit_id}] Tool: {name}\nStatus: {status}\nResult:\n{result.output}"
+                f"[{cit_id}] Tool: {name}\nStatus: {status}\nResult:\n"
+                # Feedback cap applies here too: Path B stores the full output
+                # in the citation, so the model can recall the rest.
+                f"{_cap_feedback_body(result.output, cit_id)}"
             )
 
         tool_results_log.append(

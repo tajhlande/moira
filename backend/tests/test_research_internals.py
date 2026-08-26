@@ -1730,14 +1730,16 @@ class TestPathBTitleSynthesis:
 
 
 class TestPathAContentFeedback:
-    """Tests that _process_execution_results Path A feeds the full content
-    field (not just snippet) to the model for fetch tools.
+    """Tests that _process_execution_results Path A feeds the content field
+    (not just snippet) to the model for fetch tools, bounded by the feedback
+    cap.
 
     This is the core information-flow fix: url_content returns the page body
     in metadata["results"][0]["content"], but the model previously only saw
     the 500-char snippet. Now any structured result with a "content" field
     gets that content in the tool feedback, labeled "Content:" instead of
-    "Snippet:".
+    "Snippet:". Bodies longer than _TOOL_RESULT_FEEDBACK_LIMIT are truncated
+    with a recall_source pointer — the full body lives in the citation store.
     """
 
     @staticmethod
@@ -1764,14 +1766,21 @@ class TestPathAContentFeedback:
 
     def test_url_content_shows_content_label(self):
         """url_content result with a content field must produce a summary
-        labeled 'Content:' containing the full body text, not a 500-char
-        snippet."""
+        labeled 'Content:' whose body starts with the fetched text (not the
+        500-char snippet). Bodies over the feedback cap are truncated with a
+        recall_source pointer; storage keeps the body up to the citation
+        content limit."""
+        from moira.workflow.nodes.research import (
+            _CITATION_CONTENT_LIMIT,
+            _TOOL_RESULT_FEEDBACK_LIMIT,
+        )
+
         call = ToolCall(
             id="tc1",
             name="url_content",
             arguments={"url": "https://example.com/article"},
         )
-        full_body = "Body text " * 1000  # ~10k chars, well over snippet size
+        full_body = "Body text " * 1000  # ~10k chars, well over both caps
         result = ToolResult(
             tool_name="url_content",
             output=full_body,
@@ -1788,13 +1797,19 @@ class TestPathAContentFeedback:
             },
         )
 
-        summaries, _ = self._run([result], [call])
+        summaries, citations = self._run([result], [call])
 
         assert len(summaries) == 1
         assert "Content:" in summaries[0]
         assert "Snippet:" not in summaries[0]
-        assert full_body in summaries[0]
-        assert "Short snippet." not in summaries[0].split("Content:")[1]
+        assert full_body[:_TOOL_RESULT_FEEDBACK_LIMIT] in summaries[0]
+        assert full_body not in summaries[0]
+        # Truncation must point at the stored citation for a deliberate re-read.
+        assert "recall_source" in summaries[0]
+        assert "cit001" in summaries[0]
+        # Storage is bounded by the citation content limit (enforced at the
+        # storage boundary); the model-facing copy is capped tighter still.
+        assert citations[0]["content"] == full_body[:_CITATION_CONTENT_LIMIT]
 
     def test_web_search_shows_snippet_label(self):
         """web_search results have no content field — must still use
@@ -1830,6 +1845,8 @@ class TestPathAContentFeedback:
         """A synthetic url_content dedup result (already-fetched URL)
         carries content from the stored citation — the model must see that
         content, not just the snippet."""
+        from moira.workflow.nodes.research import _TOOL_RESULT_FEEDBACK_LIMIT
+
         full_body = "Cached body " * 800
         call = ToolCall(
             id="tc1",
@@ -1858,7 +1875,8 @@ class TestPathAContentFeedback:
 
         assert len(summaries) == 1
         assert "Content:" in summaries[0]
-        assert full_body in summaries[0]
+        assert full_body[:_TOOL_RESULT_FEEDBACK_LIMIT] in summaries[0]
+        assert "recall_source" in summaries[0]
 
     def test_rest_tool_shows_content_label(self):
         """RESTTool results provide a content field — must use 'Content:'
@@ -1922,6 +1940,114 @@ class TestPathAContentFeedback:
         assert "Snippet:" in summaries[0]
         assert "Content:" not in summaries[0]
         assert "A short excerpt." in summaries[0]
+
+
+class TestFeedbackCap:
+    """Tests for _TOOL_RESULT_FEEDBACK_LIMIT — tool-result text fed back into
+    the research loop's message history is bounded so a wide parallel fan-out
+    of large payloads cannot blow the workflow model's context window
+    (incident: run fdaeb0e2, 39,457-token request vs a 32,768 limit).
+
+    The cap applies ONLY to the model-facing copy. Citation storage stays
+    full-fidelity (up to _CITATION_CONTENT_LIMIT), and truncated feedback
+    carries a recall_source pointer so the model can deliberately re-read.
+    """
+
+    @staticmethod
+    def _run(results, calls):
+        from moira.workflow.nodes.research import _process_execution_results
+
+        citations: list[Citation] = []
+        summaries, _, _ = _process_execution_results(
+            results,
+            calls,
+            lambda _event: None,
+            citations,
+            {},
+            [],
+            [],
+            [],
+            {},
+            {},
+            100.0,
+            0.0,
+        )
+        return summaries, citations
+
+    def test_cap_helper_boundary(self):
+        """_cap_feedback_body passes short text through unchanged; long text
+        is truncated at exactly the limit with a pointer naming the omitted
+        size and the citation ID."""
+        from moira.workflow.nodes.research import (
+            _TOOL_RESULT_FEEDBACK_LIMIT,
+            _cap_feedback_body,
+        )
+
+        short = "x" * 100
+        assert _cap_feedback_body(short, "cit001") == short
+
+        long_text = "y" * (_TOOL_RESULT_FEEDBACK_LIMIT + 5000)
+        capped = _cap_feedback_body(long_text, "cit007")
+        assert capped.startswith("y" * _TOOL_RESULT_FEEDBACK_LIMIT)
+        assert "cit007" in capped
+        assert "recall_source" in capped
+        assert f"{5000:,} more chars" in capped
+
+    def test_at_limit_not_truncated(self):
+        """Text exactly at the cap passes through with no pointer."""
+        from moira.workflow.nodes.research import (
+            _TOOL_RESULT_FEEDBACK_LIMIT,
+            _cap_feedback_body,
+        )
+
+        exact = "z" * _TOOL_RESULT_FEEDBACK_LIMIT
+        assert _cap_feedback_body(exact, "cit001") == exact
+
+    def test_path_b_output_capped_with_pointer(self):
+        """Unstructured results (Path B — calculator, MCP tools) with long
+        output are capped in feedback; the citation stores up to
+        _CITATION_CONTENT_LIMIT."""
+        from moira.workflow.nodes.research import _CITATION_CONTENT_LIMIT
+
+        call = ToolCall(id="tc1", name="calculator", arguments={"expr": "2^10000"})
+        long_output = "9" * (_CITATION_CONTENT_LIMIT + 2000)
+        result = ToolResult(tool_name="calculator", output=long_output, success=True)
+
+        summaries, citations = self._run([result], [call])
+
+        assert len(summaries) == 1
+        assert "recall_source" in summaries[0]
+        assert "cit001" in summaries[0]
+        assert long_output not in summaries[0]
+        # Path B storage is capped by the citation limit, not the feedback limit.
+        assert citations[0]["content"] == long_output[:_CITATION_CONTENT_LIMIT]
+
+    def test_recall_source_exempt_from_cap(self):
+        """recall_source results relay the stored content in full — recall is
+        the deliberate re-read path the cap's pointer promises, so capping it
+        would make content between the cap and _CITATION_CONTENT_LIMIT
+        permanently unreachable."""
+        from moira.workflow.nodes.research import _CITATION_CONTENT_LIMIT
+
+        call = ToolCall(
+            id="tc1",
+            name="recall_source",
+            arguments={"citation_id": "cit001"},
+        )
+        stored = "R" * _CITATION_CONTENT_LIMIT
+        result = ToolResult(
+            tool_name="recall_source",
+            output=f"Source: cit001\n\nPage content:\n{stored}",
+            success=True,
+            metadata={"synthetic": True},
+        )
+
+        summaries, citations = self._run([result], [call])
+
+        assert len(summaries) == 1
+        assert stored in summaries[0]
+        # Recall creates no new citation.
+        assert citations == []
 
 
 class TestFormatPriorReviews:

@@ -12,12 +12,15 @@ logger = logging.getLogger(__name__)
 
 _MAX_OUTPUT_CHARS = 10000
 
-# Citation snippet/content limits — must match research.py's
-# _SNIPPET_MAX_LENGTH and _CITATION_CONTENT_LIMIT so that citations
+# Citation snippet/content limits — mirror research.py's
+# _SNIPPET_MAX_LENGTH and _CITATION_CONTENT_LIMIT (canonical definition:
+# models/knowledge.py CITATION_CONTENT_LIMIT) so that citations
 # created via Path A (metadata["results"]) store the same amount of
-# source text as Path B citations.
+# source text as Path B citations. The pipeline additionally slices at
+# the storage boundary, so these mirrors only bound how much data the
+# tool carries — drift here cannot enlarge stored content.
 _SNIPPET_LIMIT = 500
-_CONTENT_LIMIT = 10_000
+_CONTENT_LIMIT = 5_000
 
 # Argument keys that should never appear in derived citation titles.
 _SENSITIVE_ARG_KEYS = frozenset(

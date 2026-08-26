@@ -3,8 +3,8 @@
 This tool is never directly executed by the ToolExecutor. The research loop
 intercepts ``recall_source`` calls and synthesizes results from the in-scope
 ``citations`` list — the content is already stored in ``Citation.content``
-(up to 5000 chars) and ``Citation.snippets`` from prior ``url_content`` and
-``web_search`` calls.
+(bounded by ``CITATION_CONTENT_LIMIT``, defined in models/knowledge.py) and
+``Citation.snippets`` from prior ``url_content`` and ``web_search`` calls.
 
 The stub ``execute()`` exists only for registration and direct unit testing.
 """

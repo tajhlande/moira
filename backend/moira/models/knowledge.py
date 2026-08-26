@@ -40,6 +40,17 @@ class Citation(TypedDict):
     content: NotRequired[str]
 
 
+# Canonical cap for Citation.content. This is the single source of truth —
+# research.py imports it for storage and recall_source serving, and the
+# snapshot below slices with it directly. Tool-side metadata limits
+# (url_content._METADATA_CONTENT_LENGTH, rest_tool._CONTENT_LIMIT) mirror
+# this value by name; the pipeline additionally enforces the cap at the
+# storage boundary so tool-side drift cannot enlarge stored content.
+# Sized for the workflow model's context window: recall_source re-injects
+# stored content into a ~32K-token context, so this must stay conservative.
+CITATION_CONTENT_LIMIT = 5_000
+
+
 class Fact(TypedDict):
     id: str
     subject: str
@@ -275,12 +286,11 @@ def knowledge_summary(knowledge: Knowledge) -> dict:
                 "title": c.get("title"),
                 "excerpt": c.get("excerpt"),
                 "snippets": c.get("snippets"),
-                # Content is capped at 5000 chars upstream (research.py
-                # _CITATION_CONTENT_LIMIT and url_content.py
-                # _METADATA_CONTENT_LENGTH). The [:5000] here is a safety net
-                # so post-hoc analysis can see what the reviewer saw without
-                # risking unbounded growth in the persisted snapshot.
-                "content": (c.get("content") or "")[:5000],
+                # Safety net so post-hoc analysis can see what the reviewer
+                # saw without risking unbounded growth in the persisted
+                # snapshot. Same canonical cap the pipeline enforces at
+                # storage time (see CITATION_CONTENT_LIMIT above).
+                "content": (c.get("content") or "")[:CITATION_CONTENT_LIMIT],
             }
             for c in knowledge.get("citations", [])
         ],

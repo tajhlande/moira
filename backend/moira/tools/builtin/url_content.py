@@ -26,11 +26,12 @@ _MAX_RESPONSE_SIZE = 5 * 1024 * 1024
 _MAX_OUTPUT_LENGTH = 100_000
 
 # Snippet and content lengths carried in metadata["results"] for citation
-# creation downstream. These mirror _SNIPPET_MAX_LENGTH (500) and
-# _CITATION_CONTENT_LIMIT (5000) in research.py — the tool provides the
-# data, the pipeline enforces its own limits.
+# creation downstream. These mirror _SNIPPET_MAX_LENGTH and
+# _CITATION_CONTENT_LIMIT in research.py (canonical definition:
+# models/knowledge.py CITATION_CONTENT_LIMIT) — the tool provides the
+# data, the pipeline enforces its own limits at the storage boundary.
 _METADATA_SNIPPET_LENGTH = 500
-_METADATA_CONTENT_LENGTH = 10_000
+_METADATA_CONTENT_LENGTH = 5_000
 
 
 class UrlContentTool(BaseTool):

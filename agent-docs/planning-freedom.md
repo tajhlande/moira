@@ -14,7 +14,7 @@ adopt / iterate / rollback decision.
 | 2 | Defect fixes: extraction-fallback corruption, request-bundling guard | Code complete — pending eval confirmation | Junk facts eliminated; unit tests pass |
 | 3     | Traceability: `request_id` echo, strict request matching, retry feedback | Complete — verified on 08-25 runs (attribution + carry-over confirmed; recall collapse fixed via 3.1) | Every tool call attributable to one request |
 | 3.1   | Store visibility + recall discipline: citation depth/linked-facts table, within-batch recall dedup | Code complete — runtime verification pending next retry-prone run | Planner sees store depth; no same-batch duplicate recalls |
-| 3.3   | Context budget management: per-result feedback cap, URL-field pruning | Not started (deliberately — held until the 08-25 batch finished on one code state) | No research-loop context overflow on wide fan-out |
+| 3.3   | Context budget management: per-result feedback cap, citation limit retune, URL-field pruning | 3.3.1 cap + 3.3.1a limit retune complete (smoke-tested); 3.3.2 pruning + 3.3.3 rolling compression deferred | No research-loop context overflow on wide fan-out |
 | 4     | Query discipline: mechanical dedup, coverage-driven rounds               | Not started                     | Duplicate queries intercepted mechanically  |
 | 5     | Measurement: planner/researcher dimension metrics in eval harness        | Not started                     | Eval batch emits both dimensions            |
 | 6     | Decision: multi-batch eval vs main 08-18 baseline                        | Not started                     | Adopt / iterate / rollback (criteria below) |
@@ -422,11 +422,54 @@ volume reasonable and let eval deltas attribute cleanly.
 
 1. **Per-result feedback cap (implement first).** Cap each tool-result
    message fed back into the loop at ~3K chars, with a pointer appended:
-   full content is stored in the citation (`_CITATION_CONTENT_LIMIT` =
-   10K); `recall_source` is the deliberate re-read path. Same rationale as
-   url_content's built-in cap — if the information isn't in the first few
-   thousand chars of cleaned content, odds of it being later are low.
-   Storage stays full-fidelity; only the model-facing copy is capped.
+   full content is stored in the citation (bounded by
+   `_CITATION_CONTENT_LIMIT`, see the limit retune below); `recall_source`
+   is the deliberate re-read path. Same rationale as url_content's built-in
+   cap — if the information isn't in the first few thousand chars of cleaned
+   content, odds of it being later are low. Only the model-facing copy is
+   capped.
+
+   **Implemented (3.3.1):** `_TOOL_RESULT_FEEDBACK_LIMIT = 3_000` +
+   `_cap_feedback_body` in research.py, applied in
+   `_process_execution_results` to both feedback paths — Path A structured
+   bodies (`content`/`snippet`) and Path B unstructured outputs. The
+   appended pointer names the citation and the exact `recall_source` call
+   to re-read it. **`recall_source` results are exempt** — recall is the
+   re-read path the pointer promises; capping it would make stored content
+   above the feedback cap permanently unreachable (it remains bounded by
+   the citation content limit and within-batch dedup). Zero-results Path A
+   feedback was already bounded (`_SNIPPET_MAX_LENGTH`). Tests:
+   `TestFeedbackCap` (helper boundary, at-limit passthrough, Path B cap +
+   storage fidelity, recall exemption) + updated
+   `TestPathAContentFeedback` (truncation assertions + storage check).
+
+   **Smoke test (08-25 tyranitar rerun, run `d5222b28`):** the reproducer
+   scenario now completes — all 16 steps, peak research input 29,552 tokens
+   (pass 3) vs the 32,768 limit, 3,578-char answer. (Follow-up forensics on
+   this run found a second cap bug, fixed in the retune below.)
+
+   **Limit retune + sync fix (3.3.1a):** the citation-content cap is now
+   **5K** (was 10K). Rationale: the 10K value was set on 07-21 under a
+   large-context workflow model; the current Q5 model has a 32K context,
+   and `recall_source` re-injects stored content un-capped — a handful of
+   page-depth recalls in one round can approach overflow (telescope pass 3
+   did 20). Git history shows 5K→15K→10K same-day knob-turning with no
+   recorded rationale; the snapshot safety net in
+   `knowledge_summary()` silently stayed at 5K, so DB forensics
+   under-reported what runs actually served (the d5222b28 discovery).
+   Structural fix, per the no-numbers-in-comments rule:
+   - Canonical constant `CITATION_CONTENT_LIMIT` now lives with the
+     Citation schema (`models/knowledge.py`); research.py imports it
+     (module-local alias preserved for tests); the snapshot slices with it
+     directly — no independent number to drift.
+   - Tool-side mirrors (`url_content._METADATA_CONTENT_LENGTH`,
+     `rest_tool._CONTENT_LIMIT`) set to match and documented by name only.
+   - The pipeline now enforces the cap at the Path A storage boundary
+     (`_process_execution_results` slices metadata content), so tool-side
+     drift can never enlarge stored content — "the tool provides the data,
+     the pipeline enforces its own limits" now holds mechanically.
+   All comments reference constants by name; no synced numbers remain.
+   Suite 876 passed, ruff clean.
 2. **URL-field pruning at the model-facing boundary (second commit).**
    General hypermedia rule, not API-specific: prune a `url` field only when
    a sibling identifying field (`name`/`title`/`id`) exists in the same
