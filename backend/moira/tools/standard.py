@@ -53,10 +53,13 @@ STANDARD_TOOLS: list[ToolDefinition] = [
         invocation_cost=3.0, call_limit_per_run=15, call_limit_per_step=8
     ),
     # recall_source is free — it reads existing citation content from
-    # workflow state. Call limits prevent context bloat. The research loop
+    # workflow state. Call limits prevent context bloat: each call
+    # re-injects up to CITATION_CONTENT_LIMIT chars into the loop, so the
+    # per-step count is sized so a full batch of recalls plus the base
+    # prompt stays under a 32K-token model context. The research loop
     # intercepts these calls and synthesizes results from in-scope citations.
     RecallSourceTool.make_definition(
-        invocation_cost=0.0, call_limit_per_run=10, call_limit_per_step=5
+        invocation_cost=0.0, call_limit_per_run=12, call_limit_per_step=4
     ),
     CalculatorTool.make_definition(invocation_cost=0.1),
 ]

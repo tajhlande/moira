@@ -112,3 +112,30 @@ failure modes:
 
 **Question:** Which real questions from past MOiRA usage should fill these
 slots? Placeholder text will land with Iteration 3; user picks the final set.
+## Summarize source — open questions
+
+Discovered during pre-planning for [`summarize-source.md`](./summarize-source.md).
+Full option/leaning detail lives in that document's "Design decisions"
+section; these are the decisions needing user input before implementation.
+
+### Storage tier: how large is "enough" for full-source reading?
+
+`summarize_source` needs stored content beyond the context window
+(two-tier storage). But PokeAPI's full payload is ~590K unpruned / ~379K
+pruned — no reasonable store cap holds it. Is a partial store (first N
+chars, summarizer told it is truncated) acceptable, or is store size a
+per-source-class decision?
+
+### Provenance: can the reviewer verify beyond-window claims?
+
+Extracted claims should land as `unverified` facts with verbatim-quote
+anchors — but the reviewer sees the same capped window as everyone else.
+Can it verify a claim about content at char 40K? Candidate answers: the
+reviewer gets its own summarize call when verifying, or verification
+targets the quote only. Needs a decision.
+
+### Execution shape: intercepted like recall_source, or a real tool?
+
+Real tool prices naturally in the primary budget (invocation_cost) and
+builds a citation-store interface reusable by grep+neighborhood;
+interception is less plumbing. Genuinely open.

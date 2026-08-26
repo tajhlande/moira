@@ -11,10 +11,10 @@ adopt / iterate / rollback decision.
 |-------|--------------------------------------------------------------------------|---------------------------------|---------------------------------------------|
 | 0     | Spike: `evidence_requests` replace `ToolCallPlan`                        | Complete (`771b8d5`)            | —                                           |
 | 1     | Baseline evals + run forensics                                           | Complete (07-23, 08-24 batches) | —                                           |
-| 2 | Defect fixes: extraction-fallback corruption, request-bundling guard | Code complete — pending eval confirmation | Junk facts eliminated; unit tests pass |
+| 2 | Defect fixes: extraction-fallback corruption, request-bundling guard | Complete — gates held on batches `d0dcd2f`/`d0dcd2fb` and 08-25/26 smoke runs (zero junk, uncited-unverified, or unsupported facts) | Junk facts eliminated; unit tests pass |
 | 3     | Traceability: `request_id` echo, strict request matching, retry feedback | Complete — verified on 08-25 runs (attribution + carry-over confirmed; recall collapse fixed via 3.1) | Every tool call attributable to one request |
 | 3.1   | Store visibility + recall discipline: citation depth/linked-facts table, within-batch recall dedup | Code complete — runtime verification pending next retry-prone run | Planner sees store depth; no same-batch duplicate recalls |
-| 3.3   | Context budget management: per-result feedback cap, citation limit retune, URL-field pruning | 3.3.1 cap + 3.3.1a limit retune + 3.3.2 pruning complete; 3.3.3 rolling compression deferred | No research-loop context overflow on wide fan-out |
+| 3.3   | Context budget management: per-result feedback cap, citation limit retune, URL-field pruning | Complete (`cb87020`, `4bd76a0`; recall step-limit 4/pass verified live on run `3322e4c7`) ; 3.3.3 rolling compression deferred | No research-loop context overflow on wide fan-out or recall-heavy rounds |
 | 4     | Query discipline: mechanical dedup, coverage-driven rounds               | Not started                     | Duplicate queries intercepted mechanically  |
 | 5     | Measurement: planner/researcher dimension metrics in eval harness        | Not started                     | Eval batch emits both dimensions            |
 | 6     | Decision: multi-batch eval vs main 08-18 baseline                        | Not started                     | Adopt / iterate / rollback (criteria below) |
@@ -107,9 +107,10 @@ Example:
 - `backend/moira/workflow/nodes/planning.py:266-299` — parses
   `evidence_requests` from planner JSON
 - `backend/moira/workflow/nodes/research.py` — `_format_evidence_requests`;
-  request matching at `research.py:760` is currently a loose
-  `name in candidate_tools` check; `_apply_discovered_facts` new-fact and
-  claim-fallback paths (~`research.py:780-887`)
+  request matching (spike: loose `name in candidate_tools`; now strict
+  per-request promotion via `request_id`, Phase 3);
+  `_apply_discovered_facts` new-fact and claim-fallback paths
+  (~`research.py:780-887`; guarded in Phase 2)
 - `backend/moira/resources/prompts.md` — planning prompt rewritten for
   evidence requests; research prompts say "you decide HOW to query" and add
   "do not repeat exact search queries" (prompt-only, demonstrably insufficient)
@@ -182,11 +183,11 @@ remains the goal; the forensics tell us where the remaining work is.
 | Expected outcome | Current state | Where it gets addressed |
 |---|---|---|
 | Better decomposition of evidence needs | Partial — bundling degrades targeting | Phase 2 bundling guard |
-| Better tool selection during research | Not yet working — web_search satisfies everything | Phase 3 strict matching; Phase 5 measures it |
+| Better tool selection during research | Plumbing fixed (Phase 3 strict matching); behavior unmeasured | Phase 5 measurement |
 | Working fallback cascade | Unmeasured — advisory only, no instrumentation | Phase 5 measurement |
 | Fewer pathological/broad queries | Not yet — duplicates returned, bundled requests vague | Phase 2 + Phase 4 |
 | Better quality without excess cost | Neutral-to-worse so far (cap hit on duplicates) | Phases 2–4, judged at Phase 6 |
-| Easier-to-debug trajectories | Not yet — attribution weaker than per-call `target_fact_ids` | Phase 3 request_id echo |
+| Easier-to-debug trajectories | Working — request_id echo verified on 08-25/26 runs (unattributed calls are model-initiated supplementary searches) | Complete (Phase 3) |
 
 Phases 2–5 are the actual attempt; Phase 6 is the first fair test.
 
@@ -519,10 +520,40 @@ volume reasonable and let eval deltas attribute cleanly.
    payload structure is "how the web works" and the agent adapts around
    it. Evidence base is a single JSON domain (PokeAPI) — treat the
    percentages as indicative until more APIs are exercised.
+
+   **Residual exposure (08-26 run `c815f4a1`, post-cap/retune/pruning):**
+   research pass 3 *still* overflowed (37,981 vs 32,768 tokens) on a round
+   of 10 `recall_source` calls — recall re-injection is exempt from the
+   feedback cap by design and remains the one unbounded growth path
+   (pruning shrinks each recall's payload; it does not bound their count).
+    Fix direction, per the project's no-shadow-budgets principle (call-count
+    limits are guardrails; char-accounting alongside the cost budget is not
+    wanted): **no per-round recall char budget.** Resolution of the options:
+    1. *Interim guardrail — DONE (08-26):* recall `tool_call_step_limit`
+       lowered 20 → 4 (per-run 50 → 12) in the tool config + seeds
+       (`standard.py`). A "step" is one research pass (baseline captured at
+       invocation start, `research.py:410-423`), so this bounds the whole
+       pass's re-injection at ~4 × 5K chars ≈ ≤7K tokens even for URL-dense
+       JSON — worst case with a retry-heavy base prompt lands ~25K of 32K.
+       Sizing rationale: observed recall demand is small when the store is
+       poor (water: ≤2/pass) and large-fanout mining is exactly the behavior
+       that crashed; legitimate deep reading can spread across planning
+       retries. Verified live on run `3322e4c7` (single-pass, 3/4 recalls,
+       no overflow; the rejection path itself remains exercised only by the
+       shared limit code web_search hits every run).
+    2. *Structural:* 3.3.3 rolling compression below — now justified
+       specifically if overflow recurs even under the lowered guardrail.
+    3. *Long-term:* the proposed `summarize_source` tool
+       ([`summarize-source.md`](summarize-source.md)) removes the need to
+       re-inject whole sources into the caller's context at all — deep
+       reading happens in a sub-context and returns compact facts. That
+       plan owns this problem now; this plan tracks only the crash-safety
+       interim.
 3. **Rolling compression of older rounds (defer until 1+2 measured).**
    Demote round ≤ N−1 tool messages to snippets when a new round starts.
    The cap defers but doesn't eliminate growth (~`calls × cap` per round);
-   only justified if multi-round runs still overflow after 1+2. Most
+   justified now only if recall-heavy or wide multi-round runs still
+   overflow after the cap + pruning (+ interim recall guardrail). Most
    invasive (mutates adapter-tracked history) — needs evidence first.
 
 **Verification:** unit tests for cap + pruning; a wide-fan-out run stays
@@ -560,6 +591,11 @@ attempts, verified facts per web_search.
 
 Run ≥2 Q5 batches after Phases 2–4 (same commit), compare against main's
 08-18 Q5 baseline.
+
+**Prerequisite:** fix the eval-harness stale-checkpoint defect first — two
+prior batches re-judged a checkpoint-resumed trade-policy run (`f20c5c4b`,
+evaluation + report steps only, zero research) instead of executing a
+fresh run. Left unfixed, it silently poisons batch-level comparisons.
 
 - **Adopt** if: PASS ≥ 5/7 in at least one batch with no batch below 4/7;
   resolution rate and facts-per-search ≥ baseline; unsupported = 0;
@@ -599,4 +635,6 @@ On adoption: update `core/research-loop-data-flow.md` (still documents
   returns only the section matching a query ± surrounding context, as an
   alternative to re-reading whole pages via `recall_source`. Complicated;
   see Phase 3.3 deferred note and `retrieval-quality.md` (passage-level
-  retrieval).
+  retrieval). The LLM-driven counterpart — directed whole-source
+  extraction in a sub-context — now has its own pre-plan:
+  [`summarize-source.md`](summarize-source.md).

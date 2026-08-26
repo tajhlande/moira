@@ -54,8 +54,8 @@ class TestRecallSourceRegistration:
         assert defn.enabled is True
         assert defn.group_name == "standard"
         assert defn.invocation_cost == 0.0
-        assert defn.call_limit_per_run == 10
-        assert defn.call_limit_per_step == 5
+        assert defn.call_limit_per_run == 12
+        assert defn.call_limit_per_step == 4
 
     def test_implementation_points_to_class(self):
         defn = next(t for t in STANDARD_TOOLS if t.name == "recall_source")
