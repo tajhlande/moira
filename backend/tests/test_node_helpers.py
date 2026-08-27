@@ -214,6 +214,82 @@ class TestParseJsonObject:
         result = _fix_double_braces(text)
         assert result == text
 
+    def test_unescaped_inner_quotes_repaired_then_parsed(self):
+        """Regression: run 7b3fd126 report died on `as a "foretaste" of`
+        inside the answer string — prose quotes must be escaped and parsed.
+        """
+        from moira.workflow.nodes._helpers import _parse_json_object
+
+        text = (
+            '{"answer": "This construct reflects a "foretaste" of the '
+            'affective response one expects. We also predicted "diminished '
+            'ratings", overall.", "citations": [{"id": 38, "url": '
+            '"https://example.com/a"}]}'
+        )
+        result = _parse_json_object(text)
+        assert "foretaste" in result["answer"]
+        assert result["citations"][0]["id"] == 38
+
+    def test_snippet_prose_quotes_in_citation_fields(self):
+        """Regression family from run c9fe4160: search snippets quoted into
+        citation titles carry their own double quotes."""
+        from moira.workflow.nodes._helpers import _parse_json_object
+
+        text = json.dumps(
+            {
+                "answer": "ok",
+                "citations": [
+                    {
+                        "id": 1,
+                        "title": 'Snippet: Today we are diving into the term "x"',
+                        "url": "u",
+                    }
+                ],
+            }
+        )
+        broken = text.replace('\\"', '"')  # strip all escaping, like the model did
+        result = _parse_json_object(broken)
+        assert result["citations"][0]["title"].startswith("Snippet:")
+
+    def test_valid_json_with_inner_quotes_untouched(self):
+        """Properly escaped quotes must survive the repair stage unchanged."""
+        from moira.workflow.nodes._helpers import _repair_unescaped_quotes
+
+        good = '{"q": "he said \\"foretaste\\" and left"}'
+        assert _repair_unescaped_quotes(good) == good
+
+    def test_latex_backslash_sequences_still_parse(self):
+        r"""Regression family from runs 853/854: `\vert`/`\to`-style LaTeX in
+        answer strings (invalid escapes now repaired before parsing)."""
+        from moira.workflow.nodes._helpers import _parse_json_object
+
+        text = (
+            '{"answer": "the sum decays as $x \\\\to \\\\infty$ and $\\\\vert$ bounds hold", '
+            '"route": "accept"}'
+        )
+        raw_model_text = text.replace("\\\\", "\\")  # model's raw single-backslash form
+        result = _parse_json_object(raw_model_text)
+        assert result["route"] == "accept"
+        assert "$x" in result["answer"]
+        assert len(result["answer"]) > 40
+
+    def test_combined_control_chars_and_inner_quotes(self):
+        r"""Both defect families in one payload: prose quotes flip the parser's
+        string state AND a literal newline/tab sits inside a string value.
+        The control-char fixer runs first but its quote-scanning can mis-read
+        quote-broken layout, so strategy 4 retries quote repair against the
+        untouched base. Values must survive with real control chars intact."""
+        from moira.workflow.nodes._helpers import _parse_json_object
+
+        payload = (
+            '{\n  "answer": "as a "foretaste" of what came later",\n'
+            '  "notes": "first line\n\tsecond line",\n  "score": 3\n}'
+        )
+        result = _parse_json_object(payload)
+        assert result["answer"] == 'as a "foretaste" of what came later'
+        assert result["notes"] == "first line\n\tsecond line"
+        assert result["score"] == 3
+
 
 class TestFixInvalidEscapes:
     """Unit tests for the invalid-escape-sequence repair utility."""

@@ -287,6 +287,72 @@ def _try_parse_json(text: str) -> dict | None:
     return None
 
 
+def _repair_unescaped_quotes(text: str) -> str:
+    r"""Escape raw double quotes that illegally terminate a JSON string.
+
+    The dominant remaining parse failure on long reports (6 incidents in
+    284 historical report steps; e.g. run 7b3fd126: ``as a "foretaste" of``
+    inside an answer string) is a model writing prose quotes without JSON
+    escaping. The repair walks the text with proper string-state tracking
+    and, for every ``"`` encountered *inside* a string, applies a lookahead
+    rule: it is a legal terminator only when the next non-whitespace
+    character is a structural token (``,` `:`` ``]`` ``}``); anything else
+    means it is content and gets escaped to ``\"``. Escape-aware (``\\"``
+    passes through), single pass — ambiguous greedy closes simply leave the
+    text still unparseable, never more broken than before.
+
+    Best-effort by design: callers re-attempt the full parse afterward and
+    fall back unchanged if this didn't help.
+    """
+    result: list[str] = []
+    in_string = False
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if not in_string:
+            result.append(ch)
+            if ch == '"':
+                in_string = True
+            i += 1
+            continue
+        if ch == "\\":
+            # Escaped character pair — pass through untouched.
+            result.append(ch)
+            if i + 1 < n:
+                result.append(text[i + 1])
+                i += 2
+            else:
+                i += 1
+            continue
+        if ch != '"':
+            result.append(ch)
+            i += 1
+            continue
+        # A quote while inside a string: check what follows.
+        j = i + 1
+        while j < n and text[j].isspace():
+            j += 1
+        legal = False
+        if j >= n or text[j] in ":]}":
+            legal = True
+        elif text[j] == ",":
+            # A comma alone is ambiguous ("...ratings", overall."). A real
+            # value terminator here must be followed by another key/string
+            # literal — prose commas are followed by word characters.
+            k = j + 1
+            while k < n and text[k].isspace():
+                k += 1
+            legal = k >= n or text[k] == '"'
+        if legal:
+            in_string = False
+            result.append(ch)
+        else:
+            result.append('\\"')
+        i += 1
+    return "".join(result)
+
+
 def _parse_json_object(text: str) -> dict:
     """Extract the first JSON object from model output.
 
@@ -308,7 +374,15 @@ def _parse_json_object(text: str) -> dict:
     text = re.sub(r"</think>", "", text).strip()
     # Repair literal control characters inside JSON string values.
     # No-op on valid JSON; fixes broken JSON from quantized models.
+    # NOTE: this fixer tracks string state via quote scanning, so on
+    # quote-broken output it can escape structural whitespace and corrupt
+    # the layout — the untouched form is kept below as a repair base.
+    raw_base = text
     text = _fix_json_control_chars(text)
+    # Capture the pre-escape form: the escape fixer can corrupt prose-quote
+    # layouts (it pairs stray backslashes with following quotes), so quote
+    # repair below tries both bases.
+    original = text
     # Repair invalid escape sequences (e.g. \sim, \psi from LaTeX).
     # No-op on valid JSON; fixes broken JSON from models that forget to
     # double-escape backslashes inside string values.
@@ -333,6 +407,39 @@ def _parse_json_object(text: str) -> dict:
         parsed = _try_parse_json(extracted)
         if parsed is not None:
             return parsed
+
+    # Strategy 4: unescaped-quote repair, then re-run the parse chain.
+    # Prose quotes inside string values ("as a "foretaste" of") flip the
+    # parser's string state and defeat strategies 1-3. Try the quote repair
+    # against every base: escapes-fixed text, pre-escape original, and the
+    # raw form untouched by the control-char fixer (which can corrupt
+    # quote-broken payloads). Each historical failure family needed a
+    # different base; run 855 needed escapes composed with quote repair.
+    for src in dict.fromkeys(
+        (
+            text,
+            original,
+            _fix_invalid_escapes(raw_base),
+            raw_base,
+            _fix_invalid_escapes(_repair_unescaped_quotes(original)),
+        )
+    ):
+        repaired = _repair_unescaped_quotes(src)
+        if repaired == src:
+            continue
+        parsed = _try_parse_json(repaired)
+        if parsed is not None:
+            return parsed
+        fenced = re.search(r"```(?:json)?\s*(.*?)```", repaired, re.DOTALL)
+        if fenced:
+            parsed = _try_parse_json(fenced.group(1).strip())
+            if parsed is not None:
+                return parsed
+        extracted = _extract_balanced_braces(repaired)
+        if extracted:
+            parsed = _try_parse_json(extracted)
+            if parsed is not None:
+                return parsed
 
     logger.warning(
         "Failed to extract JSON object from model output "
@@ -572,3 +679,30 @@ def _format_prior_evaluations(evaluation_history: list, *, instruction: str) -> 
             lines.append(f"  Assessment: {assessment}")
 
     return f"{instruction}\n\n" + "\n".join(lines)
+
+
+def _format_research_progress(research_progress: dict | None) -> str:
+    """Render the structural research-progress signal for reviewer/evaluator prompts.
+
+    Returns empty string when the signal is absent or shows progress, so the
+    prompt placeholder disappears entirely.
+
+    This block is the *prompt-facing* half of the Phase 4b structural gate.
+    The *enforcement* half lives in the graph routers, which override retry
+    recommendations mechanically when ``research_progress.stalled`` is set —
+    the model's acknowledgment here is for honest record-keeping (coverage
+    assessments and goal assessments should reflect that no further evidence
+    is coming), not for routing decisions.
+    """
+    if not research_progress or not research_progress.get("stalled"):
+        return ""
+
+    new_facts = research_progress.get("new_facts", 0)
+    return (
+        "RESEARCH PROGRESS SIGNAL: the most recent research pass produced "
+        f"{new_facts} new factual claims. Research has stopped making "
+        "progress, so further retries cannot add evidence. Acknowledge this "
+        "explicitly in your assessment: frame remaining gaps as known "
+        "unknowns to report transparently rather than as targets for more "
+        "research."
+    )
