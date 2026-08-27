@@ -15,7 +15,7 @@ adopt / iterate / rollback decision.
 | 3     | Traceability: `request_id` echo, strict request matching, retry feedback | Complete — verified on 08-25 runs (attribution + carry-over confirmed; recall collapse fixed via 3.1) | Every tool call attributable to one request |
 | 3.1   | Store visibility + recall discipline: citation depth/linked-facts table, within-batch recall dedup | Code complete — runtime verification pending next retry-prone run | Planner sees store depth; no same-batch duplicate recalls |
 | 3.3   | Context budget management: per-result feedback cap, citation limit retune, URL-field pruning | Complete (`cb87020`, `4bd76a0`; recall step-limit 4/pass verified live on run `3322e4c7`) ; 3.3.3 rolling compression deferred | No research-loop context overflow on wide fan-out or recall-heavy rounds |
-| 4     | Query discipline: mechanical dedup, coverage-driven rounds               | Not started                     | Duplicate queries intercepted mechanically  |
+| 4     | Query discipline: IDF-weighted duplicate interception (run-scoped, hard-reject), coverage-driven rounds, fact-append dedup | 4a implemented + calibrated + **runtime confirmed** (run `9d8d6dc2`); 4b shipped as structural progress gate (revised design); 4c fact-dedup calibrated on snapshots | Duplicate queries intercepted mechanically; threshold measured from historical pairs; stalled research forced to evaluation; duplicate shell facts blocked at append |
 | 5     | Measurement: planner/researcher dimension metrics in eval harness        | Not started                     | Eval batch emits both dimensions            |
 | 6     | Decision: multi-batch eval vs main 08-18 baseline                        | Not started                     | Adopt / iterate / rollback (criteria below) |
 
@@ -185,7 +185,7 @@ remains the goal; the forensics tell us where the remaining work is.
 | Better decomposition of evidence needs | Partial — bundling degrades targeting | Phase 2 bundling guard |
 | Better tool selection during research | Plumbing fixed (Phase 3 strict matching); behavior unmeasured | Phase 5 measurement |
 | Working fallback cascade | Unmeasured — advisory only, no instrumentation | Phase 5 measurement |
-| Fewer pathological/broad queries | Not yet — duplicates returned, bundled requests vague | Phase 2 + Phase 4 |
+| Fewer pathological/broad queries | Yes — duplicates intercepted live (2 on run `9d8d6dc2`), zero false rejections | Confirmed; residue (synonym re-rolls) accepted |
 | Better quality without excess cost | Neutral-to-worse so far (cap hit on duplicates) | Phases 2–4, judged at Phase 6 |
 | Easier-to-debug trajectories | Working — request_id echo verified on 08-25/26 runs (unattributed calls are model-initiated supplementary searches) | Complete (Phase 3) |
 
@@ -564,19 +564,204 @@ commit separate from pruning commit).
 search stored citation content and return only the relevant section ±
 context. Powerful but complicated; revisit after retrieval-quality work.
 
+#### Calibration forensics (done 08-26, script replayed all history)
+
+Replay corpus: 275 runs / 3,475 web_search queries from `data/moira.db`,
+each query scored against its priors sequentially (at-scoring-time DF,
+run-scoped — mirrors the intended interception exactly). Results:
+
+- **42 normalized-exact duplicate pairs** historically (≈1.2% of queries)
+  — rejected outright by rule, independent of threshold.
+- **Threshold table** (% of distinct-pair queries whose max weighted
+  similarity to any prior clears the line): 0.55→9.7%, **0.65→4.8%**,
+  0.75→2.0%.
+- **Precision banding from eyeballed examples:** everything measured
+  w≥0.84 is an unambiguous word-shuffle dupe (15/15 inspected);
+  the [0.52–0.63] band *interleaves* both classes — lazy-modifier dupes
+  ("+Rock Ground Steel", "list critics") sit next to legitimate
+  entity/angle changes (Kingambit-vs-Excadrill template query 0.58,
+  Bling-vs-SHELLPRO product swap 0.53). IDF weighting already pushes the
+  entity-swap class down out of clear-dupe territory; no lexical cut can
+  split the residue.
+- **Adversarial pair check:** the original tyranitar trio ("…tier list
+  Pokemon viable" / "Smogon …rankings 2024" / "…current rankings Smogon")
+  scores 0.08–0.44 across all similar historical sequences — below any
+  sane threshold because each re-roll carried fresh tokens (`smogon`,
+  `rankings`, years). Confirms the accepted limit: synonym re-rolls are
+  4b/reviewer territory, explicitly not the guardrail's job.
+- Cost asymmetry decides the cutpoint: a missed dupe wastes one Brave
+  call; a false rejection blocks real acquisition. Precision favored.
+
+**Chosen threshold: reject when max weighted similarity ≥ 0.65**
+(plus normalized-exact always). Expected incidence ≈5% of queries,
+i.e. ≤1 interception per typical run — a guardrail, not a straitjacket.
+Threshold lives as a module constant until eval evidence argues for
+exposure in config.
+
 ### Phase 4: Query discipline
 
-1. **Mechanical near-duplicate interception** — token-overlap (or embedding)
-   similarity vs all queries already issued this run; refuse or force
-   rephrase. Prompt-only "do not repeat" demonstrably doesn't hold for a 35B
-   local model.
-2. **Coverage-driven rounds** — before each extra round, present a checklist
-   (request → attempted? → resolved?); next-round queries must target
-   unattempted or unresolved requests. Turns `max_extra_rounds` freedom into
-   directed freedom.
+**Design decided (08-26).** Two mechanisms; both mechanical, stdlib-only,
+and calibrated against historical data before finalizing thresholds.
 
-**Verification:** unit test intercepts a near-duplicate; retry prompt contains
-the checklist.
+#### 4a. Mechanical near-duplicate interception
+
+**Decision summary** (rationale recorded from design discussion):
+
+- **Hard-reject, not warn-through.** Deterministic and symmetric with the
+  recall/url_content dedups; warn-only invites re-roll thrashing.
+- **Run-scoped ledger.** Scored against every web_search query issued this
+  workflow run across all research passes — cross-pass hammering is the
+  observed failure mode (`req0001` accumulating attempts across planning
+  retries on water/telescope/tyranitar), so step-scoping would leave the
+  biggest hole open. Brave returns ~the same results for an identical
+  query regardless of context reset, so a cross-pass repeat buys zero new
+  information; materially different phrasing slips under the threshold
+  naturally (the escape hatch *is* the mechanism).
+- **IDF-weighted overlap, not raw Jaccard.** Raw Jaccard is uniform-weight
+  set arithmetic: adding `excadrill` (discriminative) or `rankings`
+  (boilerplate) to a query scores identically. The weighted form:
+
+  ```
+  sim(A,B) = Σ IDF(w)·[w ∈ A∩B] / Σ IDF(w)·[w ∈ A∪B]
+  IDF(w)   = log((N+1)/(df+1)) + 1     # N = prior queries; df at scoring time
+  ```
+
+  DF is computed **at scoring time over prior queries only**, so this
+  run's own boilerplate down-weights itself, while a fresh discriminative
+  token (`excadrill`, a site name, a scope word) pulls similarity down
+  decisively. Normalized-identical queries reject outright without
+  scoring.
+- **Known limit, accepted:** no lexical metric catches synonym re-rolls
+  (tyranitar's trio survived partly via fresh tokens `smogon`/`rankings`
+  that were semantically redundant). That residue belongs to 4b's
+  discipline and the reviewer, not to the guardrail. Known-bad historical
+  pairs become adversarial calibration cases — flagged if possible,
+  explicitly accepted as misses otherwise.
+
+**Mechanism (as implemented):** interception lives in `_execute_tools`
+(research.py) as a dedicated partition layer: web_search calls are split
+through `_partition_web_search_dupes`, which scores sequentially against
+the accepted set so dupes *within* one fan-out batch are caught too. The
+ledger is `ExecutionState.issued_queries` (original query text, seeded in
+`research()` from state and persisted back — covers unattributed
+supplementary searches, which the request-attempt ledger does not).
+Helpers: `_tokenize_query` / `_normalize_query` (stopword-stripped,
+order/punctuation-insensitive canonical form; normalized-identical rejects
+outright without scoring), `_query_similarity` (IDF-weighted overlap, DF at
+scoring time over priors only). Rejected duplicate ⇒ synthetic ToolResult
+via `_build_synthetic_dupe_result` ("you already searched «X» … rephrase
+materially or target a different evidence request") + call-count decrement
+(free: no Brave call, no budget hit, cap unchanged), mirroring the existing
+dedup pattern. A rejected query never enters the ledger (rejections must
+not poison the IDF corpus). Steady-state cost ~20 lines of scoring code per
+call over ≤20 prior queries — microseconds; stdlib only.
+
+#### 4b. Coverage-driven rounds
+
+**Revised design (08-26, after run `9d8d6dc2`).** The original sketch — a
+per-request checklist rendered before each extra round — was superseded by
+what the live run exposed: the reviewer ignored yield signals entirely
+(it retried with near-identical verdicts even after a **zero-call research
+pass**), so the fix had to be structural routing, not more prompt prose.
+
+Shipped as two pieces:
+
+1. **Exhaustion protocol (researcher side).** Duplicate-rejected attempts are
+   recorded in the ledger (`deduped: true`) and rendered distinctly in
+   `_format_request_outcomes` ("Rejected as duplicate …"); prompts direct:
+   a request showing only rejections is exhausted; if *every* unresolved
+   request is exhausted, stop issuing calls and finish — no filler turns.
+2. **Structural progress gate (router side).** Each research pass records
+   `research_progress = {new_facts: N, stalled: bool}` in execution state
+   (`_count_newly_claimed_facts` vs. a pre-pass claim snapshot). Both
+   routers honor it ahead of the model's route: a stalled pass forces
+   review-retry → `evaluation`, and evaluation-declined →
+   `report_generation`. Reviewer and evaluator prompts receive a
+   `{research_progress_block}` signal telling them to acknowledge the stall
+   and frame remaining gaps as known unknowns.
+
+Runtime validation on run `9d8d6dc2`: 4a intercepted 2 duplicates live
+(one fuzzy w=0.81, one normalized-exact permutation), executed queries all
+distinct, ledger counters matched offline replay exactly, zero false
+rejections. The zero-call stall this phase targets occurred one cycle
+earlier than this fix — verified by router unit tests, next smoke run
+should show it live.
+
+#### 4c. Fact-append dedup (added 08-27, after run `008200e8`)
+
+The stall run exposed a second minting surface: pass-2 planning/research
+produced **byte-identical shell facts** (f016/f017: `Clefable | Defensive
+type coverage and team synergy principles` twice), plus per-candidate
+variant clones. The append path in `_apply_discovered_facts` accepted any
+`fact_id: null` entry with a non-empty `fact_needed`, without comparing
+against existing facts.
+
+**Calibration forensics first** (`/tmp/opencode/fact_forensics_v2.py`,
+snapshot-replay methodology; raw discovered_facts streams are not
+persisted — per-round responses overwrite and extraction calls aren't
+stored): across 287 runs / 2909 facts —
+
+- **Tier-1 normalized-identity collisions: 17 incidents**, all real:
+  per-Pokémon shell twins (c31d: Excadrill/Garganacl/Corviknight/Hydrapple),
+  the Clefable pattern, and one wholesale re-decomposition (9439: water
+  f001–f006 duplicated as f007–f012 with identical questions).
+- **Fuzzy near-misses:** every comparable pair ≥0.8 inspected is
+  *legitimate* decomposition (systolic-vs-diastolic, ability-vs-moveset,
+  normotensive-vs-hypertensive twins scoring ~0.77–0.83). IDF weighting
+  correctly holds these apart, but no safe fuzzy cutoff exists between them
+  and hypothetical paraphrase dupes (which don't appear in history).
+
+**Shipped design — narrower than the two-tier reject originally discussed:**
+
+1. **Hard reject on exact identity only**: token-normalized
+   `(subject, fact_needed)` compared against all existing facts + entries
+   appended earlier in the same response. Token-normalization (not just
+   strip/lower) on both fields keeps entities robust to punctuation/case
+   drift ("chien pao!" == "Chien-Pao"). Identity helper `_fact_identity`;
+   check helper `_is_duplicate_fact`; wired at all three append sites
+   (shell facts, overflow splits, claim-fallback) with a dedup ledger.
+2. **Advisory-only similarity warnings** at ≥0.75 for equal-or-empty
+   subjects (`_ADVISORY_FACT_SIMILARITY_THRESHOLD`): logged, not blocked —
+   accumulates signal for a future cutoff without risking false merges.
+
+Tests: identity-match rejections (byte-twin, case/order variant,
+within-response repeat, different-subject-passes guard); legit-twin
+must-pass pair from dd95; end-to-end f016/f017 shape yields one fact.
+Suite 912 passed, ruff clean.
+
+#### Calibration-first sequencing
+
+1. **Forensics script (step 0, no product changes) — DONE** (results above):
+   replayed every historical web_search pair; raw-Jaccard vs IDF-weighted
+   distributions compared; cutoff picked from measured data.
+2. **Interception implementation + unit tests — DONE (08-26).**
+   `_partition_web_search_dupes` + `_query_similarity` + tokenizers in
+   research.py; `ExecutionState.issued_queries` seeded/persisted in
+   `research()`; threshold 0.65 (`_QUERY_DUPE_THRESHOLD`). 13 tests
+   (helper units + interception behaviors: shuffle reject, normalized-exact
+   catches, entity-swap pass at ~0.21, sequential in-batch scoring,
+   cross-pass seeded ledger, no-ledger-poisoning, call-count decrement).
+   Suite 899 passed, ruff clean. **Runtime confirmed on run `9d8d6dc2`**:
+   live intercepts (fuzzy w=0.81 + normalized-exact permutation), distinct
+   executed queries, counters matched replay, zero false rejections.
+3. Progress gate + exhaustion protocol — DONE (08-26), see revised §4b.
+4. Smoke test on a hammer-prone question (water is the classic);
+   confirmation folds into Phase 5 eval batches.
+
+**Verification:** forensics report with measured threshold ✓; unit test
+intercepts a near-duplicate (incl. ≥0.84 shuffle pairs as must-catch and
+the Kingambit entity-swap pair as must-pass); stalled-pass routers force
+evaluation (graph tests ✓); live confirmation on `9d8d6dc2` ✓ for 4a,
+progress gate verified by router tests pending next live stall.
+
+### Open decisions taken during design (recorded so they don't reopen)
+
+| Question | Decision | Why |
+|---|---|---|
+| Hard-reject vs warn-through | Hard-reject | deterministic guardrail; warn invites thrashing |
+| Step-scoped vs run-scoped ledger | Run-scoped | cross-pass hammering is the observed failure |
+| Threshold source | Measured in DB forensics | prevalence before severity (project rule) |
+| Catch synonyms? | No — accepted limit | lexical metric can't; 4b owns that residue |
 
 ### Phase 5: Measurement
 

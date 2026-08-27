@@ -153,6 +153,38 @@ for domains where classification is ambiguous at the path level
 (smogon.com, wikipedia.org, reddit.com with subreddit variation). Everything
 else falls to heuristics.
 
+### External enrichment: Media Bias/Fact Check data API
+
+[MBFC's data API](https://mediabiasfactcheck.com/mbfcs-data-api/) is a
+sign-up API providing structured bias/quality scores for a large catalog of
+news sources — political bias (left–center–right), economic and social
+(progressive vs. conservative) leanings, news reporting balance (factual
+reporting quality), and editorial bias. This maps directly onto the
+`editorial` category problem: today the taxonomy can say "this is an editorial
+source" but says nothing about *which kind* or *how reliable*.
+
+Where it would slot in:
+
+- **Classification refinement for `editorial` sources** — when the curated
+  registry/heuristic layer tags a domain as `editorial`, a MBFC lookup could
+  attach its factual-reporting grade (e.g. "very high" → `reference`-like
+  treatment, "low" → treated closer to `community` for factual claims) and
+  bias positioning.
+- **Richer evaluator input** — the evaluator's credibility rule could reason
+  over structured fields ("source is editorial with low factual reporting and
+  strong left leaning") instead of inferring from URL alone — same mechanical-
+  rules-over-judgment principle as everything else in this plan.
+- **Weighting signals for corroboration policy** — if the medium/heavy policy
+  options are pursued, MBFC's factual-reporting dimension is a natural
+  numeric backbone for how much weight an `editorial` source contributes.
+
+Considerations: third-party opinions about outlets, not ground truth (a source
+scored "left" isn't wrong about facts); coverage is news-oriented — most of
+the agent's current failure modes (Reddit posts, PokeAPI, Smogon) won't be in
+the catalog at all; requires signup/API key handling like other tools. Best
+treated as an *enrichment layer applied after base classification*, not a
+replacement for it.
+
 ### Minimal useful taxonomy
 
 Four categories — simple enough for a mid-grade model to reason about,
@@ -228,6 +260,8 @@ mostly obsolete by getting richer evidence to the evaluator structurally.
   opinion vs. superlative) or just per-source-type?
 - Does the `reliability` field on tools use a controlled vocabulary, or is it
   free text? (Currently free text — may need standardization.)
+- Is the MBFC data API worth signup? (Cost/terms unknown; only relevant for
+  `editorial` sources — how much of current retrieval is news at all?)
 
 ## Deferred
 
