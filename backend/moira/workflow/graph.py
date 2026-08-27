@@ -64,6 +64,16 @@ def make_review_router():
             return "evaluation"
 
         if route == "retry":
+            # Phase 4b structural gate: when the most recent research pass
+            # produced no new factual claims, another identical pass cannot
+            # add evidence. Override the reviewer regardless of remaining
+            # budget or retry count — the data says the well is dry.
+            if (es.get("research_progress") or {}).get("stalled"):
+                logger.info(
+                    "review retry overridden: last research pass made no "
+                    "factual progress (stalled) — routing to evaluation"
+                )
+                return "evaluation"
             review_count = es.get("review_count", 0)
             budget_remaining = es.get("budget_remaining", 0.0)
             rr_cost = review_retry_cost(step_costs)
@@ -131,6 +141,16 @@ def make_evaluation_router():
             return "report_generation"
 
         if route == "retry":
+            # Phase 4b structural gate: a stalled research pass means the
+            # heavy retry cycle (tool_identification → planning → research)
+            # would replay against an exhausted query space. Decline and
+            # report with what exists.
+            if (es.get("research_progress") or {}).get("stalled"):
+                logger.info(
+                    "evaluation retry declined: last research pass made no "
+                    "factual progress (stalled) — routing to report_generation"
+                )
+                return "report_generation"
             evaluation_count = es.get("evaluation_count", 0)
             budget_remaining = es.get("budget_remaining", 0.0)
             er_cost = evaluation_retry_cost(step_costs)

@@ -55,6 +55,7 @@ REQUIRED_SECTIONS = [
     "report_generation.reason_budget_exhausted",
     "report_generation.reason_eval_insufficient",
     "report_generation.reason_retries_exhausted",
+    "report_generation.reason_research_exhausted",
     "report_generation.reason_incomplete",
     "report_generation.reason_error",
     "report_generation.user",

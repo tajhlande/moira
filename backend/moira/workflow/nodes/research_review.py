@@ -21,6 +21,7 @@ from moira.workflow.nodes._helpers import (
     _format_citation_content,
     _format_prior_evaluations,
     _format_prior_reviews,
+    _format_research_progress,
     _now,
     _response_meta,
 )
@@ -123,6 +124,7 @@ async def research_review(state: ResearchState, config: RunnableConfig) -> dict:
         source_content=_format_citation_content(
             knowledge.get("citations", []), conclusions, facts
         ),
+        research_progress_block=_format_research_progress(es.get("research_progress")),
         prior_reviews=_format_prior_reviews(
             knowledge.get("review_history", []),
             instruction=(

@@ -439,3 +439,218 @@ class TestProcessExecutionResultsRecallSource:
 
         assert budget_after == 100.0
         assert total_cost == 0.0
+
+
+class TestQueryDupeHelpers:
+    """Unit tests for the Phase 4a query similarity helpers."""
+
+    def test_tokenize_strips_stopwords_and_short_runs(self):
+        from moira.workflow.nodes.research import _tokenize_query
+
+        tokens = _tokenize_query("The Quick-Brown foxes, and a B12 study")
+        # 'the'/'and' are stopwords, 'a' is length-1, 'b12' survives as one run
+        assert tokens == {"quick", "brown", "foxes", "b12", "study"}
+
+    def test_normalize_is_order_and_punctuation_insensitive(self):
+        from moira.workflow.nodes.research import _normalize_query
+
+        assert _normalize_query("Flamin' Hot Cheetos launch date year Frito-Lay") == (
+            _normalize_query("Cheetos hot Flamin' launch Frito Lay date year")
+        )
+
+    def test_similarity_identical_sets_scores_one(self):
+        from moira.workflow.nodes.research import _query_similarity, _tokenize_query
+
+        score, idx = _query_similarity(
+            _tokenize_query("trade policy manufacturing jobs"),
+            [_tokenize_query("jobs manufacturing policy trade")],
+        )
+        assert score == 1.0
+        assert idx == 0
+
+    def test_similarity_disjoint_sets_scores_zero(self):
+        from moira.workflow.nodes.research import _query_similarity, _tokenize_query
+
+        score, idx = _query_similarity(
+            _tokenize_query("jazz trumpeters influence"),
+            [_tokenize_query("telescope mount cost drivers")],
+        )
+        assert score == 0.0
+        assert idx == -1
+
+    def test_similarity_no_priors(self):
+        from moira.workflow.nodes.research import _query_similarity, _tokenize_query
+
+        assert _query_similarity(_tokenize_query("anything"), []) == (0.0, -1)
+
+
+class TestWebSearchDupeInterception:
+    """Phase 4a guardrail: near-duplicate web_search calls get synthetic
+    rejections instead of executing.
+
+    Threshold semantics calibrated against the replayed query history
+    (planning-freedom.md Phase 4): word-shuffle dupes with a rare added
+    token land ≥0.65 and are rejected; genuine entity/angle changes sit
+    well below and pass.
+    """
+
+    # Measured 0.748 weighted overlap — same study, '+ intervention', reordered
+    BASE_QUERY = "randomized controlled trial acute water drinking blood pressure changes"
+    SHUFFLE_DUPE = "acute water drinking intervention randomized controlled trial blood pressure"
+
+    @staticmethod
+    def _make_search_call(query: str, call_id: str = "ws1") -> ToolCall:
+        return ToolCall(id=call_id, name="web_search", arguments={"query": query})
+
+    @staticmethod
+    def _search_executor(results_for: int = 1) -> AsyncMock:
+        executor = AsyncMock()
+        executor.execute_batch.return_value = [
+            ToolResult(tool_name="web_search", output="results here", success=True)
+            for _ in range(results_for)
+        ]
+        return executor
+
+    async def test_word_shuffle_dupe_rejected(self):
+        from moira.workflow.nodes.research import _execute_tools
+
+        calls = [
+            self._make_search_call(self.BASE_QUERY, "ws1"),
+            self._make_search_call(self.SHUFFLE_DUPE, "ws2"),
+        ]
+        results = await _execute_tools(
+            calls, {}, self._search_executor(1), [], {"web_search": 2}, issued_queries=[]
+        )
+
+        assert results[0].success is True
+        dupe = results[1]
+        assert dupe.success is False
+        assert dupe.metadata.get("deduped") is True
+        assert dupe.metadata.get("synthetic") is True
+        assert "duplicate" in dupe.output.lower()
+        # The rejected result quotes the prior query so the model can see it
+        assert self.BASE_QUERY[:80] in dupe.output
+
+    async def test_exact_normalized_dupes_both_caught(self):
+        """Pure reorder in-batch AND exact dupe of the run's first-ever
+        query both reject (punctuation/order normalized away)."""
+        from moira.workflow.nodes.research import _execute_tools
+
+        q_a = "Flamin' Hot Cheetos launch date year Frito-Lay"
+        q_b = "cheetos launch date frito lay year"
+        calls = [
+            self._make_search_call(q_a, "ws1"),
+            self._make_search_call(q_b, "ws2"),
+        ]
+        results = await _execute_tools(
+            calls,
+            {},
+            self._search_executor(1),
+            [],
+            {"web_search": 2},
+            issued_queries=["flamin hot cheetos launch date year frito lay"],
+        )
+        assert results[0].success is False  # reorder of seeded prior
+        assert results[1].success is False
+
+    async def test_entity_angle_change_passes(self):
+        """Swapping the entity and shifting angle scores ~0.21 — far below
+        threshold — and executes normally."""
+        from moira.workflow.nodes.research import _execute_tools
+
+        priors = [
+            "best partner for Kingambit doubles VGC regulation set team",
+            "Kingambit teammate suggestions doubles VGC 2024",
+            "good partners alongside Kingambit in VGC doubles",
+            "competitive doubles team built around Kingambit support",
+        ]
+        calls = [
+            self._make_search_call(
+                "best partner for Excadrill sand hole move team building", "ws1"
+            )
+        ]
+        results = await _execute_tools(
+            calls,
+            {},
+            self._search_executor(1),
+            [],
+            {"web_search": 1},
+            issued_queries=list(priors),
+        )
+        assert results[0].success is True
+        assert results[0].metadata.get("deduped") is None
+
+    async def test_in_batch_second_call_scored_against_first_accept(self):
+        """Dupes within one fan-out batch are caught sequentially — call 3
+        duplicates call 1's query after call 1 was accepted."""
+        from moira.workflow.nodes.research import _execute_tools
+
+        calls = [
+            self._make_search_call(self.BASE_QUERY, "ws1"),
+            self._make_search_call("evaporation cooling drinking water metabolism", "ws2"),
+            self._make_search_call(self.BASE_QUERY + " trial design", "ws3"),
+        ]
+        results = await _execute_tools(
+            calls,
+            {},
+            self._search_executor(2),
+            [],
+            {"web_search": 3},
+            issued_queries=[],
+        )
+        assert [r.success for r in results] == [True, True, False]
+
+    async def test_rejected_query_not_appended_to_ledger(self):
+        """Rejections must not poison future scoring — only accepted
+        queries join the run-scoped ledger."""
+        from moira.workflow.nodes.research import _execute_tools
+
+        ledger: list[str] = []
+        calls = [
+            self._make_search_call(self.BASE_QUERY, "ws1"),
+            self._make_search_call(self.SHUFFLE_DUPE, "ws2"),
+            self._make_search_call("jazz trumpet mutable influence bebop era", "ws3"),
+        ]
+        await _execute_tools(
+            calls,
+            {},
+            self._search_executor(2),
+            [],
+            {"web_search": 3},
+            issued_queries=ledger,
+        )
+        assert len(ledger) == 2
+        assert self.SHUFFLE_DUPE not in ledger
+        assert ledger[0] == self.BASE_QUERY
+
+    async def test_cross_pass_dupe_via_seeded_ledger(self):
+        """A retry pass whose queries duplicate a prior pass (seeded via
+        execution_state.issued_queries) gets intercepted without executing."""
+        from moira.workflow.nodes.research import _execute_tools
+
+        executor = self._search_executor(0)
+        ledger = [self.BASE_QUERY]
+        calls = [self._make_search_call(f"{self.BASE_QUERY} outcomes", "ws1")]
+        results = await _execute_tools(
+            calls, {}, executor, [], {"web_search": 1}, issued_queries=ledger
+        )
+        assert results[0].success is False
+        assert results[0].metadata.get("deduped") is True
+        executor.execute_batch.assert_not_awaited()
+
+    async def test_rejected_calls_decrement_call_counts(self):
+        """Rejected dupes are free against per-run/per-step limits,
+        mirroring the url_content/recall dedup decrements."""
+        from moira.workflow.nodes.research import _execute_tools
+
+        call_counts = {"web_search": 3}
+        calls = [
+            self._make_search_call(self.BASE_QUERY, "ws1"),
+            self._make_search_call(self.SHUFFLE_DUPE, "ws2"),
+            self._make_search_call(self.BASE_QUERY + " trial design", "ws3"),
+        ]
+        await _execute_tools(
+            calls, {}, self._search_executor(1), [], call_counts, issued_queries=[]
+        )
+        # Only ws1 executed: 3 - 2 rejects = 1
+        assert call_counts["web_search"] == 1

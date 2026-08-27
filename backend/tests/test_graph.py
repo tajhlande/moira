@@ -20,6 +20,7 @@ def _make_review_router_state(
     budget_remaining=60.0,
     review_count=1,
     max_review=3,
+    research_progress=None,
 ):
     cw = CostWeights()
     step_costs = {
@@ -59,6 +60,7 @@ def _make_review_router_state(
             "evidence_requests": [],
             "total_tool_cost_consumed": 0.0,
             "error": "",
+            **({"research_progress": research_progress} if research_progress else {}),
         },
     }
 
@@ -68,6 +70,7 @@ def _make_evaluation_router_state(
     budget_remaining=60.0,
     evaluation_count=1,
     max_evaluation=2,
+    research_progress=None,
 ):
     cw = CostWeights()
     step_costs = {
@@ -106,6 +109,7 @@ def _make_evaluation_router_state(
             "evidence_requests": [],
             "total_tool_cost_consumed": 0.0,
             "error": "",
+            **({"research_progress": research_progress} if research_progress else {}),
         },
     }
 
@@ -149,6 +153,44 @@ def test_review_router_retry_routes_to_planning():
     assert router(state) == "planning"
 
 
+def test_review_router_stalled_progress_overrides_retry():
+    """Phase 4b structural gate: when the last research pass produced no
+    new factual claims, the reviewer's retry recommendation is overridden
+    even with ample budget and retry headroom — identical passes cannot
+    add evidence."""
+    router = make_review_router()
+    state = _make_review_router_state(
+        route="retry",
+        budget_remaining=60.0,
+        review_count=1,
+        research_progress={"new_facts": 0, "stalled": True},
+    )
+    assert router(state) == "evaluation"
+
+
+def test_review_router_continue_with_stalled_progress_still_evaluation():
+    """The stalled gate only short-circuits the retry branch; a continue
+    route behaves normally."""
+    router = make_review_router()
+    state = _make_review_router_state(
+        route="continue",
+        research_progress={"new_facts": 0, "stalled": True},
+    )
+    assert router(state) == "evaluation"
+
+
+def test_review_router_productive_pass_keeps_retry():
+    """A pass that DID add claims is not stalled; normal retry routing."""
+    router = make_review_router()
+    state = _make_review_router_state(
+        route="retry",
+        budget_remaining=60.0,
+        review_count=1,
+        research_progress={"new_facts": 3, "stalled": False},
+    )
+    assert router(state) == "planning"
+
+
 def test_review_router_retry_falls_to_evaluation_on_insufficient_budget():
     router = make_review_router()
     state = _make_review_router_state(route="retry", budget_remaining=0.0, review_count=1)
@@ -187,6 +229,20 @@ def test_evaluation_router_retry_routes_to_tool_identification():
     router = make_evaluation_router()
     state = _make_evaluation_router_state(route="retry", budget_remaining=60.0, evaluation_count=1)
     assert router(state) == "tool_identification"
+
+
+def test_evaluation_router_stalled_progress_declines_retry():
+    """Phase 4b structural gate: a stalled research pass means the heavy
+    retry cycle would replay against an exhausted query space, so the
+    evaluation's retry recommendation is declined and the run reports."""
+    router = make_evaluation_router()
+    state = _make_evaluation_router_state(
+        route="retry",
+        budget_remaining=60.0,
+        evaluation_count=1,
+        research_progress={"new_facts": 0, "stalled": True},
+    )
+    assert router(state) == "report_generation"
 
 
 def test_evaluation_router_retry_falls_to_report_on_insufficient_budget():

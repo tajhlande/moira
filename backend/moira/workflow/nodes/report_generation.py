@@ -206,7 +206,17 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
             rl = es.get("retry_limits", {})
             max_eval = rl.get("max_evaluation", 2)
             eval_count = es.get("evaluation_count", 0)
-            if eval_count >= max_eval:
+            if (es.get("research_progress") or {}).get("stalled"):
+                # Structural gate fired (graph.py): retry was declined because
+                # the last research pass produced no new factual claims, even
+                # though retry count and budget would have allowed it. Report
+                # that cause distinctly — it differs materially from budget
+                # exhaustion: further cycles cannot add evidence at all.
+                generation_reason = "research_exhausted"
+                path_instruction = render_prompt(
+                    "report_generation.reason_research_exhausted",
+                )
+            elif eval_count >= max_eval:
                 generation_reason = "retries_exhausted"
                 path_instruction = render_prompt(
                     "report_generation.reason_retries_exhausted",

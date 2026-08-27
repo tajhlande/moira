@@ -2050,6 +2050,27 @@ class TestFeedbackCap:
         assert citations == []
 
 
+class TestFormatResearchProgress:
+    """Tests for _format_research_progress — renders the structural
+    stalled-progress block for reviewer/evaluator prompts."""
+
+    def test_absent_or_productive_returns_empty_string(self):
+        from moira.workflow.nodes._helpers import _format_research_progress
+
+        assert _format_research_progress(None) == ""
+        assert _format_research_progress({}) == ""
+        assert _format_research_progress({"new_facts": 4, "stalled": False}) == ""
+
+    def test_stalled_renders_signal_with_count(self):
+        from moira.workflow.nodes._helpers import _format_research_progress
+
+        out = _format_research_progress({"new_facts": 0, "stalled": True})
+        assert "RESEARCH PROGRESS SIGNAL" in out
+        assert "0 new factual claims" in out
+        # Instructs honest framing of remaining gaps.
+        assert "known unknowns" in out
+
+
 class TestFormatPriorReviews:
     """Tests for _format_prior_reviews — formats prior ReviewOutcome list
     with instructional header. Returns empty string when no history."""
@@ -2948,6 +2969,86 @@ class TestRequestIdAttribution:
         ]
         assert _format_request_outcomes(requests, attempts, facts) == ""
 
+    def test_attempt_ledger_records_deduped_flag(self):
+        """Synthetic duplicate rejections are recorded with deduped=True so
+        retry prompts can distinguish exhaustion evidence from failures."""
+        import moira.workflow.nodes.research as research_mod
+
+        ledger: dict[str, list[dict]] = {}
+        args = {"query": "same query again"}
+
+        dupe_result = ToolResult(
+            tool_name="web_search",
+            output="Query rejected as a duplicate",
+            success=False,
+            metadata={"synthetic": True, "deduped": True},
+            error="deduped: near-duplicate of an issued query",
+        )
+        research_mod._record_request_attempt(ledger, "req0001", "web_search", args, dupe_result)
+        assert ledger["req0001"][0]["deduped"] is True
+
+        failed_result = ToolResult(tool_name="web_search", output="", success=False)
+        research_mod._record_request_attempt(ledger, "req0001", "web_search", args, failed_result)
+        assert ledger["req0001"][1]["deduped"] is False
+
+    def test_format_request_outcomes_marks_duplicate_rejections(self):
+        """Deduped attempts render distinctly so the model sees its angle
+        was mechanically blocked, not merely unsuccessful."""
+        from moira.workflow.nodes.research import _format_request_outcomes
+
+        requests = [
+            {
+                "id": "req0001",
+                "target_fact_ids": ["f001"],
+                "evidence_needed": "cast iron pan weight",
+                "candidate_tools": ["web_search"],
+                "fallback": False,
+            }
+        ]
+        attempts = {
+            "req0001": [
+                {
+                    "tool": "web_search",
+                    "query": "q one",
+                    "success": False,
+                    "results": 0,
+                    "deduped": True,
+                },
+                {"tool": "web_search", "query": "q two", "success": True, "results": 2},
+            ]
+        }
+        facts = [Fact(id="f001", subject="a", fact_needed="n1", status="unknown")]
+        out = _format_request_outcomes(requests, attempts, facts)
+        assert "Rejected as duplicate" in out
+        assert "too similar to a query already issued" in out
+        assert '"q one"' in out
+        # Non-deduped attempts keep the regular Tried rendering.
+        assert 'Tried: web_search "q two"' in out
+
+    def test_count_newly_claimed_facts(self):
+        """Progress counting: only facts that gained a claim this pass."""
+        import moira.workflow.nodes.research as research_mod
+
+        facts = [
+            # Claimed before AND now -> not new progress.
+            Fact(id="f001", subject="a", fact_needed="n", status="unverified", claim="old claim"),
+            # Claimless at snapshot, claimed now -> new progress.
+            Fact(id="f002", subject="b", fact_needed="n", status="unverified", claim="new claim"),
+            # Still unknown -> no progress.
+            Fact(id="f003", subject="c", fact_needed="n", status="unknown"),
+            # Brand-new fact created this pass -> absent from snapshot.
+            Fact(id="f004", subject="d", fact_needed="n", status="unverified", claim="brand new"),
+            # Empty-whitespace claim doesn't count.
+            Fact(id="f005", subject="e", fact_needed="n", status="unknown", claim="   "),
+        ]
+        # Simulated pass-start state: f001 had a claim; f002/f003/f005 did
+        # not; f004 didn't exist yet.
+        snapshot = {"f001": True, "f002": False, "f003": False, "f005": False}
+        assert research_mod._count_newly_claimed_facts(snapshot, facts) == 2
+        # Fully exhausted pass: nothing new since snapshot.
+        done_snapshot = {f["id"]: True for f in facts}
+        assert research_mod._count_newly_claimed_facts(done_snapshot, facts) == 0
+
     def test_augment_tools_declares_optional_request_id(self):
         """Schema augmentation adds request_id as an optional property so
         native tool-calling models are willing to emit it; original tool
@@ -2972,6 +3073,105 @@ class TestRequestIdAttribution:
         # idempotent on second pass
         again = _augment_tools_with_request_id(out)
         assert "request_id" in again[0].argument_schema["properties"]
+
+    def test_fact_append_dedup_rejects_identity_matches(self):
+        """Historical collision patterns must be blocked: byte-identical shell
+        twins (run 008200e8 Clefable f016/f017) and case/order variants of an
+        existing fact's (subject, fact_needed)."""
+        import moira.workflow.nodes.research as research_mod
+
+        facts = [
+            Fact(
+                id="f001",
+                subject="Clefable",
+                fact_needed="Defensive type coverage and team synergy principles",
+                status="unknown",
+            ),
+        ]
+        appended: list[tuple[str, str]] = []
+        # Byte-identical twin.
+        assert research_mod._is_duplicate_fact(
+            "Clefable",
+            "Defensive type coverage and team synergy principles",
+            facts,
+            appended,
+        )
+        # Case/punctuation/order variant of the same identity.
+        assert research_mod._is_duplicate_fact(
+            "clefable!",
+            "team synergy principles, defensive type — coverage?",
+            facts,
+            appended,
+        )
+        # Within-response repeat: identical entry twice in one response.
+        appended.append(research_mod._fact_identity("Chien-Pao", "Candidate movesets"))
+        assert research_mod._is_duplicate_fact(
+            "Chien-Pao",
+            "candidate movesets!",
+            [],
+            appended,
+        )
+        # False positive guard: different subject stays separate even with
+        # the same question text (per-candidate decomposition is legitimate).
+        assert not research_mod._is_duplicate_fact(
+            "Corviknight",
+            "Defensive type coverage and team synergy principles",
+            facts,
+            appended,
+        )
+
+    def test_fact_append_dedup_allows_legitimate_twins(self):
+        """Must-pass pair from calibration forensics (dd95 run): systolic vs
+        diastolic twins share most tokens but differ in one discriminative
+        one; a true append dedup only hard-blocks exact identity."""
+        import moira.workflow.nodes.research as research_mod
+
+        facts = [
+            Fact(
+                id="f003",
+                subject="Observational cohort studies",
+                fact_needed=(
+                    "What direction and magnitude of correlation between "
+                    "water intake and systolic blood pressure is reported?"
+                ),
+                status="unknown",
+            ),
+        ]
+        assert not research_mod._is_duplicate_fact(
+            "Observational cohort studies",
+            (
+                "What direction and magnitude of correlation between water "
+                "intake and diastolic blood pressure is reported?"
+            ),
+            facts,
+            [],
+        )
+
+    def test_apply_discovered_facts_drops_duplicate_shell_entries(self):
+        """End-to-end through _apply_discovered_facts: two identical
+        fact_id-null entries in one response yield ONE new fact, matching
+        the f016/f017 incident shape."""
+        import moira.workflow.nodes.research as research_mod
+
+        facts: list[dict] = []
+        parsed = {
+            "discovered_facts": [
+                {
+                    "fact_id": None,
+                    "subject": "Clefable",
+                    "fact_needed": "Defensive type coverage and team synergy principles",
+                },
+                {
+                    "fact_id": None,
+                    "subject": "Clefable",
+                    "fact_needed": "defensive type coverage AND team synergy principles!",
+                },
+            ],
+        }
+        research_mod._apply_discovered_facts(parsed, facts)
+        assert len(facts) == 1
+        assert facts[0]["subject"] == "Clefable"
+        assert facts[0]["status"] == "unknown"
 
 
 class TestPruneRedundantUrls:

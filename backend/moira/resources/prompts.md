@@ -718,6 +718,11 @@ meaningfully: different phrasing style (natural-language question vs. keyword
 phrase), different source type (forums, reviews, specs, academic), or different
 scope (broader industry-level, narrower product-level).
 
+When a request shows only duplicate rejections (or its plausible queries have
+all been tried), treat it as exhausted: do not force another query onto it.
+If EVERY still-unresolved request is exhausted this way, stop issuing tool
+calls immediately and finish — do not emit filler turns with no searches.
+
 ## research.fact_extraction.system
 
 You are a fact extraction assistant. Given tool execution results and a list
@@ -977,6 +982,8 @@ Conclusions drawn from these facts (for context on what needs supporting):
 Source content (from cited sources — use this to cross-reference claims against what sources actually say):
 {source_content}
 
+{research_progress_block}
+
 {prior_reviews}
 
 {prior_evaluations}
@@ -1096,6 +1103,8 @@ Conclusions to evaluate (ID | conclusion | supporting fact IDs | reasoning | sta
 Source content (from cited sources — use this to cross-reference claims against what sources actually say):
 {source_content}
 
+{research_progress_block}
+
 {prior_reviews}
 
 {prior_evaluations}
@@ -1167,6 +1176,14 @@ another research cycle, but the configured retry limit was reached. Present the
 answer with explicit caveats: state that evaluation found gaps or contradictions,
 note which facts remain unverified or contradicted, and identify what further
 research would be needed to reach a confident answer.
+
+## report_generation.reason_research_exhausted
+
+The research loop ended because further cycles cannot produce new evidence: recent
+research passes made no factual progress, so another cycle would not add anything.
+This is not a technical failure. Present the best available answer from the verified
+material, frame what could not be established as known unknowns tied to the user's
+question, and avoid implying the system malfunctioned.
 
 ## report_generation.reason_incomplete
 

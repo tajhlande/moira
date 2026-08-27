@@ -16,6 +16,7 @@ Discovered facts and sources are applied each round, not just at the end.
 
 import json
 import logging
+import math
 import re
 import uuid
 from dataclasses import dataclass, replace
@@ -72,6 +73,49 @@ _URL_CONTENT_TOOL_NAME = "url_content"
 # recall_source is intercepted in the research loop and never reaches the
 # executor. Defined here for the same dependency-isolation reason as above.
 _RECALL_SOURCE_TOOL_NAME = "recall_source"
+
+# web_search is intercepted for near-duplicate queries (Phase 4a of
+# planning-freedom): an identical or near-identical query returns ~the
+# same results regardless of context reset, so re-issuing it buys no new
+# information.
+_WEB_SEARCH_TOOL_NAME = "web_search"
+
+# Max IDF-weighted token overlap between a candidate web_search query and
+# any query already issued this run above which the query is rejected as
+# a near-duplicate. Chosen from measured history (3,475 replayed queries):
+# >=0.84 is unambiguously word-shuffle dupes; the 0.52-0.63 band mixes
+# lazy-modifier dupes with legitimate entity swaps; 0.65 sits just above
+# the ambiguity band, flagging ~5% of historical queries (planned cost
+# asymmetry: a missed dupe wastes one search call, a false reject blocks
+# acquisition). Planning-freedom.md Phase 4 calibration section.
+_QUERY_DUPE_THRESHOLD = 0.65
+
+# English stopwords dropped before similarity scoring — they appear in
+# nearly every query and would otherwise inflate token overlap.
+_QUERY_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "of",
+        "in",
+        "on",
+        "for",
+        "to",
+        "is",
+        "are",
+        "was",
+        "were",
+        "with",
+        "by",
+        "at",
+        "as",
+        "vs",
+        "versus",
+    }
+)
 
 _DISPLAY_OUTPUT_LIMIT = 2000
 
@@ -209,6 +253,12 @@ def _format_request_outcomes(
             evidence = evidence[:97] + "..."
         lines.append(f"{rid} (Facts [{', '.join(target_ids)}] — {evidence}): still unresolved.")
         for att in attempts:
+            if att.get("deduped"):
+                lines.append(
+                    f"  Rejected as duplicate: {att.get('tool', '?')} "
+                    f'"{att.get("query", "")}" (too similar to a query already issued)'
+                )
+                continue
             status = "ok" if att.get("success") else "failed"
             lines.append(
                 f'  Tried: {att.get("tool", "?")} "{att.get("query", "")}" '
@@ -229,6 +279,25 @@ def _format_unknown_facts(facts: list[Fact]) -> str:
         if f.get("status") != "verified":
             lines.append(f"{f['id']} | {f['subject']} | {f['fact_needed']}")
     return "\n".join(lines)
+
+
+def _count_newly_claimed_facts(claim_snapshot: dict[str, bool], facts: list[Fact]) -> int:
+    """Count facts that gained a non-empty claim during this research pass.
+
+    ``claim_snapshot`` maps fact ID → had-claim-at-pass-start. A fact counts
+    as new progress if it has a claim now and did not have one at the start
+    (this includes brand-new facts created from discovered_facts).
+
+    The result feeds the structural progress signal (``research_progress``):
+    a pass with zero newly claimed facts is exhausted no matter what else it
+    did, and the graph routers use that to override retry recommendations
+    instead of trusting model judgment about whether to keep researching.
+    """
+    return sum(
+        1
+        for f in facts
+        if (f.get("claim") or "").strip() and not claim_snapshot.get(f["id"], False)
+    )
 
 
 def _make_tool_call(name: str, args: object, request_id: str | None = None) -> ToolCall | None:
@@ -677,10 +746,11 @@ async def _execute_tools(
     executor: ToolExecutor,
     citations: list[Citation],
     call_counts: dict[str, int],
+    issued_queries: list[str] | None = None,
 ) -> list[ToolResult]:
-    """Execute tool calls with recall_source interception and url_content dedup.
+    """Execute tool calls with dupe interception and recall/url dedup.
 
-    Partitioning happens in three layers:
+    Partitioning happens in four layers:
 
     1. ``recall_source`` calls are synthesized from in-scope citations
        (free, no HTTP fetch) — never executed.
@@ -691,13 +761,22 @@ async def _execute_tools(
        model sees the first result in this batch's context — so repeats
        only bloat context. Mirrors the url_content URL dedup, including
        decrementing ``call_counts`` for the deduped calls.
-    3. Remaining calls go through :func:`_execute_with_url_dedup` which
+    3. ``web_search`` near-duplicate interception (Phase 4a,
+       planning-freedom): queries are scored sequentially against the
+       running accepted set seeded with ``issued_queries`` (all queries
+       issued this workflow run). Exact-after-normalization or weighted
+       overlap ≥ ``_QUERY_DUPE_THRESHOLD`` ⇒ synthetic rejection pointer
+       + call-count decrement; rejected queries do not enter the ledger.
+       Run-scoped deliberately: an identical query returns ~the same
+       results regardless of context reset.
+    4. Remaining calls go through :func:`_execute_with_url_dedup` which
        handles url_content URL dedup and real execution.
 
-    Dedup scope is the batch, NOT the research pass: a later round (or a
-    retry pass with reset context) may legitimately re-read the same
-    citation because earlier results have scrolled out of the model's
-    context window.
+    Recall-dedup scope is the batch, NOT the research pass: a later round
+    (or a retry pass with reset context) may legitimately re-read the
+    same citation because earlier results have scrolled out of the
+    model's context window. The web_search ledger is the deliberate
+    exception — run-scoped (see layer 3).
 
     Returns results in the same order as ``valid_calls``.
     """
@@ -705,12 +784,39 @@ async def _execute_tools(
     recall_calls = [c for c in valid_calls if c.name == _RECALL_SOURCE_TOOL_NAME]
     non_recall_calls = [c for c in valid_calls if c.name != _RECALL_SOURCE_TOOL_NAME]
 
-    # Execute non-recall calls through url_content dedup + executor
-    if non_recall_calls:
-        results = await _execute_with_url_dedup(
-            non_recall_calls, fetched_urls, executor, citations, call_counts
+    # Partition web_search calls through near-dupe interception
+    search_calls = [c for c in non_recall_calls if c.name == _WEB_SEARCH_TOOL_NAME]
+    other_calls = [c for c in non_recall_calls if c.name != _WEB_SEARCH_TOOL_NAME]
+    ws_rejects: list[ToolCall] = []
+    if search_calls:
+        to_execute_search, ws_rejects, ws_matches = _partition_web_search_dupes(
+            search_calls, issued_queries or []
         )
-        results_by_id = {c.id: r for c, r in zip(non_recall_calls, results)}
+        for call, matched in zip(ws_rejects, ws_matches):
+            # Rejected duplicate is free against limits, mirroring the
+            # url_content/recall dedup decrements.
+            prev = call_counts.get(call.name, 0)
+            if prev > 0:
+                call_counts[call.name] = prev - 1
+
+        if issued_queries is not None:
+            # Accepted queries join the run-scoped ledger immediately so
+            # later batch entries score against them.
+            issued_queries.extend(
+                (call.arguments.get("query") or "").strip() for call in to_execute_search
+            )
+    else:
+        to_execute_search, ws_rejects, ws_matches = [], [], []
+    ws_dupe_pairs = list(zip(ws_rejects, ws_matches))
+
+    batch_calls = [*to_execute_search, *other_calls]
+
+    # Execute non-recall calls through url_content dedup + executor
+    if batch_calls:
+        results = await _execute_with_url_dedup(
+            batch_calls, fetched_urls, executor, citations, call_counts
+        )
+        results_by_id = {c.id: r for c, r in zip(batch_calls, results)}
     else:
         results_by_id = {}
 
@@ -740,6 +846,10 @@ async def _execute_tools(
         if citation_id:
             recalled_ids.add(citation_id)
         results_by_id[call.id] = _build_recall_source_result(call, citations)
+
+    # Synthetic rejection results for near-duplicate searches
+    for call, matched in ws_dupe_pairs:
+        results_by_id[call.id] = _build_synthetic_dupe_result(call, matched)
 
     # Reassemble in original valid_calls order
     return [results_by_id[c.id] for c in valid_calls]
@@ -775,6 +885,169 @@ def _update_fetched_urls(
             "cit_id": cit_id,
             "error": result.error if not result.success else None,
         }
+
+
+def _tokenize_query(query: str) -> set[str]:
+    """Tokenize a search query for similarity scoring.
+
+    Lowercase alphanumeric runs of length > 1, minus stopwords. Returns a
+    set — token multiplicity is irrelevant to overlap scoring.
+    """
+    return {
+        t
+        for t in re.findall(r"[a-z0-9]+", query.lower())
+        if len(t) > 1 and t not in _QUERY_STOPWORDS
+    }
+
+
+def _normalize_query(query: str) -> str:
+    """Normalize a query to a canonical form for exact-duplicate checks."""
+    return " ".join(sorted(_tokenize_query(query)))
+
+
+def _normalize_fact_text(text) -> str:
+    """Normalize a fact field for identity comparison.
+
+    Accepts str or arbitrary JSON-ish values (models occasionally emit
+    booleans/objects into text fields); non-strings are serialized so the
+    tokenizer sees their readable content rather than crashing.
+    """
+    if not isinstance(text, str):
+        text = json.dumps(text, default=str) if text is not None else ""
+    return _normalize_query(text)
+
+
+def _fact_identity(subject, fact_needed) -> tuple[str, str] | None:
+    """Canonical identity of an appendable fact.
+
+    Identity = (token-normalized subject, token-normalized fact_needed).
+    Token normalization (not just strip/lower) keeps entities robust to
+    punctuation/case drift in model output ("Chien-Pao" vs "chien pao!").
+    Used by the Phase 4b fact-append dedup: historical collision patterns
+    (per-entity shell twins from the 008200e8 run; wholesale
+    re-decompositions like run 9439's water f001-f006 vs f007-f012) share
+    this identity exactly after normalization. Returns None when there is
+    no usable question text — such entries take other hygiene paths.
+    """
+    s = _normalize_fact_text(subject if isinstance(subject, str) or subject else "")
+    n = _normalize_fact_text(fact_needed)
+    return (s, n) if n else None
+
+
+_ADVISORY_FACT_SIMILARITY_THRESHOLD = 0.75
+
+
+def _query_similarity(candidate: set[str], prior_tokens: list[set[str]]) -> tuple[float, int]:
+    """Max IDF-weighted overlap between a candidate and any prior query.
+
+    ``weight(w) = log((N+1)/(df+1)) + 1`` where ``df`` counts — across
+    ALL priors — how many contain the token. DF is computed at scoring
+    time over the priors alone so this run's own boilerplate down-weights
+    itself while a fresh discriminative token pulls similarity decisively
+    down (raw Jaccard treats both identically — the reason weighting was
+    chosen; see planning-freedom.md Phase 4a).
+
+    Returns ``(best_score, argmax_index)``; ``best_score`` is 0.0 and
+    ``argmax_index`` is -1 when there are no usable priors.
+    """
+    if not prior_tokens:
+        return 0.0, -1
+    df: dict[str, int] = {}
+    for tokens in prior_tokens:
+        for tok in tokens:
+            df[tok] = df.get(tok, 0) + 1
+    n = len(prior_tokens)
+
+    def weight(tok: str) -> float:
+        return math.log((n + 1) / (df.get(tok, 0) + 1)) + 1.0
+
+    best, best_idx = 0.0, -1
+    for idx, prior in enumerate(prior_tokens):
+        union = candidate | prior
+        if not union:
+            continue
+        num = sum(weight(t) for t in candidate & prior)
+        den = sum(weight(t) for t in union)
+        if num / den > best:
+            best = num / den
+            best_idx = idx
+    return best, best_idx
+
+
+def _partition_web_search_dupes(
+    calls: list[ToolCall],
+    issued_queries: list[str],
+) -> tuple[list[ToolCall], list[ToolCall], list[str]]:
+    """Split web_search calls into executes vs near-duplicate rejects.
+
+    Sequential over the batch against a running accepted-set seeded with
+    ``issued_queries`` (every web_search query issued earlier this
+    workflow run), so dupes within one fan-out batch and across retry
+    passes are both caught. Accepted queries are appended to the running
+    set; rejected duplicates are NOT appended — rejections must not
+    poison future similarity scoring.
+
+    Returns ``(to_execute, rejected, rejected_matches)`` where ``rejected``
+    pairs each call with the prior query text it matched.
+    """
+    accepted = [q for q in issued_queries if q.strip()]
+    accepted_norms = [_normalize_query(q) for q in accepted]
+    to_execute: list[ToolCall] = []
+    rejected: list[ToolCall] = []
+    rejected_matches: list[str] = []
+    for call in calls:
+        query = (call.arguments.get("query") or "").strip()
+        norm = _normalize_query(query)
+        match_text: str | None = None
+        matched_score = 1.0
+        if norm:
+            # Exact-after-normalization rejects outright (no scoring).
+            if norm in accepted_norms:
+                match_text = accepted[accepted_norms.index(norm)]
+            elif accepted:
+                prior_tokens = [_tokenize_query(q) for q in accepted]
+                score, best_idx = _query_similarity(_tokenize_query(query), prior_tokens)
+                if score >= _QUERY_DUPE_THRESHOLD and best_idx >= 0:
+                    match_text = accepted[best_idx]
+                    matched_score = score
+        if match_text is not None:
+            rejected.append(call)
+            rejected_matches.append(match_text)
+            logger.warning(
+                "web_search near-duplicate rejected (%.2f vs %.2f threshold): %r",
+                matched_score,
+                _QUERY_DUPE_THRESHOLD,
+                query[:80],
+            )
+            continue
+        accepted.append(query)
+        accepted_norms.append(norm)
+        to_execute.append(call)
+    return to_execute, rejected, rejected_matches
+
+
+def _build_synthetic_dupe_result(call: ToolCall, matched_query: str) -> ToolResult:
+    """Synthetic rejection result for a near-duplicate web_search call.
+
+    Marked ``metadata["synthetic"] = True`` so cost is skipped; the
+    matched prior query is quoted so the model can see what it already
+    tried. Free against the per-run/per-step limits (call-count decrement
+    happens at the partition site, mirroring the url_content/recall
+    dedups).
+    """
+    return ToolResult(
+        tool_name=_WEB_SEARCH_TOOL_NAME,
+        output=(
+            f'Query rejected as a duplicate: you already searched "{matched_query[:80]}" '
+            "earlier in this run — the same or nearly the same query returns "
+            "~the same results every time. Rephrase materially (different source "
+            "type, scope, or terminology) or target a different evidence request."
+        ),
+        success=False,
+        duration_ms=0,
+        error="deduped: near-duplicate of an issued query",
+        metadata={"synthetic": True, "deduped": True},
+    )
 
 
 def _augment_tools_with_request_id(tools: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -838,6 +1111,10 @@ def _record_request_attempt(
             "query": str(query)[:80],
             "success": bool(result.success),
             "results": n_results,
+            # Synthetic duplicate rejections are recorded too: they are
+            # evidence the model already tried this angle and was blocked,
+            # which the retry prompt surfaces as exhaustion signal (4b).
+            "deduped": bool(result.metadata.get("deduped")) if result.metadata else False,
         }
     )
 
@@ -1046,6 +1323,81 @@ def _is_fact_id_reference(text: str) -> bool:
     return has_fact_id and all(re.fullmatch(r"f\d+", t) or t in ("and", "or") for t in tokens)
 
 
+def _is_duplicate_fact(
+    subject,
+    fact_needed,
+    facts: list[Fact],
+    appended_this_response: list[tuple[str, str]],
+) -> bool:
+    """Phase 4b fact-append dedup (calibrated on DB forensics).
+
+    Hard-reject tier: normalized ``(subject, fact_needed)`` identity matches
+    any existing fact or any entry appended earlier in this same response.
+    Historical incidents all share exact identity after normalization —
+    per-entity shell twins from run 008200e8 (Clefable x2 byte-identical),
+    per-Pokemon clones from c31d, wholesale re-decompositions from 9439 —
+    while every inspected fuzzy near-miss (>=0.75, e.g. systolic-vs-
+    diastolic twins) is legitimate decomposition. Two-tier reject was
+    therefore reduced to tier-1-only; nothing in history sits between the
+    legit pairs (~0.83 max) and true dupes.
+
+    Advisory tier: IDF-weighted similarity >= threshold for equal-or-empty
+    subjects logs a warning without blocking — accumulates signal for a
+    future cutoff without risking false merges.
+    """
+    ident = _fact_identity(subject, fact_needed)
+    if not ident:
+        return False
+    subj_norm = ident[0]
+    for fact in facts:
+        if _fact_identity(fact.get("subject"), fact.get("fact_needed")) == ident:
+            logger.warning(
+                "RESEARCH: duplicate fact rejected (%s | %s) — identity matches existing %s",
+                subj_norm or "<no-subject>",
+                ident[1][:60],
+                fact.get("id"),
+            )
+            return True
+    for s_prev, n_prev in appended_this_response:
+        if (s_prev, n_prev) == ident:
+            logger.warning(
+                "RESEARCH: duplicate fact rejected (%s | %.60s) — second "
+                "identical entry in one response",
+                subj_norm or "<no-subject>",
+                ident[1],
+            )
+            return True
+    # Advisory similarity scan over existing + just-appended entries with
+    # equal-or-empty subjects (token-normalized comparison).
+    tokens = _tokenize_query(ident[1])
+    comparables: list[tuple[str, set[str]]] = [
+        (
+            _normalize_fact_text(f.get("subject")),
+            _tokenize_query(_normalize_fact_text(f.get("fact_needed"))),
+        )
+        for f in facts
+    ]
+    comparables += [(s_prev, set(n_prev.split())) for s_prev, n_prev in appended_this_response]
+    best = 0.0
+    for s_other, t_other in comparables:
+        if not tokens or not t_other:
+            continue
+        if not (subj_norm == s_other or not subj_norm or not s_other):
+            continue
+        sc, _ = _query_similarity(tokens, [t_other])
+        best = max(best, sc)
+    if best >= _ADVISORY_FACT_SIMILARITY_THRESHOLD:
+        logger.warning(
+            "RESEARCH: possible duplicate fact append (%.2f vs %.2f advisory "
+            "threshold): %s | %.80s",
+            best,
+            _ADVISORY_FACT_SIMILARITY_THRESHOLD,
+            subj_norm or "<no-subject>",
+            ident[1],
+        )
+    return False
+
+
 def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
     """Apply discovered_facts from a model response to the facts list.
 
@@ -1081,6 +1433,9 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
     # fact IDs already updated by a cited entry earlier in this response —
     # later entries for these IDs become new facts instead of overwrites.
     updated_this_response: set[str] = set()
+    # (subject, normalized fact_needed) of every new fact appended in this
+    # response — the within-response half of the dedup ledger.
+    appended_this_response: list[tuple[str, str]] = []
     for disc in discovered:
         if not isinstance(disc, dict):
             continue
@@ -1140,6 +1495,8 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
             )
             subject = (disc.get("subject") or "").strip()
             new_id = next_id("f", facts)
+            if _is_duplicate_fact(subject, claim, facts, appended_this_response):
+                continue
             new_fact = Fact(
                 id=new_id,
                 subject=subject,
@@ -1149,6 +1506,7 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
             )
             new_fact["citation_ids"] = disc_cites
             facts.append(new_fact)
+            appended_this_response.append(_fact_identity(subject, claim))
         else:
             fact_needed = (disc.get("fact_needed") or "").strip()
             # ID-reference rejection: "f003|f004" is the model mimicking the
@@ -1164,6 +1522,10 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
                 fact_needed = ""
 
             if fact_needed:
+                if _is_duplicate_fact(
+                    disc.get("subject"), fact_needed, facts, appended_this_response
+                ):
+                    continue
                 new_id = next_id("f", facts)
                 new_fact = Fact(
                     id=new_id,
@@ -1182,6 +1544,7 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
                     new_fact["status"] = "unverified"
                     new_fact["citation_ids"] = disc_cites
                 facts.append(new_fact)
+                appended_this_response.append(_fact_identity(disc.get("subject"), fact_needed))
             elif claim and disc_cites:
                 # Fallback: the model provided a cited claim with null
                 # fact_id and no fact_needed. Rather than silently dropping
@@ -1193,6 +1556,8 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
                     claim[:80],
                 )
                 new_id = next_id("f", facts)
+                if _is_duplicate_fact(disc.get("subject"), claim, facts, appended_this_response):
+                    continue
                 new_fact = Fact(
                     id=new_id,
                     subject=disc.get("subject", ""),
@@ -1202,6 +1567,7 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
                 )
                 new_fact["citation_ids"] = disc_cites
                 facts.append(new_fact)
+                appended_this_response.append(_fact_identity(disc.get("subject"), claim))
             elif claim:
                 # Uncited claim-only entries are dropped: without a source
                 # the claim cannot be verified or cited in the report, and
@@ -1503,6 +1869,7 @@ async def _run_native_tool_loop(
     step_baseline: dict[str, int] | None = None,
     fetched_urls: dict[str, dict[str, Any]] | None = None,
     request_attempts: dict[str, list[dict]] | None = None,
+    issued_queries: list[str] | None = None,
 ) -> _LoopResult:
     """Run the native tool-calling loop.
 
@@ -1574,7 +1941,12 @@ async def _run_native_tool_loop(
 
         try:
             results = await _execute_tools(
-                valid_calls, fetched_urls, executor, citations, call_counts
+                valid_calls,
+                fetched_urls,
+                executor,
+                citations,
+                call_counts,
+                issued_queries=issued_queries,
             )
         except Exception as e:
             logger.error("Tool execution batch error: %s", e, exc_info=True)
@@ -1662,6 +2034,7 @@ async def _run_text_tool_loop(
     step_baseline: dict[str, int] | None = None,
     fetched_urls: dict[str, dict[str, Any]] | None = None,
     request_attempts: dict[str, list[dict]] | None = None,
+    issued_queries: list[str] | None = None,
 ) -> _LoopResult:
     """Run the text-based tool-calling loop.
 
@@ -1813,10 +2186,15 @@ async def _run_text_tool_loop(
 
         had_valid_calls = True
 
-        # Execute tool calls (recall_source interception + url_content dedup)
+        # Execute tool calls (recall_source + url_content + query dupes)
         try:
             results = await _execute_tools(
-                valid_calls, fetched_urls, executor, citations, call_counts
+                valid_calls,
+                fetched_urls,
+                executor,
+                citations,
+                call_counts,
+                issued_queries=issued_queries,
             )
         except Exception as e:
             logger.error("Tool execution batch error: %s", e, exc_info=True)
@@ -1946,6 +2324,11 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     request_attempts: dict[str, list[dict]] = {
         rid: list(attempts) for rid, attempts in (es.get("request_attempts") or {}).items()
     }
+    # Run-scoped ledger of every web_search query issued this workflow run.
+    # Seed for the Phase 4a near-duplicate guardrail — an identical query
+    # returns ~the same results regardless of context reset, so this list
+    # (unlike the recall dedup) is deliberately not batch- or pass-scoped.
+    issued_queries: list[str] = list(es.get("issued_queries") or [])
 
     # Get tool executor
     from moira.service_setup import service_provider
@@ -2078,6 +2461,10 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     step_limits = es.get("tool_call_step_limits", {})
     tool_costs = es.get("tool_costs", {})
 
+    # Snapshot which facts already have claims, so the structural progress
+    # signal can measure what THIS pass added (Phase 4b).
+    claim_snapshot = {f["id"]: bool((f.get("claim") or "").strip()) for f in facts}
+
     if resolved.native_tool_calling:
         loop_result = await _run_native_tool_loop(
             resolved=resolved,
@@ -2101,6 +2488,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             step_baseline=step_call_baseline,
             fetched_urls=_fetched_urls,
             request_attempts=request_attempts,
+            issued_queries=issued_queries,
         )
     else:
         loop_result = await _run_text_tool_loop(
@@ -2125,6 +2513,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             step_baseline=step_call_baseline,
             fetched_urls=_fetched_urls,
             request_attempts=request_attempts,
+            issued_queries=issued_queries,
         )
 
     total_call_count = loop_result.total_call_count
@@ -2199,6 +2588,19 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     # facts_newly_unknown reflect the true final state.
     _cleanup_empty_claims(facts)
 
+    # --- Structural progress signal (Phase 4b) ---
+    # A pass that ends with zero newly claimed facts is exhausted no matter
+    # what else it did. Graph routers consume this signal (research_progress)
+    # to override retry recommendations — model judgment about whether to
+    # keep researching is not trusted when the data says nothing was gained.
+    new_facts = _count_newly_claimed_facts(claim_snapshot, facts)
+    research_progress = {"new_facts": new_facts, "stalled": new_facts == 0}
+    if research_progress["stalled"]:
+        logger.info(
+            "RESEARCH: pass produced %d new claim(s) — marking progress stalled",
+            new_facts,
+        )
+
     # --- Build detail and emit ---
     # NOTE: tool_results are NOT included here. The run_manager accumulates
     # them from tool_result events with full output. Including them in
@@ -2214,6 +2616,11 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
         "model": last_model_id,
         # Compact attempt counts (full ledger lives in execution_state).
         "request_attempt_counts": {rid: len(v) for rid, v in request_attempts.items()},
+        # Observability for the Phase 4a guardrail.
+        "issued_query_count": len(issued_queries),
+        # Structural progress signal (Phase 4b).
+        "new_facts": new_facts,
+        "stalled": research_progress["stalled"],
     }
     if last_response is not None:
         detail["response"] = last_response.content or ""
@@ -2253,6 +2660,8 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             "tool_call_counts": call_counts,
             "total_tool_cost_consumed": total_tool_cost,
             "request_attempts": request_attempts,
+            "issued_queries": issued_queries,
+            "research_progress": research_progress,
             "research_count": es.get("research_count", 0) + 1,
         },
     }

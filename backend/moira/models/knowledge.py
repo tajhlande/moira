@@ -177,6 +177,18 @@ class ExecutionState(TypedDict):
     # Planning carries it across request regeneration by matching target
     # fact overlap.
     request_attempts: dict[str, list[dict]]
+    # Every web_search query issued this workflow run (original text),
+    # persisted across research invocations. Feeds the mechanical
+    # near-duplicate guardrail in research; run-scoped by design because
+    # identical queries return ~the same results regardless of context
+    # reset. Phase 4a of planning-freedom.
+    issued_queries: list[str]
+    # Structural per-pass progress signal written by the research node:
+    # {"new_facts": int, "stalled": bool}. Recomputed fresh each pass.
+    # The graph routers consume "stalled" to override retry
+    # recommendations — a pass that produced no new factual claims is
+    # exhausted regardless of remaining budget or reviewer opinion.
+    research_progress: dict
     error: str
     research_retry_count: int
     research_count: int

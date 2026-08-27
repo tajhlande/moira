@@ -168,6 +168,33 @@ class TestReportGeneration:
         assert result["knowledge"]["generation_reason"] == "budget_exhausted"
 
     @pytest.mark.asyncio
+    async def test_research_exhausted_when_evaluation_retry_but_stalled(
+        self, config, mock_writer, mock_model
+    ):
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(content=REPORT_RESPONSE)
+
+        from moira.workflow.nodes.report_generation import report_generation
+
+        state = _build_state(config, "Test question")
+        state["knowledge"]["evaluation_history"] = [
+            {
+                "conclusion_results": [],
+                "goal_met": False,
+                "goal_assessment": "Incomplete",
+                "route": "retry",
+            },
+        ]
+        # Retry count and budget would both allow another cycle — the
+        # structural stall gate is what declined it.
+        state["execution_state"]["evaluation_count"] = 0
+        state["execution_state"]["budget_remaining"] = 100.0
+        state["execution_state"]["research_progress"] = {"new_facts": 0, "stalled": True}
+
+        result = await report_generation(state, _make_run_config(config))
+        assert result["knowledge"]["generation_reason"] == "research_exhausted"
+
+    @pytest.mark.asyncio
     async def test_no_evaluation_history_is_budget_exhausted(
         self,
         config,
