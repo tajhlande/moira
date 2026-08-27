@@ -54,6 +54,59 @@ steps too. Exit code is 1 when any step violates or has unparsable detail.
   the retired `verification` node is also registered so historical runs
   sweep as clean as possible.
 
+## Querying the step detail JSON
+
+Read `step_detail.schema.json` for the paths before writing SQL — the schema
+is the source of truth for what keys exist at each level. Structural facts
+that are easy to get wrong:
+
+- `workflow_steps.detail` is a TEXT JSON column; SQLite JSON1 functions
+  (`json_extract`, `json_each`, `->`, `->>`) work on it directly.
+- `workflow_runs.knowledge_snapshot`: `.facts` is an OBJECT keyed by subject
+  whose values are LISTS of fact objects — it needs two nested `json_each`.
+  `.conclusions` is likewise nested.
+- `workflow_runs.report`: JSON with `answer`, `verified_conclusions`,
+  `omitted_conclusions`, `unknown_facts`.
+- Error rows match the `*_error_detail` variants, which lack
+  `structured_output` — queries assuming success shapes return NULL there.
+  NULL usually means wrong node, error-variant row, or wrong path, not
+  missing data.
+- `->` returns JSON, `->>` returns SQL text; use `->>` for values.
+- Quote JSON paths in single quotes and wrap the whole SQL so the shell
+  doesn't expand `$`.
+
+Cookbook (all verified against the live DB):
+
+```sql
+-- Route distribution for a node
+SELECT json_extract(detail, '$.structured_output.route') AS route, COUNT(*)
+FROM workflow_steps WHERE node_name = 'evaluation' GROUP BY 1;
+
+-- Every tool call in a run, with evidence-request attribution
+SELECT json_extract(je.value, '$.tool') AS tool,
+       json_extract(je.value, '$.request_id') AS rid,
+       json_extract(je.value, '$.success') AS ok
+FROM workflow_steps s, json_each(s.detail, '$.tool_results') je
+WHERE s.workflow_run_id = :run AND s.node_name = 'research';
+
+-- Per-request attempt ledger (research detail)
+SELECT je.key, je.value
+FROM workflow_steps s, json_each(s.detail, '$.request_attempt_counts') je
+WHERE s.workflow_run_id = :run AND s.node_name = 'research';
+
+-- Fact statuses across the whole run
+SELECT f.value->>'$.id' AS fact, f.value->>'$.status' AS status
+FROM workflow_runs r,
+     json_each(json_extract(r.knowledge_snapshot, '$.facts')) subj,
+     json_each(subj.value) f
+WHERE r.id = :run;
+
+-- Report size and conclusion counts
+SELECT length(json_extract(report, '$.answer')),
+       json_array_length(json_extract(report, '$.verified_conclusions'))
+FROM workflow_runs WHERE id = :run;
+```
+
 ## Changing node detail shapes
 
 When adding or renaming a key a node writes into `detail`:
