@@ -39,9 +39,6 @@ data/
 # Coverage
 **/.coverage
 
-# Opencode tool state
-.opencode/
-
 # Session files
 session*.md
 

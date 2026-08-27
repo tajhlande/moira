@@ -59,6 +59,7 @@ Plans that have been deferred or superseded. Kept for reference; not actively be
 | **parked/two-pass-discovery.md** | Plan for restructuring tool discovery to run before and after planning so plans are tool-aware. Round 1 achieved via `tool_identification` node (different architecture); Round 2 (plan-driven discovery) not built. Largely superseded. |
 | **parked/tiptap-input.md** | Plan for replacing the plain-text input with TipTap rich-text editor. Not started. |
 | **parked/kagi-web-search-plan.md** | Plan for the Kagi web search tool — first tool to use the credential store, using the Kagi Search API with Bearer auth. Not started. |
+| **parked/brave-web-search-plan.md** | Plan for a Brave Search API tool following the Kagi blueprint — coexists with SearXNG-based `web_search`, uses the `tool.*` credential namespace. Not started. (Migrated from opencode plan-mode scratch.) |
 | **parked/context-management.md** | Plan for adaptive context window management — auto-detect limits, proactive tool output capping, evidence truncation, and progressive message trimming. Not started. |
 | **parked/additional-default-tools.md** | Wishlist of additional default tools (Wikipedia, OpenAlex, FRED, SEC EDGAR, Europe PMC) to reclaim volume from low-quality web search results. |
 
