@@ -95,13 +95,17 @@ def _extract_tool_trace(steps: list[dict]) -> list[dict]:
         if not detail:
             continue
         for tr in detail.get("tool_results", []):
+            # Canonical persisted key is "result" (active_run's tool_result
+            # handler); round-error payloads embed the node's own log, which
+            # uses "output" instead. Same contract as step_detail.schema.json.
+            preview = tr.get("result") or tr.get("output") or ""
             trace.append(
                 {
                     "step_node": step.get("node_name", ""),
                     "step_label": step.get("label", ""),
                     "tool": tr.get("tool", ""),
                     "args": tr.get("args"),
-                    "output_preview": (tr.get("result", "")[:500] if tr.get("result") else ""),
+                    "output_preview": preview[:500],
                     "duration_ms": tr.get("duration_ms", 0),
                     "success": tr.get("success", False),
                 }

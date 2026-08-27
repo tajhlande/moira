@@ -1,0 +1,323 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "moira/workflow-step-detail",
+  "title": "MOiRA workflow step detail",
+  "description": "Documents the JSON written to workflow_steps.detail by every workflow node. One $def per node variant (success and error paths differ). Known keys are enforced when required; additionalProperties stays true so new keys don't break validation — tighten deliberately, not accidentally.",
+  "additionalProperties": true,
+  "$defs": {
+    "nonempty_string": {"type": "string"},
+    "fact_id": {"type": "string", "pattern": "^f\\d+$"},
+    "request_id": {"type": "string", "pattern": "^req\\d+$"},
+    "llm_base": {
+      "type": "object",
+      "description": "Common keys written by every LLM-backed node: the final user prompt, raw model response, and resolved model id. thinking is present only when the model produced thinking content.",
+      "required": ["prompt", "response", "model"],
+      "properties": {
+        "prompt": {"type": "string"},
+        "response": {"type": "string"},
+        "model": {"type": "string"},
+        "thinking": {"type": "string"}
+      }
+    },
+    "tool_result": {
+      "type": "object",
+      "description": "One executed (or synthetically rejected) tool call. The canonical persisted shape uses 'result' (written by active_run's tool_result handler; a truncated preview). The node's internal log uses 'output' instead and appears only in round-error payloads — hence the anyOf. request_id is the echoed evidence-request id — null for model-initiated supplementary calls.",
+      "required": ["tool", "args", "duration_ms", "success"],
+      "anyOf": [{"required": ["result"]}, {"required": ["output"]}],
+      "properties": {
+        "tool": {"type": "string"},
+        "args": {"type": ["object", "null"]},
+        "result": {"type": "string"},
+        "output": {"type": "string"},
+        "duration_ms": {"type": "number"},
+        "success": {"type": "boolean"},
+        "metadata": {"type": ["object", "null"]},
+        "request_id": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/request_id"}]}
+      }
+    },
+    "evidence_request": {
+      "type": "object",
+      "description": "Planning's evidence request as stored in structured_output. id is assigned after parsing (req0001...) and may be absent in the raw parsed form.",
+      "required": ["target_fact_ids", "evidence_needed", "candidate_tools", "fallback"],
+      "properties": {
+        "id": {"$ref": "#/$defs/request_id"},
+        "target_fact_ids": {"type": "array", "items": {"$ref": "#/$defs/fact_id"}},
+        "evidence_needed": {"type": "string"},
+        "candidate_tools": {"type": "array", "items": {"type": "string"}},
+        "fallback": {"type": "boolean"}
+      }
+    },
+    "decomposition_detail": {
+      "allOf": [
+        {"$ref": "#/$defs/llm_base"},
+        {
+          "type": "object",
+          "required": ["structured_output"],
+          "properties": {
+            "structured_output": {
+              "type": "object",
+              "description": "Raw parsed decomposition: user_goal, topic, entities, concepts, unknown_facts[{subject, fact_needed}]. Model output — keys checked loosely."
+            }
+          }
+        }
+      ]
+    },
+    "decomposition_error_detail": {
+      "description": "Same base keys as the success shape, but structured_output is absent (the run errored before structured output was produced). Forbidding it keeps a malformed success payload from validating as this variant.",
+      "allOf": [
+        {"$ref": "#/$defs/llm_base"},
+        {"not": {"required": ["structured_output"]}}
+      ]
+    },
+    "synthesis_detail": {
+      "allOf": [
+        {"$ref": "#/$defs/llm_base"},
+        {
+          "type": "object",
+          "required": ["structured_output"],
+          "properties": {
+            "structured_output": {
+              "type": "object",
+              "required": ["conclusions"],
+              "properties": {
+                "conclusions": {"type": "array", "items": {"type": "object"}}
+              }
+            }
+          }
+        }
+      ]
+    },
+    "synthesis_error_detail": {
+      "description": "Same base keys as the success shape, but structured_output is absent (the run errored before structured output was produced). Forbidding it keeps a malformed success payload from validating as this variant.",
+      "allOf": [
+        {"$ref": "#/$defs/llm_base"},
+        {"not": {"required": ["structured_output"]}}
+      ]
+    },
+    "tool_identification_detail": {
+      "type": "object",
+      "description": "Semantic tool discovery output. No LLM prompt/response — this node runs tool-discovery queries per fact.",
+      "required": ["queries", "candidate_tools", "default_tools_included"],
+      "properties": {
+        "queries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["fact_id", "query", "top_results"],
+            "properties": {
+              "fact_id": {"$ref": "#/$defs/fact_id"},
+              "query": {"type": "string"},
+              "top_results": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        },
+        "candidate_tools": {"type": "array", "items": {"type": "string"}},
+        "default_tools_included": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "planning_detail": {
+      "allOf": [
+        {"$ref": "#/$defs/llm_base"},
+        {
+          "type": "object",
+          "required": ["structured_output"],
+          "properties": {
+            "structured_output": {
+              "type": "object",
+              "description": "Raw parsed planning output; evidence_requests is the field consumed downstream (split/assigned IDs happen after).",
+              "properties": {
+                "evidence_requests": {
+                  "type": "array",
+                  "items": {"$ref": "#/$defs/evidence_request"}
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "planning_error_detail": {
+      "description": "Same base keys as the success shape, but structured_output is absent (the run errored before structured output was produced). Forbidding it keeps a malformed success payload from validating as this variant.",
+      "allOf": [
+        {"$ref": "#/$defs/llm_base"},
+        {"not": {"required": ["structured_output"]}}
+      ]
+    },
+    "research_detail": {
+      "type": "object",
+      "description": "Full research pass (normal completion). facts_resolved lists facts now unverified (claimed); facts_newly_unknown lists facts still unknown. request_attempt_counts is the compact per-request ledger; the full ledger lives in execution_state. tool_results is appended by active_run's tool_result handler, not by the node itself — absent when the pass issued no calls. new_facts/stalled were added with the 4b progress signal; runs predating it lack them.",
+      "required": [
+        "facts_resolved",
+        "facts_newly_unknown",
+        "evidence_requests_size",
+        "executor_available",
+        "rounds",
+        "tool_calling_mode",
+        "prompt",
+        "model",
+        "request_attempt_counts",
+        "issued_query_count",
+        "new_facts",
+        "stalled"
+      ],
+      "properties": {
+        "tool_results": {"type": "array", "items": {"$ref": "#/$defs/tool_result"}},
+        "facts_resolved": {"type": "array", "items": {"$ref": "#/$defs/fact_id"}},
+        "facts_newly_unknown": {"type": "array", "items": {"$ref": "#/$defs/fact_id"}},
+        "evidence_requests_size": {"type": "integer", "minimum": 0},
+        "executor_available": {"type": "boolean"},
+        "rounds": {"type": "integer", "minimum": 0},
+        "tool_calling_mode": {"enum": ["native", "emulated"]},
+        "prompt": {"type": "string"},
+        "response": {"type": "string"},
+        "model": {"type": "string"},
+        "request_attempt_counts": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "issued_query_count": {"type": "integer", "minimum": 0},
+        "new_facts": {"type": "integer", "minimum": 0},
+        "stalled": {"type": "boolean"},
+        "thinking": {"type": "string"}
+      }
+    },
+    "research_exit_detail": {
+      "type": "object",
+      "description": "Research short-circuit (budget exhausted or no executor) before any model call: no prompt/response/model, zero rounds, no tool results.",
+      "required": [
+        "tool_results",
+        "facts_resolved",
+        "facts_newly_unknown",
+        "evidence_requests_size",
+        "executor_available",
+        "rounds"
+      ],
+      "properties": {
+        "tool_results": {"type": "array", "items": {"$ref": "#/$defs/tool_result"}, "maxItems": 0},
+        "facts_resolved": {"type": "array", "items": {"$ref": "#/$defs/fact_id"}},
+        "facts_newly_unknown": {"type": "array", "items": {"$ref": "#/$defs/fact_id"}},
+        "evidence_requests_size": {"type": "integer", "minimum": 0},
+        "executor_available": {"type": "boolean"},
+        "rounds": {"const": 0}
+      }
+    },
+    "research_round_error_detail": {
+      "type": "object",
+      "description": "Run_error raised mid-pass when a model round returns empty content. tool_results here come from the node's own log and use 'output' rather than the canonical 'result' key.",
+      "required": ["tool_results", "prompt", "response", "model", "round"],
+      "properties": {
+        "tool_results": {"type": "array", "items": {"$ref": "#/$defs/tool_result"}},
+        "prompt": {"type": "string"},
+        "response": {"type": "string"},
+        "model": {"type": "string"},
+        "round": {"type": "integer", "minimum": 1},
+        "thinking": {"type": "string"}
+      }
+    },
+    "research_review_detail": {
+      "allOf": [
+        {"$ref": "#/$defs/llm_base"},
+        {
+          "type": "object",
+          "required": ["structured_output"],
+          "properties": {
+            "structured_output": {
+              "type": "object",
+              "required": ["fact_results", "coverage_assessment", "missing_areas", "route"],
+              "properties": {
+                "fact_results": {"type": "array", "items": {"type": "object"}},
+                "coverage_assessment": {"type": "string"},
+                "missing_areas": {"type": "array", "items": {"type": "string"}},
+                "route": {"enum": ["continue", "retry", "decline"]}
+              }
+            }
+          }
+        }
+      ]
+    },
+    "research_review_error_detail": {
+      "description": "Same base keys as the success shape, but structured_output is absent (the run errored before structured output was produced). Forbidding it keeps a malformed success payload from validating as this variant.",
+      "allOf": [
+        {"$ref": "#/$defs/llm_base"},
+        {"not": {"required": ["structured_output"]}}
+      ]
+    },
+    "evaluation_detail": {
+      "allOf": [
+        {"$ref": "#/$defs/llm_base"},
+        {
+          "type": "object",
+          "required": ["structured_output"],
+          "properties": {
+            "structured_output": {
+              "type": "object",
+              "required": ["conclusion_results", "goal_met", "goal_assessment", "route"],
+              "properties": {
+                "conclusion_results": {"type": "array", "items": {"type": "object"}},
+                "goal_met": {"type": "boolean"},
+                "goal_assessment": {"type": "string"},
+                "route": {"enum": ["accept", "retry"]}
+              }
+            }
+          }
+        }
+      ]
+    },
+    "evaluation_error_detail": {
+      "description": "Same base keys as the success shape, but structured_output is absent (the run errored before structured output was produced). Forbidding it keeps a malformed success payload from validating as this variant.",
+      "allOf": [
+        {"$ref": "#/$defs/llm_base"},
+        {"not": {"required": ["structured_output"]}}
+      ]
+    },
+    "verification_detail": {
+      "description": "Legacy node (retired). Looked like evaluation but also returned new_unknown_facts and carried a tool_results log.",
+      "allOf": [
+        {"$ref": "#/$defs/llm_base"},
+        {
+          "type": "object",
+          "required": ["structured_output"],
+          "properties": {
+            "structured_output": {
+              "type": "object",
+              "required": ["fact_results", "conclusion_results", "route"],
+              "properties": {
+                "fact_results": {"type": "array", "items": {"type": "object"}},
+                "conclusion_results": {"type": "array", "items": {"type": "object"}},
+                "new_unknown_facts": {"type": "array"},
+                "goal_met": {"type": "boolean"},
+                "goal_assessment": {"type": "string"},
+                "route": {"type": "string"}
+              }
+            },
+            "tool_results": {"type": "array", "items": {"$ref": "#/$defs/tool_result"}}
+          }
+        }
+      ]
+    },
+    "report_generation_legacy_detail": {
+      "description": "Historical minimal shapes from the June spike era, before the detail dict carried prompt/response: either generation_reason (current key) or generation_path (renamed to generation_reason in workflow_runs). Current code always writes the full shape, which matches the primary def first.",
+      "anyOf": [
+        {"required": ["generation_reason"]},
+        {"required": ["generation_path"]}
+      ],
+      "properties": {
+        "generation_reason": {"type": "string"},
+        "generation_path": {"type": "string"}
+      }
+    },
+    "report_generation_detail": {
+      "type": "object",
+      "description": "Report generation success. thinking is capped at 2000 chars; raw_response (4000-char cap) appears only on the parse-failure error path.",
+      "required": ["prompt", "response", "model", "generation_reason"],
+      "properties": {
+        "prompt": {"type": "string"},
+        "response": {"type": "string"},
+        "model": {"type": "string"},
+        "generation_reason": {"type": "string"},
+        "thinking": {"type": "string"},
+        "raw_response": {"type": "string"}
+      }
+    }
+  }
+}
