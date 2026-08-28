@@ -229,6 +229,16 @@ might succeed where the previous attempt failed. If a fact cannot be
 resolved with the available tools, omit it from the plan rather than
 wasting budget on evidence unlikely to return useful results.
 
+A retry plan is an acquisition plan: its purpose is to retrieve evidence
+that was never retrieved. Every request whose target facts are still
+unknown or unverified MUST list an acquisition tool (web_search,
+url_content, or a specialized fetch/retrieval tool) — either as the first
+candidate or immediately after it. `recall_source` re-reads what was
+already fetched; it may appear in candidate lists but must never be the
+only acquisition path for a still-unresolved fact, and a plan consisting
+solely of `recall_source` requests is invalid — it will produce no new
+evidence and the pass will be judged stalled.
+
 ## planning.system_retry_context
 
 Context from the previous research pass — use this to plan evidence
@@ -337,8 +347,22 @@ Rules:
 
 Search strategy:
 - Use the evidence requests as guidance: each describes the evidence needed for a
-  group of facts and lists candidate tools in priority order. Try the first tool; if
-  it fails or returns nothing, cascade to the next.
+  group of facts and lists candidate tools in priority order, highest to lowest.
+  The order is binding, not a menu of equals: while a higher-priority candidate
+  is available and untried, do not spend searches from a lower-priority one.
+  Work down the list only after the earlier tool fails, is unavailable, or
+  returns nothing relevant for the request.
+  Wrong: a request lists ["nutrition_database", "web_search"] and you issue
+    web searches first, never calling the database even though it is available.
+  Right: call nutrition_database for that request; only if it lacks the data
+    do you fall back to web_search.
+- Search snippets locate evidence; they rarely ARE evidence. After a round of
+  searches, fetch the most promising result pages with url_content — that is
+  where claims come from. A search round that ends without fetching any page
+  has only surveyed where evidence might live; it has not acquired it. Pick
+  pages whose titles/URLs best match unresolved requests (product/pricing
+  pages, forums, official docs, studies) rather than re-searching from a new
+  angle.
 - When an evidence request targets a category (e.g., 'planets with liquid water'),
   first discover specific entities from search results, then create new facts for
   each one using `null` fact_id and provide `fact_needed`: a plain-English
@@ -533,8 +557,22 @@ Rules:
 
 Search strategy:
 - Use the evidence requests as guidance: each describes the evidence needed for a
-  group of facts and lists candidate tools in priority order. Try the first tool; if
-  it fails or returns nothing, cascade to the next.
+  group of facts and lists candidate tools in priority order, highest to lowest.
+  The order is binding, not a menu of equals: while a higher-priority candidate
+  is available and untried, do not spend searches from a lower-priority one.
+  Work down the list only after the earlier tool fails, is unavailable, or
+  returns nothing relevant for the request.
+  Wrong: a request lists ["nutrition_database", "web_search"] and you issue
+    web searches first, never calling the database even though it is available.
+  Right: call nutrition_database for that request; only if it lacks the data
+    do you fall back to web_search.
+- Search snippets locate evidence; they rarely ARE evidence. After a round of
+  searches, fetch the most promising result pages with url_content — that is
+  where claims come from. A search round that ends without fetching any page
+  has only surveyed where evidence might live; it has not acquired it. Pick
+  pages whose titles/URLs best match unresolved requests (product/pricing
+  pages, forums, official docs, studies) rather than re-searching from a new
+  angle.
 - When an evidence request targets a category (e.g., 'planets with liquid water'),
   first discover specific entities from search results, then create new facts for
   each one using `null` fact_id and provide `fact_needed`: a plain-English
