@@ -38,6 +38,11 @@ class Citation(TypedDict):
     # citation). Populated in research; used for cross-referencing in review
     # and evaluation.
     content: NotRequired[str]
+    # Whether a page body was fetched ("page") or the citation only holds
+    # search-result fragments ("snippet"). recall_source refuses snippet-depth
+    # citations — re-serving snippets the model already saw is circular — and
+    # points the model at url_content instead. Missing = legacy citation.
+    depth: NotRequired[str]
 
 
 # Canonical cap for Citation.content. This is the single source of truth —

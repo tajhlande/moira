@@ -115,6 +115,53 @@ class TestBuildRecallSourceResult:
         assert result.success is False
         assert "(none)" in result.output
 
+    def test_snippet_depth_citation_refused_with_url_hint(self):
+        """A snippet-depth citation is refused and pointed at url_content."""
+        from moira.workflow.nodes.research import _build_recall_source_result
+
+        citations: list[Citation] = [
+            Citation(
+                id="cit007",
+                source="web_search",
+                url="https://en.wikipedia.org/wiki/Altazimuth_mount",
+                title="Altazimuth mount",
+                content="Search result snippets block",
+                depth="snippet",
+            ),
+        ]
+        call = self._make_call("cit007")
+
+        result = _build_recall_source_result(call, citations)
+        assert result.success is False
+        assert result.metadata.get("synthetic") is True
+        assert result.metadata.get("refused") is True
+        assert "search-snippet depth" in result.output
+        assert "url_content" in result.output
+        assert "https://en.wikipedia.org/wiki/Altazimuth_mount" in result.output
+        assert "Search result snippets block" not in result.output
+
+    def test_snippet_depth_citation_without_url_notes_missing_url(self):
+        """Snippet-depth refusal still fires when there is no URL to fetch."""
+        from moira.workflow.nodes.research import _build_recall_source_result
+
+        citations: list[Citation] = [
+            Citation(id="cit003", source="web_search", depth="snippet"),
+        ]
+        result = _build_recall_source_result(self._make_call("cit003"), citations)
+        assert result.success is False
+        assert "no URL" in result.output
+
+    def test_legacy_citation_without_depth_still_served(self):
+        """Citations predating the depth marker are served as before."""
+        from moira.workflow.nodes.research import _build_recall_source_result
+
+        citations: list[Citation] = [
+            Citation(id="cit001", source="url_content", content="Old stored body."),
+        ]
+        result = _build_recall_source_result(self._make_call("cit001"), citations)
+        assert result.success is True
+        assert "Old stored body." in result.output
+
 
 class TestExecuteToolsRecallPartition:
     """Tests for _execute_tools — verifies recall_source calls are

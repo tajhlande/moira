@@ -611,6 +611,104 @@ class TestResearchHelpers:
         assert len(citations[0]["snippets"]) == 1
         assert citations[0]["snippets"][0] == "Need cherries sugar brandy cinnamon cloves"
 
+    def test_depth_snippet_when_only_snippet(self):
+        """Search-result citations (snippet, no content) get depth="snippet"."""
+        from moira.workflow.nodes.research import _find_or_merge_citation
+
+        citations: list = []
+        _find_or_merge_citation(
+            citations,
+            {},
+            source="web_search",
+            url="https://x.com",
+            snippet="Search result fragment",
+        )
+        assert citations[0]["depth"] == "snippet"
+
+    def test_depth_page_when_content_present(self):
+        """Fetch-tool citations (content body present) get depth="page"."""
+        from moira.workflow.nodes.research import _find_or_merge_citation
+
+        citations: list = []
+        _find_or_merge_citation(
+            citations,
+            {},
+            source="url_content",
+            url="https://x.com",
+            snippet="teaser",
+            content="Full page body.",
+        )
+        assert citations[0]["depth"] == "page"
+
+    def test_depth_merge_upgrades_snippet_to_page(self):
+        """A later fetch on the same URL upgrades snippet depth to page."""
+        from moira.workflow.nodes.research import _find_or_merge_citation
+
+        citations: list = []
+        seen_urls: dict[str, str] = {}
+        _find_or_merge_citation(
+            citations,
+            seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="Search result fragment",
+        )
+        assert citations[0]["depth"] == "snippet"
+
+        cit_id, is_new = _find_or_merge_citation(
+            citations,
+            seen_urls,
+            source="url_content",
+            url="https://x.com",
+            content="Full page body.",
+        )
+        assert is_new is False
+        assert citations[0]["depth"] == "page"
+
+    def test_depth_merge_snippet_never_downgrades_page(self):
+        """A later snippet arrival on the same URL keeps page depth."""
+        from moira.workflow.nodes.research import _find_or_merge_citation
+
+        citations: list = []
+        seen_urls: dict[str, str] = {}
+        _find_or_merge_citation(
+            citations,
+            seen_urls,
+            source="url_content",
+            url="https://x.com",
+            content="Full page body.",
+        )
+        _find_or_merge_citation(
+            citations,
+            seen_urls,
+            source="web_search",
+            url="https://x.com",
+            snippet="Another search fragment",
+        )
+        assert citations[0]["depth"] == "page"
+
+    def test_model_sources_forced_snippet_depth(self):
+        """Model-declared sources are always snippet depth even though
+        their excerpt rides in as content (excerpt != fetched body)."""
+        from moira.workflow.nodes.research import _apply_sources
+
+        citations: list = []
+        _apply_sources(
+            {
+                "sources": [
+                    {
+                        "source": "Reddit",
+                        "url": "https://reddit.com/r/foo",
+                        "title": "A thread",
+                        "excerpt": "Some excerpt text",
+                    }
+                ]
+            },
+            citations,
+            {},
+        )
+        assert citations[0]["depth"] == "snippet"
+
     def test_dedup_overlap_merges_two_snippets(self):
         """Suffix-prefix overlap → two snippets merged into one."""
         from moira.workflow.nodes.research import _find_or_merge_citation

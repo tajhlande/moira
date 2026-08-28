@@ -636,6 +636,12 @@ def _build_recall_source_result(call: ToolCall, citations: list[Citation]) -> To
     is not found, lists available citation IDs so the model can correct
     itself.
 
+    Snippet-depth citations (search results whose page was never fetched)
+    are refused: re-serving search snippets the model already saw is
+    circular — it cannot contain evidence beyond the feedback the model
+    generated it from. The refusal names url_content on the citation's URL
+    as the way to actually get page-depth content.
+
     Always marked ``metadata["synthetic"] = True`` so
     :func:`_process_execution_results` skips cost charging and citation
     creation — the content comes from an existing citation, not a new fetch.
@@ -644,6 +650,26 @@ def _build_recall_source_result(call: ToolCall, citations: list[Citation]) -> To
 
     for c in citations:
         if c["id"] == citation_id:
+            if c.get("depth") == "snippet":
+                if c.get("url"):
+                    hint = (
+                        f"No page was ever fetched. Use url_content with "
+                        f'url="{c["url"]}" to get the page content.'
+                    )
+                else:
+                    hint = "No page was ever fetched and the citation has no URL."
+                return ToolResult(
+                    tool_name=_RECALL_SOURCE_TOOL_NAME,
+                    output=(
+                        f"Citation '{citation_id}' is search-snippet depth: it holds only "
+                        f"the search-result snippets already shown to you, so recall "
+                        f"cannot add anything. {hint}"
+                    ),
+                    success=False,
+                    duration_ms=0,
+                    metadata={"synthetic": True, "refused": True},
+                )
+
             parts = [f"Source: {citation_id}"]
             if c.get("title"):
                 parts.append(f"Title: {c['title']}")
@@ -1667,6 +1693,7 @@ def _find_or_merge_citation(
     title: str | None = None,
     snippet: str | None = None,
     content: str | None = None,
+    depth: str | None = None,
 ) -> tuple[str, bool]:
     """Find an existing citation by URL, or create a new one.
 
@@ -1685,6 +1712,14 @@ def _find_or_merge_citation(
     search fragments across rounds, whereas ``content`` represents one
     coherent source body for downstream cross-referencing in review and
     evaluation.
+
+    ``depth`` records whether a page body was fetched ("page") or the
+    citation holds only search fragments ("snippet"); defaults to deriving
+    from ``content`` presence. ``depth`` is passed explicitly by model-
+    declared sources, whose ``content`` is an excerpt, not a fetched body.
+    On merge, any arriving ``content`` upgrades a snippet-depth citation to
+    "page" — a fetch happened, so recall should serve it — but a snippet
+    arrival never downgrades a page-depth citation.
 
     Returns ``(citation_id, is_new)``.  ``is_new`` is ``False`` when the
     citation was found and merged — callers can use this to annotate the
@@ -1722,15 +1757,21 @@ def _find_or_merge_citation(
                     if not merged_into:
                         snippets.append(snippet[:_SNIPPET_MAX_LENGTH])
                     c["snippets"] = snippets
-                # Content follows longest-wins (see docstring).
+                # Content follows longest-wins (see docstring). A fetch
+                # upgrades snippet-depth to page — recall_source serves it.
                 if content:
                     if len(content) > len(c.get("content", "")):
                         c["content"] = content
+                    c["depth"] = "page"
                 break
         return cit_id, False
 
     cit_id = next_id("cit", citations)
-    citation: Citation = {"id": cit_id, "source": source}
+    citation: Citation = {
+        "id": cit_id,
+        "source": source,
+        "depth": depth or ("page" if content else "snippet"),
+    }
     if url:
         citation["url"] = url
         seen_urls[url] = cit_id
@@ -1768,6 +1809,9 @@ def _apply_sources(
             title=src.get("title"),
             snippet=src.get("excerpt"),
             content=src.get("excerpt"),
+            # Model-declared content is an excerpt, not a fetched body —
+            # never let it upgrade the citation to page depth.
+            depth="snippet",
         )
 
 
