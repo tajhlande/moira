@@ -19,6 +19,7 @@ Tests:
 - HTTP errors are caught and reported
 """
 
+import itertools
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -433,8 +434,19 @@ def test_cli_all_invokes_all_questions(mock_client):
         assert mock_client.patch.call_count == num_questions
 
 
-def test_cli_timeout_aborts(mock_client):
-    """On timeout, CLI aborts immediately — subsequent questions are NOT invoked."""
+def test_cli_timeout_continues_batch(mock_client, capsys):
+    """A per-question timeout records a failure but the batch continues.
+
+    Continue-on-failure semantics (see main()): a single transient failure
+    must not waste the remaining questions.  Every question is attempted,
+    the summary reports 0/7, and the process exits non-zero.
+    """
+    n = len(QUESTIONS)
+    post_responses = []
+    for i in range(n):
+        post_responses.append(_mock_response(json_data={"id": f"conv-{i}"}))
+        post_responses.append(_mock_response(json_data={"run_id": f"run-{i}"}))
+
     with (
         patch.object(
             sys,
@@ -446,15 +458,18 @@ def test_cli_timeout_aborts(mock_client):
         mock_client_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
         mock_client_cls.return_value.__exit__ = MagicMock(return_value=False)
 
-        # Only set up POST for the first question — second should never be reached
-        mock_client.post.side_effect = [
-            _mock_response(json_data={"id": "conv-0"}),
-            _mock_response(json_data={"run_id": "run-0"}),
-        ]
+        # First question polls 'running' until its timeout expires; the rest
+        # poll to a terminal 'error' immediately so the test stays fast.
+        # Payloads must list the actual run IDs (run-0..run-{n-1}) —
+        # poll_until_done matches on run id.
+        mock_client.post.side_effect = post_responses
         mock_client.patch.return_value = _mock_response(json_data={"id": "x"})
-        # Poll never sees completed status → timeout
-        mock_client.get.return_value = _mock_response(
-            json_data={"runs": [{"id": "run-0", "status": "running"}]}
+        error_runs = _mock_response(
+            json_data={"runs": [{"id": f"run-{i}", "status": "error"} for i in range(n)]}
+        )
+        mock_client.get.side_effect = itertools.chain(
+            [_mock_response(json_data={"runs": [{"id": "run-0", "status": "running"}]})],
+            itertools.repeat(error_runs),
         )
 
         from moira_eval.invoke import main
@@ -463,12 +478,23 @@ def test_cli_timeout_aborts(mock_client):
             main()
         assert exc_info.value.code == 1
 
-        # Only 2 POSTs (create + send for first question), not more
-        assert mock_client.post.call_count == 2
+        # Every question was attempted: create + send for each.
+        assert mock_client.post.call_count == 2 * n
+
+    captured = capsys.readouterr()
+    assert f"Completed: 0/{n}" in captured.err
+    assert "status=timeout" in captured.err
 
 
-def test_cli_run_error_aborts(mock_client):
-    """When a run completes with 'error' status, CLI aborts immediately."""
+def test_cli_run_error_continues_batch(mock_client, capsys):
+    """When a run completes with 'error' status, the batch records the
+    failure and continues — it does not abort."""
+    n = len(QUESTIONS)
+    post_responses = []
+    for i in range(n):
+        post_responses.append(_mock_response(json_data={"id": f"conv-{i}"}))
+        post_responses.append(_mock_response(json_data={"run_id": f"run-{i}"}))
+
     with (
         patch.object(
             sys,
@@ -480,15 +506,13 @@ def test_cli_run_error_aborts(mock_client):
         mock_client_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
         mock_client_cls.return_value.__exit__ = MagicMock(return_value=False)
 
-        # Only first question's POSTs
-        mock_client.post.side_effect = [
-            _mock_response(json_data={"id": "conv-0"}),
-            _mock_response(json_data={"run_id": "run-0"}),
-        ]
+        # Every question's poll returns a terminal error immediately.  The
+        # payload must list the actual run IDs — poll_until_done matches
+        # on run id.
+        mock_client.post.side_effect = post_responses
         mock_client.patch.return_value = _mock_response(json_data={"id": "x"})
-        # Poll sees error status
         mock_client.get.return_value = _mock_response(
-            json_data={"runs": [{"id": "run-0", "status": "error"}]}
+            json_data={"runs": [{"id": f"run-{i}", "status": "error"} for i in range(n)]}
         )
 
         from moira_eval.invoke import main
@@ -497,8 +521,12 @@ def test_cli_run_error_aborts(mock_client):
             main()
         assert exc_info.value.code == 1
 
-        # Only 2 POSTs — second question never started
-        assert mock_client.post.call_count == 2
+        # All questions attempted, none aborted the batch.
+        assert mock_client.post.call_count == 2 * n
+
+    captured = capsys.readouterr()
+    assert f"Completed: 0/{n}" in captured.err
+    assert "status=error" in captured.err
 
 
 def test_cli_http_error_aborts(mock_client):
