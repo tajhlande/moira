@@ -16,7 +16,7 @@ adopt / iterate / rollback decision.
 | 3.1   | Store visibility + recall discipline: citation depth/linked-facts table, within-batch recall dedup | Code complete — runtime verification pending next retry-prone run | Planner sees store depth; no same-batch duplicate recalls |
 | 3.3   | Context budget management: per-result feedback cap, citation limit retune, URL-field pruning | Complete (`cb87020`, `4bd76a0`; recall step-limit 4/pass verified live on run `3322e4c7`) ; 3.3.3 rolling compression deferred | No research-loop context overflow on wide fan-out or recall-heavy rounds |
 | 4     | Query discipline: IDF-weighted duplicate interception (run-scoped, hard-reject), coverage-driven rounds, fact-append dedup | 4a implemented + calibrated + **runtime confirmed** (run `9d8d6dc2`); 4b shipped as structural progress gate (revised design); 4c fact-dedup calibrated on snapshots | Duplicate queries intercepted mechanically; threshold measured from historical pairs; stalled research forced to evaluation; duplicate shell facts blocked at append |
-| 5     | Measurement: planner/researcher dimension metrics in eval harness        | Not started                     | Eval batch emits both dimensions            |
+| 5     | Measurement: planner/researcher dimension metrics in eval harness        | Code complete (`capture.py` + `metrics.py`, 28 unit tests; live values on run `2276d7c9`) | Eval batch emits both dimensions            |
 | 6     | Decision: multi-batch eval vs main 08-18 baseline                        | Not started                     | Adopt / iterate / rollback (criteria below) |
 
 ## Motivation
@@ -765,12 +765,40 @@ progress gate verified by router tests pending next live stall.
 
 ### Phase 5: Measurement
 
-Wire the planner and researcher dimensions into the eval harness batch output
-(computed from `workflow_steps.detail` + knowledge snapshots): coverage,
-granularity distribution, resolution rate, duplication count, cascade
-attempts, verified facts per web_search.
+**Status: code complete** — both dimensions computed per question and
+written into `moira_eval/results/<sha>/<question>.json` via
+`compute_metrics` (additive keys per the result stability rule).
 
-**Verification:** an eval batch emits both dimensions per question.
+**Planner dimension** (from `planning` steps' `structured_output.evidence_requests`,
+captured by `_extract_planning_attempts`): `evidence_request_count`,
+`avg_facts_per_request`, `max_facts_per_request`, `multi_fact_request_count`,
+`distinct_targeted_fact_count`, `domain_first_request_share` (share of
+requests whose first candidate is a non-generic tool — the preference-quality
+heuristic), `unknown_facts_total` / `unknown_facts_targeted` /
+`unknown_facts_never_targeted` (coverage measured against the run's final
+unknown set — never-targeted unknowns are planner misses).
+
+**Researcher dimension** (from tool trace + planning attempts + research
+pass signals): `verified_facts_per_search` (denominator = EXECUTED
+web_search calls only; duplicate-intercepted calls did no retrieval work),
+`executed_web_search_calls`, `duplicate_queries_intercepted` (synthetic
+rejection results, matched by output prefix — `active_run` does not persist
+the metadata dict on tool entries), `targeted_fact_resolution_rate`
+(verified ∩ targeted / targeted — untargeted unknowns stay on the planner
+side), `stalled_research_pass_count` (Phase 4b progress-gate firings;
+pre-4b runs record `None`, counted as not stalled).
+
+Capture additions (`moira_eval/capture.py`): `planning_attempts`,
+`research_passes`.
+
+**Verification:** 28 metric unit tests (fixture-based, incl. executed-only
+denominator, targeted-vs-untagged resolution split, legacy-run tolerance);
+live end-to-end on run `2276d7c9` emits plausible values (13 requests, avg
+1.0 facts/request, 0 multi-fact — the bundling guard holds; all 3 final
+unknowns were targeted; 1 stalled pass). Batch/diff consume the new keys
+without schema changes. Two pre-existing failures in
+`test_evaluation_invoke.py` (CLI POST-count assertions) fail on the clean
+tree too — unrelated to this change.
 
 ### Phase 6: Decision gate
 

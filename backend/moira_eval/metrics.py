@@ -142,6 +142,111 @@ def _retry_metrics(artifacts: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Planner / researcher dimensions (Phase 5)
+# ---------------------------------------------------------------------------
+
+# Marker prefix of the synthetic tool result emitted when the Phase 4a query
+# dedup guard intercepts a near-duplicate web_search call.  Rejected calls
+# still appear in the tool trace (tool=web_search, success=False).
+_DUPE_REJECT_PREFIX = "Query rejected as a duplicate"
+
+
+def _targeted_fact_ids(planning_attempts: list[dict[str, Any]]) -> set[str]:
+    """Union of fact IDs referenced by any evidence request across all
+    planning passes."""
+    targeted: set[str] = set()
+    for attempt in planning_attempts:
+        for request in attempt.get("evidence_requests", []):
+            targeted.update(fid for fid in request.get("target_fact_ids", []) if fid)
+    return targeted
+
+
+def _planner_metrics(
+    planning_attempts: list[dict[str, Any]], knowledge: dict | None
+) -> dict[str, Any]:
+    """Planner-dimension metrics: did planning produce good evidence requests?
+
+    Coverage (every unknown fact targeted by >=1 request), granularity
+    (facts-per-request distribution; the Phase 2 guard splits bundles so
+    >1 should be rare), and preference quality (heuristic: a domain tool
+    listed before web_search signals a real source hypothesis rather than
+    defaulting to search).
+    """
+    requests = [
+        request
+        for attempt in planning_attempts
+        for request in attempt.get("evidence_requests", [])
+    ]
+    fact_counts = [len(r.get("target_fact_ids", [])) for r in requests]
+    targeted = _targeted_fact_ids(planning_attempts)
+
+    unknown_ids = set()
+    if knowledge:
+        unknown_ids = {f["id"] for f in knowledge.get("facts", []) if f.get("status") == "unknown"}
+
+    domain_first = sum(
+        1
+        for r in requests
+        if (r.get("candidate_tools") or [None])[0] not in _GENERIC_TOOLS
+        and (r.get("candidate_tools") or [None])[0] is not None
+    )
+
+    return {
+        "evidence_request_count": len(requests),
+        "avg_facts_per_request": round(_safe_div(sum(fact_counts), len(fact_counts)), 3),
+        "max_facts_per_request": max(fact_counts, default=0),
+        "multi_fact_request_count": sum(1 for n in fact_counts if n > 1),
+        "distinct_targeted_fact_count": len(targeted),
+        "domain_first_request_share": round(_safe_div(domain_first, len(requests)), 4),
+        "unknown_facts_total": len(unknown_ids),
+        "unknown_facts_targeted": len(unknown_ids & targeted),
+        "unknown_facts_never_targeted": len(unknown_ids - targeted),
+    }
+
+
+def _researcher_metrics(artifacts: dict[str, Any], knowledge: dict | None) -> dict[str, Any]:
+    """Researcher-dimension metrics: did research execute the requests well?
+
+    Resolution rate is over *targeted* facts (planner reachability), not all
+    facts — untargeted unknowns are planner misses, counted on the planner
+    dimension.  ``verified_facts_per_search`` divides by EXECUTED web_search
+    calls only: duplicate-intercepted calls did no retrieval work, so
+    counting them would understate efficiency.
+    """
+    tool_trace = artifacts.get("tool_trace", [])
+    executed_searches = sum(
+        1 for t in tool_trace if t.get("tool") == "web_search" and t.get("success")
+    )
+    rejected_dupes = sum(
+        1
+        for t in tool_trace
+        if t.get("tool") == "web_search"
+        and not t.get("success")
+        and (t.get("output_preview") or "").startswith(_DUPE_REJECT_PREFIX)
+    )
+
+    verified_ids = set()
+    if knowledge:
+        verified_ids = {
+            f["id"] for f in knowledge.get("facts", []) if f.get("status") == "verified"
+        }
+    targeted = _targeted_fact_ids(artifacts.get("planning_attempts", []))
+
+    research_passes = artifacts.get("research_passes", [])
+    stalled = [p for p in research_passes if p.get("stalled") is True]
+
+    return {
+        "verified_facts_per_search": round(_safe_div(len(verified_ids), executed_searches), 4),
+        "executed_web_search_calls": executed_searches,
+        "duplicate_queries_intercepted": rejected_dupes,
+        "targeted_fact_resolution_rate": round(
+            _safe_div(len(verified_ids & targeted), len(targeted)), 4
+        ),
+        "stalled_research_pass_count": len(stalled),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -181,4 +286,6 @@ def compute_metrics(artifacts: dict) -> dict:
     )
     metrics.update(_budget_metrics(artifacts))
     metrics.update(_retry_metrics(artifacts))
+    metrics.update(_planner_metrics(artifacts.get("planning_attempts", []), knowledge))
+    metrics.update(_researcher_metrics(artifacts, knowledge))
     return metrics

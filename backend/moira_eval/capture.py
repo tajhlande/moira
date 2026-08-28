@@ -176,6 +176,51 @@ def _extract_evaluation_attempts(steps: list[dict]) -> list[dict[str, Any]]:
     return attempts
 
 
+def _extract_planning_attempts(steps: list[dict]) -> list[dict[str, Any]]:
+    """Extract all ``planning`` attempts from step details.
+
+    Each attempt is the ``structured_output`` from a ``planning`` step, whose
+    ``evidence_requests`` list feeds the planner-dimension metrics (coverage,
+    granularity, tool preference).  Multiple attempts occur when review
+    routes to ``retry`` (planning re-runs for the remaining unknowns).
+    """
+    attempts: list[dict[str, Any]] = []
+    for step in steps:
+        if step.get("node_name") != "planning":
+            continue
+        detail = _parse_detail(step)
+        if not detail:
+            continue
+        structured = detail.get("structured_output")
+        if not structured:
+            continue
+        attempts.append(structured)
+    return attempts
+
+
+def _extract_research_passes(steps: list[dict]) -> list[dict[str, Any]]:
+    """Extract per-pass research outcome signals from step details.
+
+    ``stalled``/``new_facts`` (the Phase 4b progress signal) only exist on
+    runs from after that change — older steps yield ``None`` fields, which
+    metrics treat as "not recorded" rather than False.
+    """
+    passes: list[dict[str, Any]] = []
+    for step in steps:
+        if step.get("node_name") != "research":
+            continue
+        detail = _parse_detail(step) or {}
+        passes.append(
+            {
+                "stalled": detail.get("stalled"),
+                "new_facts": detail.get("new_facts"),
+                "rounds": detail.get("rounds"),
+                "tool_calling_mode": detail.get("tool_calling_mode"),
+            }
+        )
+    return passes
+
+
 # ---------------------------------------------------------------------------
 # Knowledge snapshot + report
 # ---------------------------------------------------------------------------
@@ -322,7 +367,8 @@ def capture_artifacts(db_path: str, run_id: str | None = None) -> dict:
     Returns:
         Dict with keys: ``run_id``, ``conversation_id``, ``status``,
         ``knowledge``, ``report``, ``critiques``, ``review_attempts``,
-        ``evaluation_attempts``, ``tool_trace``, ``tools_used``,
+        ``evaluation_attempts``, ``planning_attempts``, ``research_passes``,
+        ``tool_trace``, ``tools_used``,
         ``web_search_calls``, ``url_content_calls``, ``total_tool_calls``,
         ``budget_limit``, ``budget_consumed``, ``steps_summary``.
         Returns ``{"error": ...}`` if the run is not found.
@@ -370,6 +416,8 @@ def capture_artifacts(db_path: str, run_id: str | None = None) -> dict:
             "knowledge": knowledge,
             "review_attempts": _extract_review_attempts(steps),
             "evaluation_attempts": _extract_evaluation_attempts(steps),
+            "planning_attempts": _extract_planning_attempts(steps),
+            "research_passes": _extract_research_passes(steps),
             "report": report,
             "critiques": _extract_critiques(report),
             "steps_summary": [
