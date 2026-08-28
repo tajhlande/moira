@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -10,6 +11,16 @@ from moira.inference.defaults import DEFAULT_TEMPERATURE
 from moira.tools.base import ToolCall, ToolDefinition
 
 logger = logging.getLogger(__name__)
+
+# llama-swap occasionally flaps transient gateway errors (502/503/504) mid-batch
+# — the upstream model server is momentarily unavailable. These are worth a
+# short retry: a failed request otherwise kills the whole workflow run, while
+# resuming the run and re-executing the step (what the user does manually)
+# succeeds. Two retries with a short linear backoff covers observed flaps
+# without materially delaying a genuinely down backend.
+_TRANSIENT_STATUS_CODES = frozenset({502, 503, 504})
+_TRANSIENT_MAX_RETRIES = 2
+_TRANSIENT_BACKOFF_S = 3.0
 
 
 @dataclass
@@ -105,6 +116,10 @@ class InferenceClient:
         When ``tools`` is provided and the client has a tool-calling adapter,
         the tool definitions are formatted and sent with the request. The
         response is parsed for tool calls via the adapter.
+
+        Transient gateway errors (502/503/504) are retried up to
+        ``_TRANSIENT_MAX_RETRIES`` times with a short linear backoff before
+        surfacing the HTTPStatusError to the caller.
         """
         assert self._client is not None, "Client not started"
         logger.info("Chat completion request: model=%s, messages=%d", model, len(messages))
@@ -125,7 +140,22 @@ class InferenceClient:
             payload["tools"] = self._adapter.format_tools(tools)
             payload["tool_choice"] = tool_choice
 
-        resp = await self._client.post("/chat/completions", json=payload)
+        for attempt in range(_TRANSIENT_MAX_RETRIES + 1):
+            resp = await self._client.post("/chat/completions", json=payload)
+            if resp.is_success or resp.status_code not in _TRANSIENT_STATUS_CODES:
+                break
+            if attempt < _TRANSIENT_MAX_RETRIES:
+                delay = _TRANSIENT_BACKOFF_S * (attempt + 1)
+                logger.warning(
+                    "Transient upstream error (HTTP %d) on chat completion for model=%s, "
+                    "retrying in %.0fs (attempt %d/%d)",
+                    resp.status_code,
+                    model,
+                    delay,
+                    attempt + 1,
+                    _TRANSIENT_MAX_RETRIES,
+                )
+                await asyncio.sleep(delay)
         if not resp.is_success:
             body = resp.text[:2000]
             logger.error(
