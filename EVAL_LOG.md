@@ -161,16 +161,26 @@ Evals above this point have a bug:
 
 | Question                   | Rubric  | Score | web_search | Status |
 |----------------------------|---------|-------|------------|--------|
-| flaming-hot-cheetos        | general | 21/25 | 10         | PASS   |
-| future-nostalgia           | general | 17/25 | 10         | FAIL   |
-| jazz-trumpeters            | general | 18/25 | 10         | PASS   |
-| telescope-mount-cost       | general | 17/25 | 10         | PASS   |
-| trade-policy-manufacturing | general | 19/25 | 0          | FAIL   |
-| tyranitar-ou               | pokemon | 15/16 | 10         | PASS   |
-| water-blood-pressure       | general | 18/25 | 10         | FAIL   |
+| flaming-hot-cheetos        | general | 20/25 | 10         | PASS   |
+| future-nostalgia           | general | 15/25 | 10         | FAIL   |
+| jazz-trumpeters            | general | 19/25 | 10         | PASS   |
+| telescope-mount-cost       | general | 18/25 | 10         | PASS   |
+| trade-policy-manufacturing | general | 20/25 | 10         | PASS   |
+| tyranitar-ou               | pokemon | 14/16 | 10         | PASS   |
+| water-blood-pressure       | general | 17/25 | 10         | PASS   |
 
 - Agent model: z-ai/glm-5.2
 - Note: Evaluating phase 2.1 of planning-freedom branch
+- Note (2026-08-29): batch re-judged after the eval-harness hollow-capture fix.
+  The original entry scored trade-policy-manufacturing on a checkpoint-resumed
+  run whose capture contained only its tail steps (web_search=0, 19/25 FAIL);
+  capture now coalesces all attempts sharing the run's user_message_id, so the
+  corrected row reflects the full pipeline (10 searches, 24 tools). All seven
+  rows above were re-judged in one pass (judge model unchanged:
+  z-ai/glm-5.2) so the batch is internally consistent; the judge payload
+  includes the phase 5 planner/researcher context, so scores are not
+  judge-identical to the original scoring. Original judging context is
+  preserved in results/1e5ebc7e/meta.original.json.
 
 ## 2026-08-29 batch (commit 95d4b693, planning-freedom)
 

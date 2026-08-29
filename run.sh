@@ -112,7 +112,18 @@ cmd_prod() {
 }
 
 cmd_eval() {
-    uv run --project "$REPO_ROOT/backend" --env-file "$REPO_ROOT/.env-eval" python -m moira_eval.run "${@:2}"
+    # Default the DB path unless the caller supplied one, so flags like
+    # --commit-sha work without repeating --db on every invocation.
+    local args=(--db "$DATA_DIR/moira.db")
+    local arg
+    for arg in "${@:2}"; do
+        if [ "$arg" = "--db" ]; then
+            args=()
+            break
+        fi
+    done
+    uv run --project "$REPO_ROOT/backend" --env-file "$REPO_ROOT/.env-eval" \
+        python -m moira_eval.run "${args[@]}" "${@:2}"
 }
 
 cmd_eval_score() {
@@ -129,9 +140,17 @@ cmd_eval_score() {
         echo "  question-id  Benchmark question ID (e.g., tyranitar-ou)"
         echo "               If omitted, uses the general rubric (ad hoc mode)."
         echo ""
+        echo "Flags (passed through to moira_eval.run):"
+        echo "  --commit-sha <sha>  Label/save the result under this batch's"
+        echo "                      results directory (moira_eval/results/<sha>/)"
+        echo "                      instead of the current git HEAD. Use when"
+        echo "                      re-judging an older batch's runs."
+        echo ""
         echo "Examples:"
         echo "  ./run.sh eval:score 92d83d1a-... tyranitar-ou"
         echo "  ./run.sh eval:score --run-id 92d83d1a-... --question-id tyranitar-ou"
+        echo "  ./run.sh eval:score --run-id 92d83d1a-... --question-id tyranitar-ou \\"
+        echo "      --commit-sha 1e5ebc7e"
         exit 1
     fi
 
