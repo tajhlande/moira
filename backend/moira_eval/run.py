@@ -173,6 +173,17 @@ def main() -> None:
             "and uses the general rubric (ad hoc mode)."
         ),
     )
+    parser.add_argument(
+        "--commit-sha",
+        default=None,
+        help=(
+            "Commit SHA the result is labeled and saved under "
+            "(moira_eval/results/<sha>/). Defaults to the current git HEAD. "
+            "Use when re-judging an older batch's runs: the sha identifies "
+            "the agent code that produced the RUNS (the batch), while the "
+            "judge and capture code are always the current checkout."
+        ),
+    )
     args = parser.parse_args()
 
     db_path = args.db
@@ -214,6 +225,7 @@ def main() -> None:
                 question_text=question_text,
                 artifacts=artifacts,
                 metrics=metrics,
+                commit_sha=args.commit_sha,
                 judge_result=judge_result,
                 rubric=rubric,
             )
