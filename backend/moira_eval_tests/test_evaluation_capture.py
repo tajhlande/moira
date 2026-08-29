@@ -162,6 +162,7 @@ def _insert_run(
     total_cost: float = 30.0,
     budget_limit: float = 60.0,
     status: str = "completed",
+    user_message_id: int = 1,
 ) -> None:
     """Insert a workflow run row."""
     conn.execute(
@@ -180,7 +181,7 @@ def _insert_run(
         (
             run_id,
             "conv-1",
-            1,
+            user_message_id,
             status,
             budget_limit,
             total_cost,
@@ -329,6 +330,7 @@ class TestCaptureArtifacts:
     def test_extracts_run_metadata(self, db_with_run):
         artifacts = capture_artifacts(db_with_run, run_id="run-1")
         assert artifacts["run_id"] == "run-1"
+        assert artifacts["attempt_ids"] == ["run-1"]
         assert artifacts["status"] == "completed"
         assert artifacts["budget_limit"] == 60.0
         assert artifacts["budget_consumed"] == 30.0
@@ -474,6 +476,159 @@ class TestCaptureArtifacts:
         assert len(knowledge["facts"]) == 2
         assert isinstance(knowledge["conclusions"], list)
         assert len(knowledge["conclusions"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Attempt-group coalescing
+# ---------------------------------------------------------------------------
+
+
+def _insert_message(conn: sqlite3.Connection) -> int:
+    """Insert a user message row into the fixture conversation; return its id."""
+    cur = conn.execute(
+        "INSERT INTO messages (conversation_id, role, content) VALUES ('conv-1', 'user', 'test')"
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def _insert_attempt_run(
+    conn: sqlite3.Connection,
+    run_id: str,
+    user_message_id: int,
+    status: str = "completed",
+    knowledge_snapshot: str | None = None,
+    report: dict | None = None,
+) -> None:
+    """Insert a run row for an existing fixture conversation (no side tables)."""
+    conn.execute(
+        "INSERT INTO workflow_runs "
+        "(id, conversation_id, user_message_id, status, budget_limit, "
+        "total_cost, knowledge_snapshot, report) "
+        "VALUES (?, 'conv-1', ?, ?, 60.0, 0.0, ?, ?)",
+        (
+            run_id,
+            user_message_id,
+            status,
+            knowledge_snapshot,
+            json.dumps(report) if report else None,
+        ),
+    )
+    conn.commit()
+
+
+class TestAttemptGroupCoalescing:
+    """Steps must be coalesced across resume attempts sharing user_message_id.
+
+    A resume creates a new workflow_runs row holding only the tail nodes;
+    the research steps live under the earlier (often errored) attempt's id.
+    ``capture_artifacts`` must stitch the attempt group together the same way
+    the conversation UI does, or metrics silently report zero tool calls for
+    resumed runs (the phantom-fail bug that produced a hollow judged row).
+    """
+
+    def _seed(self, tmp_path) -> str:
+        db_path = str(tmp_path / "group.db")
+        conn = sqlite3.connect(db_path)
+        _create_schema(conn)
+        conn.execute("INSERT INTO conversations (id, user_id) VALUES ('conv-1', 'default')")
+        conn.commit()
+        conn.close()
+        return db_path
+
+    def test_thin_resumed_run_coalesces_research_steps(self, tmp_path):
+        db_path = self._seed(tmp_path)
+        conn = sqlite3.connect(db_path)
+        umid = _insert_message(conn)
+        # First attempt: errored at evaluation, but research already ran.
+        _insert_attempt_run(conn, "run-err", umid, status="error")
+        _insert_step(
+            conn,
+            "run-err",
+            "research",
+            detail=_make_research_step_detail("web_search"),
+            tool_call_count=1,
+        )
+        _insert_step(
+            conn,
+            "run-err",
+            "research",
+            detail=_make_research_step_detail("web_search"),
+            tool_call_count=1,
+        )
+        # Resume: new completed run with only the tail node + the report.
+        _insert_attempt_run(
+            conn,
+            "run-resume",
+            umid,
+            knowledge_snapshot=_make_knowledge_snapshot(),
+            report={"answer": "Resumed answer"},
+        )
+        _insert_step(conn, "run-resume", "evaluation", detail=_make_evaluation_detail())
+        conn.close()
+
+        artifacts = capture_artifacts(db_path, run_id="run-resume")
+        assert artifacts["run_id"] == "run-resume"
+        assert artifacts["attempt_ids"] == ["run-err", "run-resume"]
+        assert artifacts["web_search_calls"] == 2
+        assert artifacts["total_tool_calls"] == 2
+        nodes = [s["node_name"] for s in artifacts["steps_summary"]]
+        assert nodes == ["research", "research", "evaluation"]
+        assert artifacts["report"]["answer"] == "Resumed answer"
+
+    def test_knowledge_fallback_from_earlier_attempt(self, tmp_path):
+        """Latest attempt carries no snapshot; an earlier attempt has one."""
+        db_path = self._seed(tmp_path)
+        conn = sqlite3.connect(db_path)
+        umid = _insert_message(conn)
+        _insert_attempt_run(
+            conn,
+            "run-err",
+            umid,
+            status="error",
+            knowledge_snapshot=_make_knowledge_snapshot(),
+        )
+        _insert_step(conn, "run-err", "research", detail=_make_research_step_detail())
+        _insert_attempt_run(
+            conn, "run-resume", umid, knowledge_snapshot=None, report={"answer": "x"}
+        )
+        _insert_step(conn, "run-resume", "evaluation")
+        conn.close()
+
+        artifacts = capture_artifacts(db_path, run_id="run-resume")
+        assert artifacts["knowledge"] is not None
+        assert artifacts["knowledge"]["question"] == "Test question"
+
+    def test_report_fallback_from_sibling_attempt(self, tmp_path):
+        """Selected run has the research but no report; sibling has it."""
+        db_path = self._seed(tmp_path)
+        conn = sqlite3.connect(db_path)
+        umid = _insert_message(conn)
+        _insert_attempt_run(conn, "run-orig", umid, report=None)
+        _insert_step(conn, "run-orig", "research", detail=_make_research_step_detail())
+        _insert_attempt_run(conn, "run-resume", umid, report={"answer": "Sibling answer"})
+        _insert_step(conn, "run-resume", "evaluation")
+        conn.close()
+
+        artifacts = capture_artifacts(db_path, run_id="run-orig")
+        assert artifacts["report"]["answer"] == "Sibling answer"
+        assert artifacts["web_search_calls"] == 1
+
+    def test_no_cross_message_grouping(self, tmp_path):
+        """Runs answering different user messages must not merge."""
+        db_path = self._seed(tmp_path)
+        conn = sqlite3.connect(db_path)
+        umid_a = _insert_message(conn)
+        umid_b = _insert_message(conn)
+        _insert_attempt_run(conn, "run-a", umid_a)
+        _insert_step(conn, "run-a", "evaluation")
+        _insert_attempt_run(conn, "run-b", umid_b)
+        _insert_step(conn, "run-b", "research", detail=_make_research_step_detail())
+        conn.close()
+
+        artifacts = capture_artifacts(db_path, run_id="run-a")
+        assert artifacts["attempt_ids"] == ["run-a"]
+        assert artifacts["total_tool_calls"] == 0
 
 
 def test_tool_catalog_extraction(tmp_path):

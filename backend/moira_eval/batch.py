@@ -55,10 +55,17 @@ def find_run_for_question(db_path: str, question_text: str) -> str | None:
 
     The previous step-count-first ordering caused the eval to score older
     runs (with more retries = more steps) instead of the freshly invoked
-    runs from ``eval:invoke``. The resume case (failed run resumed via
-    "Retry" creates a thin new run) is handled because the original
-    failed run has ``status='error'`` and is filtered out by the
-    ``WHERE status='completed'`` clause.
+    runs from ``eval:invoke``.
+
+    Note on resumes: a resumed run is itself ``status='completed'``, so it
+    CAN be selected — and it is a thin row whose own step list contains only
+    the tail nodes (e.g. evaluation + report). That is correct here: the
+    selection just picks the logical id, and ``capture_artifacts`` coalesces
+    steps across all attempts sharing the run's ``user_message_id`` (same
+    stitching as the conversation UI), so metrics reflect the full pipeline
+    execution. Policy note: resumed runs are interactive-recovery artifacts,
+    not valid batch samples — for evaluation, rerun the question from
+    scratch in a fresh batch instead of resuming a failed run.
     """
     conn = sqlite3.connect(db_path)
     try:

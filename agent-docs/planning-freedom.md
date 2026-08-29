@@ -805,10 +805,17 @@ tree too — unrelated to this change.
 Run ≥2 Q5 batches after Phases 2–4 (same commit), compare against main's
 08-18 Q5 baseline.
 
-**Prerequisite:** fix the eval-harness stale-checkpoint defect first — two
+**Prerequisite (done):** eval-harness stale-checkpoint defect fixed — two
 prior batches re-judged a checkpoint-resumed trade-policy run (`f20c5c4b`,
-evaluation + report steps only, zero research) instead of executing a
-fresh run. Left unfixed, it silently poisons batch-level comparisons.
+evaluation + report steps only, zero research) instead of executing a fresh
+run. Root cause: a resume creates a *new* completed run whose own step list
+holds only the tail nodes; capture fetched steps from that one run id. Fix:
+`capture_artifacts` now coalesces steps (and falls back for report and
+knowledge) across all attempts sharing the run's `user_message_id` — the
+same stitching the conversation UI applies — and records `attempt_ids` in
+the result. Selection in `find_run_for_question` is unchanged; policy is
+that resumed runs are interactive recovery, not batch samples (rerun the
+question instead).
 
 - **Adopt** if: PASS ≥ 5/7 in at least one batch with no batch below 4/7;
   resolution rate and facts-per-search ≥ baseline; unsupported = 0;

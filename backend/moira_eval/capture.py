@@ -40,11 +40,39 @@ def _get_run(conn: sqlite3.Connection, run_id: str | None) -> dict | None:
     return dict(row) if row else None
 
 
-def _get_steps(conn: sqlite3.Connection, run_id: str) -> list[dict]:
-    """Fetch all workflow steps for a run, ordered by insertion (id)."""
+def _get_attempt_group(conn: sqlite3.Connection, run: dict) -> list[dict]:
+    """Fetch every workflow_runs row sharing the run's ``user_message_id``.
+
+    A resume (UI "Retry" or checkpoint resume) creates a NEW workflow_runs
+    row for the remaining nodes; the earlier attempt keeps the steps that
+    already executed (e.g. all of research). The run group is therefore the
+    unit that describes one logical pipeline execution — the same coalescing
+    the API applies for the conversation UI (see
+    ``api/routes/conversations.py::`` ``_coalesced_run_snapshot``).
+
+    Errored siblings are included on purpose: their steps carry real work
+    (research, tool calls) that the completed attempt's own step list lacks.
+    Ordered by ``(started_at, id)`` so attempt chronology is preserved.
+    """
     rows = conn.execute(
-        "SELECT * FROM workflow_steps WHERE workflow_run_id = ? ORDER BY id",
-        (run_id,),
+        "SELECT * FROM workflow_runs WHERE user_message_id = ? ORDER BY started_at, id",
+        (run.get("user_message_id"),),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _get_steps_for_runs(conn: sqlite3.Connection, run_ids: list[str]) -> list[dict]:
+    """Fetch all workflow steps for several runs, ordered by step id.
+
+    Step ids are a global autoincrement, so ordering by id yields exact
+    chronology across attempts (later attempts were inserted later).
+    """
+    if not run_ids:
+        return []
+    placeholders = ",".join("?" * len(run_ids))
+    rows = conn.execute(
+        f"SELECT * FROM workflow_steps WHERE workflow_run_id IN ({placeholders}) ORDER BY id",
+        run_ids,
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -365,13 +393,21 @@ def capture_artifacts(db_path: str, run_id: str | None = None) -> dict:
             completed run.
 
     Returns:
-        Dict with keys: ``run_id``, ``conversation_id``, ``status``,
-        ``knowledge``, ``report``, ``critiques``, ``review_attempts``,
-        ``evaluation_attempts``, ``planning_attempts``, ``research_passes``,
-        ``tool_trace``, ``tools_used``,
+        Dict with keys: ``run_id``, ``attempt_ids``, ``conversation_id``,
+        ``status``, ``knowledge``, ``report``, ``critiques``,
+        ``review_attempts``, ``evaluation_attempts``, ``planning_attempts``,
+        ``research_passes``, ``tool_trace``, ``tools_used``,
         ``web_search_calls``, ``url_content_calls``, ``total_tool_calls``,
         ``budget_limit``, ``budget_consumed``, ``steps_summary``.
         Returns ``{"error": ...}`` if the run is not found.
+
+    Resume semantics: a resumed run only contains the steps that executed
+    after the resume. Steps (and thus tool traces) are coalesced across all
+    attempts sharing the run's ``user_message_id`` — the same stitching the
+    conversation UI applies — so metrics reflect the logical pipeline
+    execution rather than the thin tail of the latest attempt. ``run_id`` is
+    the selected (latest) attempt; ``attempt_ids`` lists every contributing
+    run in chronological order.
     """
     conn = _get_connection(db_path)
     try:
@@ -380,7 +416,8 @@ def capture_artifacts(db_path: str, run_id: str | None = None) -> dict:
             return {"error": f"No run found for id={run_id}"}
 
         actual_run_id = run["id"]
-        steps = _get_steps(conn, actual_run_id)
+        group = _get_attempt_group(conn, run)
+        steps = _get_steps_for_runs(conn, [r["id"] for r in group])
 
         tool_trace = _extract_tool_trace(steps)
         tool_catalog = _get_tool_catalog(conn)
@@ -393,9 +430,19 @@ def capture_artifacts(db_path: str, run_id: str | None = None) -> dict:
             # the judge can score the answer.
             report = _find_report_in_related_runs(conn, run)
         knowledge = _extract_knowledge(run)
+        if not knowledge:
+            # Mirror the report patching: the latest attempt may carry no
+            # snapshot (e.g. a thin resume row persisted without one), while
+            # an earlier attempt holds the full state. Take the newest
+            # sibling that has one.
+            for attempt in reversed(group):
+                knowledge = _extract_knowledge(attempt)
+                if knowledge:
+                    break
 
         return {
             "run_id": actual_run_id,
+            "attempt_ids": [r["id"] for r in group],
             "conversation_id": run.get("conversation_id", ""),
             "status": run.get("status", ""),
             "started_at": run.get("started_at", ""),
@@ -404,7 +451,9 @@ def capture_artifacts(db_path: str, run_id: str | None = None) -> dict:
             "budget_limit": run.get("budget_limit", 0),
             # total_cost column holds the budget consumed (total inference +
             # tool cost), not just the model cost.  See active_run.py:748
-            # where budget_consumed is persisted as total_cost.
+            # where budget_consumed is persisted as total_cost. Taken from
+            # the latest attempt only — the same rule the UI's coalesced
+            # snapshot uses for budget fields.
             "budget_consumed": run.get("total_cost", 0),
             "generation_reason": (report or {}).get("generation_reason", ""),
             "total_tool_calls": len(tool_trace),
