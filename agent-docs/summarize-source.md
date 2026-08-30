@@ -98,6 +98,57 @@ must exceed the context window.
   ~590K unpruned / ~379K pruned. A 100K store still can't hold it. Is a
   partial store (first N chars) acceptable, with the summarizer told the
   source is truncated? Or is store-size a per-source-class decision?
+- **Resolved in design (2026-08-29): the tool owns acquisition.** Whatever
+  the internal mix of store vs re-fetch, the *caller's* interface is one
+  call: "deep-read this source." Internally the tool does store →
+  fetch-on-miss → hydrate the store (upgrading the record's material class)
+  → summarize in its own sub-context. The model never chains
+  `recall_source` → notice truncation → `url_content` → notice it is still
+  windowed → `summarize_source` — dependent multi-call sequences are where
+  the workflow model drops the thread, and observed runs already
+  under-chain acquisition. Store-vs-fetch remains an internal
+  implementation detail, not a caller-visible protocol.
+
+#### Design element: web_source content store with material-class flag
+(added 2026-08-29, extends the cache note below)
+
+The full-body tier should live in its **own store, not inside the existing
+knowledge tables** — `workflow_runs.knowledge_snapshot`, the citations
+structure, and step details stay lean; stuffing them with 50–100K blobs
+would bloat every snapshot, every resume, and every eval capture.
+
+- **Shape:** a separate table (e.g. `source_contents`, keyed by URL hash /
+  citation id, with `fetched_at`, `content`, `content_type`, byte size) or a
+  content-addressed file store under `data/` — decision open, but either way
+  invisible to `knowledge_summary()` and the eval capture layer.
+- **Material-class flag (the point of the store):** every stored body carries
+  an explicit enum of *what kind of material it is*:
+
+  | class | meaning | today's analog |
+  |-------|---------|----------------|
+  | `snippet` | search-result excerpt; the page was never fetched | `Citation.depth == "snippet"` (via `_apply_sources`) |
+  | `clipped` | fetched, stored as a window (first N chars of the body) | `Citation.depth == "page"` at `CITATION_CONTENT_LIMIT` |
+  | `full` | fetched, complete body stored (the two-tier target) | none — bytes beyond the cap are discarded today |
+  | `summary` | model-generated condensation of a parent source, with provenance to it | none — `summarize_source` output lands here |
+
+  The flag makes "what does the agent actually have" a queryable fact
+  instead of something inferred from character counts. The jazz forensics
+  (run `b962d05e`: 27 of 30 citations were `snippet`s the agent treated as
+  if it had read the pages) is the motivating evidence.
+- `Citation.content` remains the serving window as today; `recall_source`
+  unchanged. Only `summarize_source` (and, if ever needed, the reviewer's
+  verify pass — see Decision 2) reads `full` bodies. Summaries are cached
+  back into the store (`summary` class) so repeated deep reads are cheap.
+- Option B (re-fetch) composes: a cache miss falls back to re-fetch and
+  *hydrates* the store with a `full` body, upgrading the record's class.
+- Cross-run reuse (same URL fetched in an earlier run) is technically free
+  once the store exists — treat as a separate policy decision (it amounts to
+  cross-invocation memory; compare the deferred cross-invocation failure
+  memory item). Start per-run scoped.
+- Open: eviction/size policy for the store itself (total bytes cap, LRU?);
+  whether `knowledge_summary()` should serialize the class flag (today it
+  drops even `depth`, so snapshots can't answer "what did the agent really
+  have" — see retrieval-quality.md's structural-flags section).
 
 ### Decision 2: Provenance of extracted facts
 
