@@ -48,6 +48,8 @@ The system must prioritize:
 - In phased implementation, each phase should provide some testable behavior. Prefer "spike" implementations and incremental addition over waterfall-style plans
 - At the top of each plan, create a table that tracks the completion status of each phase
 - Maintain the status tables as we implement the plans
+- Ideas, designs, and plans that are deliberately deferred ("parked") go in `agent-docs/parked/`, with an entry in `agent-docs/index.md`. Record enough mechanism detail that they can be picked up later without re-derivation.
+- `progress.md` (repo root) is a monthly log of improvements that have been **implemented and verified**. Never add unbuilt designs, future plans, or speculative ideas there — those belong in `agent-docs/parked/` or a plan doc.
 
 ## Coding Guidelines
 
