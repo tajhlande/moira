@@ -139,6 +139,34 @@ The heaviest intervention, aimed at page-level luck:
   obsolete — richer evidence reaches the evaluator structurally. Its
   "investigate the url_content ratio first" note should redirect here.
 
+### Structural source-material flags (know what you're reading)
+
+Added 2026-08-29, motivated by jazz-run forensics (`b962d05e`): 27 of 30
+citations were search snippets — pages the agent never fetched — yet the
+agent mined and recalled that store as if it had read the material. The
+agent cannot tell "I have this page" from "I have a 300-char excerpt of a
+search result" unless something tells it, structurally, every time.
+
+- **Consume the material-class flag everywhere a source is shown.** The
+  store and the four-class enum (`snippet` / `clipped` / `full` / `summary`)
+  are defined in [summarize-source.md](summarize-source.md) (web_source
+  content store). Every agent-facing view of a source — research feedback
+  lines, the retry-context citation table (extend the existing depth
+  column), recall results, planner store views — renders the class. Never
+  require the model to infer material quality from character counts.
+- **Flesh-out affordances:** a `snippet`-class source should surface its
+  upgrade path inline: `url_content` to acquire the page (clipped/full), and
+  `summarize_source` for a directed deep read once that tool exists. "This
+  is an excerpt; here is how to get the real thing" beats prompt folklore
+  about fetching pages.
+- **Known gap to fix when this lands:** `knowledge_summary()` currently
+  drops even the `depth` field, so run snapshots can't answer "what did the
+  agent actually have" (all 30 jazz citations serialized with no depth).
+  Snapshot serialization must carry the class flag.
+- Pairs with the recall refusal (snippet-depth citations already refuse
+  recall and point at `url_content`) — this generalizes that pattern from
+  one tool to the whole agent-facing surface.
+
 ### Within-run feedback (mechanical, not prompt-hope)
 
 - **Query outcome memory**: queries that produced cited facts anchor future
@@ -156,6 +184,7 @@ The heaviest intervention, aimed at page-level luck:
 |------|----------|--------|
 | planning-freedom.md | Query *discipline* (dedup, coverage-driven rounds — its Phase 4) | Fan-out budget interplay; request-attribution tells the query writer which requests failed |
 | source-quality-and-verification.md | Source *weighting* after retrieval | Shared source-type taxonomy (its §"Minimal useful taxonomy" feeds our fact-type templates); passage retrieval subsumes its url_content guidance; harness answers its url_content-ratio open question |
+| summarize-source.md | Source *storage and deep reading* (web_source store, material classes) | We consume its class flag structurally in every agent-facing source view; its store is the acquisition target our fan-out feeds |
 | goal-alignment-and-research-effectiveness.md | Synthesis/evaluation/report-side inference rules | None direct — upstream/downstream |
 
 Inherited principle from source-quality-and-verification.md: **mechanical
