@@ -1,6 +1,6 @@
 # Knowledge Efficiency
 
-Ideas for metrics we can calculate to show effiency of the knowledge modeling process
+Ideas for metrics we can calculate to show efficiency of the knowledge modeling process
 
 - verified facts per search
 - verified facts per tool call
