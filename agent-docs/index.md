@@ -61,7 +61,9 @@ Plans that have been deferred or superseded. Kept for reference; not actively be
 | **parked/kagi-web-search-plan.md** | Plan for the Kagi web search tool — first tool to use the credential store, using the Kagi Search API with Bearer auth. Not started. |
 | **parked/brave-web-search-plan.md** | Plan for a Brave Search API tool following the Kagi blueprint — coexists with SearXNG-based `web_search`, uses the `tool.*` credential namespace. Not started. (Migrated from opencode plan-mode scratch.) |
 | **parked/context-management.md** | Plan for adaptive context window management — auto-detect limits, proactive tool output capping, evidence truncation, and progressive message trimming. Not started. |
-| **parked/additional-default-tools.md** | Wishlist of additional default tools (Wikipedia, OpenAlex, FRED, SEC EDGAR, Europe PMC) to reclaim volume from low-quality web search results. |
+| **parked/additional-default-tools.md** | Wishlist of additional default tools (Wikipedia, OpenAlex, FRED, SEC EDGAR, Europe PMC) to reclaim volume from low-quality web search results. Includes the `tool_class` metadata design (local / web / api / analysis — execution mechanics, not subject matter) with the metrics-hardcoding refactor and planner-ordering simplification as its first consumers. |
+| **parked/judgment-quality-levers.md** | Designed-but-unbuilt prompt/eval fixes for the three persistent eval failures: distinctiveness test (telescope critique gap), entity-grounding rule (tyranitar partner gap), report status-tiered presentation (jazz recalibration), plus the deferred knowledge-model scoring dimension. Held for the planning-freedom Phase 6 gate. |
+| **parked/grind-mode.md** | Plan for a user-selectable "deep" effort mode: per-conclusion evaluation calls (the delivery vehicle for the distinctiveness test and entity-grounding), then per-fact discovery fan-out (shared with retrieval-quality), synthesis decomposition last. Motivated by prompt-length diminishing returns on the 35B model; builds the fan-out plumbing subagents would reuse. |
 
 ## Feedback Iteration (in `feedback-iteration/`)
 
