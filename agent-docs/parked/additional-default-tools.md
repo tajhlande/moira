@@ -2,6 +2,45 @@
 
 other tools we could implement as default tools:
 
+## Tool class metadata (added 2026-08-29)
+
+As the catalog grows, `ToolDefinition` should carry a coarse `tool_class`
+field so consumers reason over classes instead of hardcoded tool-name lists.
+
+**The class is execution mechanics, not subject matter.** What a tool's
+material *is about* belongs to the material-class flag
+(`summarize-source.md`, web_source store) and the source-type taxonomy
+(`source-quality-and-verification.md`); the tool class says how the tool
+runs and what it costs:
+
+| class | mechanics | cost / failure profile | members |
+|-------|-----------|------------------------|---------|
+| `local` | no network, no model call, deterministic | free; cannot fail interestingly | calculator, `recall_source` (pure store read — even its snippet refusal is deterministic) |
+| `web` | page acquisition over HTTP | paid; extraction nondeterminism | `web_search`, `url_content` |
+| `api` | structured endpoint, usually JSON | paid; deterministic-ish, schema-stable | `pokeapi__*`, RESTTool instances, the tools below |
+| `analysis` | runs its own model sub-call over material | priced like inference; bound by model quality | `summarize_source` (planned); grind-mode per-conclusion verification calls would land here too |
+
+Consumers that want it today:
+
+- **Metrics.** `metrics.py` computes `domain_first_request_share` as "first
+  candidate ∉ {web_search, url_content}" — a literal name list that rots as
+  tools are added. First refactor when the field lands: name list → class
+  check.
+- **Planner ordering.** The binding candidate-order rule currently teaches
+  priorities per tool, by name. One sentence per class ("structured
+  evidence → api first; page evidence → web; re-reading what you already
+  acquired → local and free; deep reading → analysis and expensive") makes
+  every future tool inherit the guidance — direct attack on prompt bloat.
+- **Judge payload.** The tool catalog is already sent to the judge; a class
+  column sharpens tool-choice scoring.
+- **tools table / admin UI.** Trivial column add.
+
+Related design principle agreed in discussion: **push sequencing into the
+tool, not the model.** Dependent multi-call chains (e.g. recall → notice
+truncation → fetch → deep read) are where the 35B drops the thread;
+`summarize_source` owning its acquisition is the pattern
+(`summarize-source.md` Decision 1).
+
 ## Tool list
 - Wikipedia + Wikidata (one tool or two): the "what/who is X" lane. This is what reclaims the most volume from Reddit/Facebook results. Wikidata gives you QIDs as the entity-grounding spine; Wikipedia gives readable prose with revision IDs for citation.
 - OpenAlex + Crossref: the "what does the research say" lane. OpenAlex for discovery (clean JSON, no key, abstracts inline), Crossref as the DOI authority for verifying/normalizing any citation—including ones that arrive from web search.
