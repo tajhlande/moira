@@ -10,7 +10,7 @@ import re
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
-from moira.inference.defaults import DEFAULT_TEMPERATURE
+from moira.inference.defaults import DEFAULT_INTELLIGENCE_EXTRA_BODY, DEFAULT_TEMPERATURE
 from moira.models.knowledge import Citation, ResearchReport, ResearchState, knowledge_summary
 from moira.prompts import render_prompt
 from moira.workflow.budget import deduct_cost
@@ -292,6 +292,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
         messages=messages,
         model=resolved.model_id,
         temperature=DEFAULT_TEMPERATURE,
+        extra_body=DEFAULT_INTELLIGENCE_EXTRA_BODY,
     )
     call_count += 1
 
@@ -384,6 +385,7 @@ async def report_generation(state: ResearchState, config: RunnableConfig) -> dic
                 messages=messages,
                 model=resolved.model_id,
                 temperature=max(DEFAULT_TEMPERATURE - 0.2, 0.1),
+                extra_body=DEFAULT_INTELLIGENCE_EXTRA_BODY,
             )
             call_count += 1
             retry_raw = retry_response.content or ""

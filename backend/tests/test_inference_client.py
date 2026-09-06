@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from moira.inference.client import InferenceClient
+from moira.inference.defaults import DEFAULT_INTELLIGENCE_EXTRA_BODY
 
 
 def _success_payload() -> dict:
@@ -75,3 +76,35 @@ class TestTransientRetry:
         assert exc_info.value.response.status_code == 400
         assert client._client.post.await_count == 1
         slept.assert_not_awaited()
+
+
+class TestSamplingDefaults:
+    """The client is a policy-free transport: no sampling parameters beyond
+    temperature/max_tokens are sent unless a caller passes extra_body
+    (intelligence-model call sites pass DEFAULT_INTELLIGENCE_EXTRA_BODY)."""
+
+    async def test_no_sampling_params_by_default(self):
+        # Guards task-model and eval-judge calls: they must rely on server
+        # defaults, so the payload carries only the core fields.
+        client = _client_with_responses([_response(200, _success_payload())])
+        await _send(client)
+        sent = client._client.post.await_args.kwargs["json"]
+        assert sent == {
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 1.0,
+            "max_tokens": 65536,
+        }
+
+    async def test_extra_body_sent_when_passed(self):
+        client = _client_with_responses([_response(200, _success_payload())])
+        await client.chat_completion(
+            "test-model",
+            [{"role": "user", "content": "hi"}],
+            temperature=0.5,
+            extra_body=dict(DEFAULT_INTELLIGENCE_EXTRA_BODY, top_k=40),
+        )
+        sent = client._client.post.await_args.kwargs["json"]
+        assert sent["top_k"] == 40
+        assert sent["top_p"] == DEFAULT_INTELLIGENCE_EXTRA_BODY["top_p"]
+        assert sent["temperature"] == 0.5

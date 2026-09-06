@@ -27,7 +27,7 @@ from langgraph.config import get_stream_writer
 
 from moira.inference.adapters import get_adapter
 from moira.inference.client import ChatResponse
-from moira.inference.defaults import DEFAULT_TEMPERATURE
+from moira.inference.defaults import DEFAULT_INTELLIGENCE_EXTRA_BODY, DEFAULT_TEMPERATURE
 from moira.inference.registry import ResolvedModel
 from moira.models.knowledge import (
     CITATION_CONTENT_LIMIT as _CITATION_CONTENT_LIMIT,
@@ -1860,6 +1860,7 @@ async def _extract_facts_from_results(
         messages=messages,
         model=model_id,
         temperature=DEFAULT_TEMPERATURE,
+        extra_body=DEFAULT_INTELLIGENCE_EXTRA_BODY,
     )
     raw = response.content or ""
     if not raw.strip():
@@ -1945,6 +1946,7 @@ async def _run_native_tool_loop(
             messages=messages,
             model=resolved.model_id,
             temperature=DEFAULT_TEMPERATURE,
+            extra_body=DEFAULT_INTELLIGENCE_EXTRA_BODY,
             tools=_augment_tools_with_request_id(candidate_tools),
         )
         total_call_count += 1
@@ -2112,6 +2114,7 @@ async def _run_text_tool_loop(
             messages=messages,
             model=resolved.model_id,
             temperature=DEFAULT_TEMPERATURE,
+            extra_body=DEFAULT_INTELLIGENCE_EXTRA_BODY,
         )
         total_call_count += 1
         last_response = response
@@ -2190,6 +2193,7 @@ async def _run_text_tool_loop(
                     messages=messages,
                     model=resolved.model_id,
                     temperature=max(DEFAULT_TEMPERATURE - 0.2, 0.1),
+                    extra_body=DEFAULT_INTELLIGENCE_EXTRA_BODY,
                 )
                 total_call_count += 1
                 last_response = response
@@ -2580,6 +2584,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
                 messages=messages,
                 model=resolved.model_id,
                 temperature=DEFAULT_TEMPERATURE,
+                extra_body=DEFAULT_INTELLIGENCE_EXTRA_BODY,
             )
             total_call_count += 1
             summary_raw = summary_response.content or ""

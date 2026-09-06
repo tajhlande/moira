@@ -10,7 +10,7 @@ import logging
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
-from moira.inference.defaults import DEFAULT_TEMPERATURE
+from moira.inference.defaults import DEFAULT_INTELLIGENCE_EXTRA_BODY, DEFAULT_TEMPERATURE
 from moira.models.knowledge import Fact, ResearchState, next_id
 from moira.prompts import render_prompt
 from moira.workflow.budget import can_execute, deduct_cost
@@ -69,6 +69,7 @@ async def decomposition(state: ResearchState, config: RunnableConfig) -> dict:
         messages=messages,
         model=resolved.model_id,
         temperature=DEFAULT_TEMPERATURE,
+        extra_body=DEFAULT_INTELLIGENCE_EXTRA_BODY,
     )
 
     raw = response.content or ""

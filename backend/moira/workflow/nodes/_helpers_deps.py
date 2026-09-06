@@ -13,6 +13,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
 from moira.inference.client import ChatResponse, InferenceClient
+from moira.inference.defaults import DEFAULT_INTELLIGENCE_EXTRA_BODY, DEFAULT_TEMPERATURE
 from moira.workflow.nodes._helpers import _now, _parse_json_object
 
 logger = logging.getLogger(__name__)
@@ -67,9 +68,13 @@ async def _call_for_json(
     required_key: str,
     node_name: str,
     *,
-    temperature: float = 0.7,
+    temperature: float = DEFAULT_TEMPERATURE,
 ) -> tuple[dict, ChatResponse | None, int]:
     """Call the model and parse JSON, retrying once on parse failure.
+
+    Requests carry the intelligence-model sampling profile
+    (``DEFAULT_INTELLIGENCE_EXTRA_BODY``); this helper is only used by
+    intelligence-model nodes.
 
     Returns ``(parsed_dict, response, call_count)``.
 
@@ -91,6 +96,7 @@ async def _call_for_json(
             messages=messages,
             model=model_id,
             temperature=temperature,
+            extra_body=DEFAULT_INTELLIGENCE_EXTRA_BODY,
         )
         raw = response.content or ""
         parsed = _parse_json_object(raw)
