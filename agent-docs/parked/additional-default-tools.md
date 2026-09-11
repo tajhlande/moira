@@ -9,7 +9,7 @@ field so consumers reason over classes instead of hardcoded tool-name lists.
 
 **The class is execution mechanics, not subject matter.** What a tool's
 material *is about* belongs to the material-class flag
-(`summarize-source.md`, web_source store) and the source-type taxonomy
+(`retrieval-quality.md`, web_source store) and the source-type taxonomy
 (`source-quality-and-verification.md`); the tool class says how the tool
 runs and what it costs:
 

@@ -6,6 +6,9 @@
 > (verification-side) and [planning-freedom.md](planning-freedom.md)
 > (planning/orchestration-side); this document covers the retrieval side.
 > Not to be tackled on the planning-freedom branch — separate stream.
+> The web_source content store and material-class foundation are defined
+> and sequenced *here* (moved from summarize-source.md, which now covers
+> only the deferred `summarize_source` deep-read tool).
 
 ## Problem
 
@@ -131,6 +134,10 @@ The heaviest intervention, aimed at page-level luck:
 - Fetch top-N results, chunk pages, rank chunks against `fact_needed`
   (local BM25 minimum; embeddings optional later), return best passages
   with source IDs.
+- Fetched bodies hydrate the source-content store (see "Source-content
+  store" below) as `full`-class material instead of being discarded after
+  ranking — the store is a prerequisite for this step, not optional
+  plumbing.
 - Converts page-level luck into passage-level recall — probably the single
   biggest lever for "returned irrelevant results."
 - Structural consequence for the sibling plan: if web_search returns ranked
@@ -138,6 +145,47 @@ The heaviest intervention, aimed at page-level luck:
   prompt nudge in source-quality-and-verification.md becomes mostly
   obsolete — richer evidence reaches the evaluator structurally. Its
   "investigate the url_content ratio first" note should redirect here.
+
+### Source-content store (web_source) with material classes
+
+Added 2026-09-11; relocated from summarize-source.md so this plan is
+self-contained (that doc now covers only the deferred `summarize_source`
+deep-read tool). Full page bodies need somewhere to live, and the existing
+knowledge tables must not hold them: stuffing 50–100K blobs into
+`workflow_runs.knowledge_snapshot`, the citations structure, or step
+details would bloat every snapshot, every resume, and every eval capture.
+
+- **Shape:** a separate table (e.g. `source_contents`, keyed by URL hash /
+  citation id, with `fetched_at`, `content`, `content_type`, byte size) or a
+  content-addressed file store under `data/` — decision open, but either
+  way invisible to `knowledge_summary()` and the eval capture layer.
+- **Material-class flag (the point of the store):** every stored body
+  carries an explicit enum of *what kind of material it is*:
+
+  | class | meaning | today's analog |
+  |-------|---------|----------------|
+  | `snippet` | search-result excerpt; the page was never fetched | `Citation.depth == "snippet"` (via `_apply_sources`) |
+  | `clipped` | fetched, stored as a window (first N chars of the body) | `Citation.depth == "page"` at `CITATION_CONTENT_LIMIT` |
+  | `full` | fetched, complete body stored | none — bytes beyond the cap are discarded today |
+  | `summary` | model-generated condensation of a parent source, with provenance to it | none — `summarize_source` output lands here, if that tool is built |
+
+  The flag makes "what does the agent actually have" a queryable fact
+  instead of something inferred from character counts. The motivating
+  evidence is the jazz-run forensics below (`b962d05e`).
+- **Serving caps unchanged.** `Citation.content` remains the serving window
+  and `recall_source` is unchanged; the storage cap rises to the 50–100K
+  order. Full bodies are consumed by passage-level retrieval (chunk + rank)
+  and, if it is ever built, the `summarize_source` tool.
+- **Hydration on fetch:** any fetch — `url_content` today, passage-level
+  retrieval later — deposits the body into the store and upgrades the
+  record's class. Acquisition stays a single caller-visible call; the model
+  is never asked to chain fetch tools.
+- **Scope:** per-run to start. Cross-run reuse (same URL fetched in an
+  earlier run) is technically free once the store exists but amounts to
+  cross-invocation memory — deferred, like the query playbook.
+
+The class is consumed structurally in every agent-facing view — the next
+section.
 
 ### Structural source-material flags (know what you're reading)
 
@@ -147,13 +195,15 @@ agent mined and recalled that store as if it had read the material. The
 agent cannot tell "I have this page" from "I have a 300-char excerpt of a
 search result" unless something tells it, structurally, every time.
 
-- **Consume the material-class flag everywhere a source is shown.** The
-  store and the four-class enum (`snippet` / `clipped` / `full` / `summary`)
-  are defined in [summarize-source.md](summarize-source.md) (web_source
-  content store). Every agent-facing view of a source — research feedback
-  lines, the retry-context citation table (extend the existing depth
-  column), recall results, planner store views — renders the class. Never
-  require the model to infer material quality from character counts.
+- **Consume the material-class flag everywhere a source is shown.** Every
+  agent-facing view of a source — research feedback lines, the retry-context
+  citation table (extend the existing depth column), recall results, planner
+  store views — renders the class from the store above. Never require the
+  model to infer material quality from character counts.
+- **Build order:** rendering and snapshot serialization work against the
+  existing `Citation.depth` field (`snippet` / `page`) before the store
+  exists; the four-class enum upgrades it once the store lands. The first
+  step ships independently.
 - **Flesh-out affordances:** a `snippet`-class source should surface its
   upgrade path inline: `url_content` to acquire the page (clipped/full), and
   `summarize_source` for a directed deep read once that tool exists. "This
@@ -166,6 +216,32 @@ search result" unless something tells it, structurally, every time.
 - Pairs with the recall refusal (snippet-depth citations already refuse
   recall and point at `url_content`) — this generalizes that pattern from
   one tool to the whole agent-facing surface.
+
+### UI parity: render what the schema learns
+
+Added 2026-09-11. Rule for every step in this plan: wherever the work
+produces meaningful changes to the knowledge schema or stored
+information, those changes are also reflected in the user interface.
+Metadata only the model sees is half a feature — inspectability is a
+stated platform priority, and the UI is where it lands. The same rule
+applies in [summarize-source.md](summarize-source.md) for the metadata
+that tool would add.
+
+- **Material class on sources and citations.** The knowledge panel
+  (frontend/src/components/KnowledgePanel.vue — Sources list, fact
+  citation refs) and the report citation views
+  (frontend/src/components/ReportPanel.vue, CitationMarkdown.vue) render
+  the class — e.g. a badge distinguishing "the agent cited a search
+  excerpt" from "the agent read the page." Users currently cannot make
+  the distinction the jazz forensics demanded. The knowledge-panel side
+  rides the same fix as the `knowledge_summary()` gap above.
+- **Fact-level metadata.** When later steps attach structure to facts —
+  query provenance from feedback memory, extraction provenance if
+  `summarize_source` is ever built — it renders on the fact rows in the
+  knowledge panel, not only in agent-facing context.
+- **Retrieval outcomes.** Per-fact recall and query outcomes measured by
+  the harness / produced by fan-out become forensics-visible in
+  run-detail views once stored.
 
 ### Within-run feedback (mechanical, not prompt-hope)
 
@@ -184,7 +260,7 @@ search result" unless something tells it, structurally, every time.
 |------|----------|--------|
 | planning-freedom.md | Query *discipline* (dedup, coverage-driven rounds — its Phase 4) | Fan-out budget interplay; request-attribution tells the query writer which requests failed |
 | source-quality-and-verification.md | Source *weighting* after retrieval | Shared source-type taxonomy (its §"Minimal useful taxonomy" feeds our fact-type templates); passage retrieval subsumes its url_content guidance; harness answers its url_content-ratio open question |
-| summarize-source.md | Source *storage and deep reading* (web_source store, material classes) | We consume its class flag structurally in every agent-facing source view; its store is the acquisition target our fan-out feeds |
+| summarize-source.md | The `summarize_source` *deep-read tool* only (sub-context extraction) — its storage foundation moved here | We build the web_source store + material classes as our source-content foundation step; the deferred tool consumes the store and caches its output back as `summary`-class material |
 | goal-alignment-and-research-effectiveness.md | Synthesis/evaluation/report-side inference rules | None direct — upstream/downstream |
 
 Inherited principle from source-quality-and-verification.md: **mechanical
@@ -198,13 +274,20 @@ queries.
 1. **Retrieval-isolation harness** — measure per-fact recall and
    queries-per-fact on current freeform queries; establishes the baseline
    number the rest of the work regresses against.
-2. **Delegated query-writer pass** — cheap, isolated, unit-testable; A/B
+2. **Source-content foundation** — the store + material classes defined
+   above, flag rendering in every agent-facing and user-facing view (see
+   "UI parity"), and the snapshot serialization fix. Ships in two steps:
+   render/serialize the existing `depth` field first, then add the store
+   and the four-class enum. Independent of the harness — can proceed in
+   parallel with step 1.
+3. **Delegated query-writer pass** — cheap, isolated, unit-testable; A/B
    against baseline with the harness.
-3. **Per-fact fan-out + templates** — depth-over-breadth trade measured by
+4. **Per-fact fan-out + templates** — depth-over-breadth trade measured by
    the harness; watch the 10-search ceiling.
-4. **Passage-level retrieval** — web_search overhaul; biggest expected
-   lever, largest change surface.
-5. **Feedback memory** — within-run outcome memory first; cross-run playbook
+5. **Passage-level retrieval** — web_search overhaul; biggest expected
+   lever, largest change surface. Requires the step-2 store: fetched pages
+   hydrate it as `full`-class material rather than being discarded.
+6. **Feedback memory** — within-run outcome memory first; cross-run playbook
    later, after the harness exists to validate it.
 
 ## Open questions
@@ -218,6 +301,9 @@ queries.
   sufficient? (Try BM25 first; it's local and deterministic.)
 - Where does the query playbook persist (per-conversation, per-database)?
   Cross-invocation memory is also deferred in sibling plans.
+- Source-content store policy: own table vs content-addressed file store;
+  eviction/total-size caps; per-run scope for now (cross-run reuse is
+  cross-invocation memory — deferred like the query playbook).
 
 ## Deferred
 

@@ -6,8 +6,14 @@ directed at specific entities/topics), and returns a compact result to the
 calling agent. Separate stream from `planning-freedom.md` — motivated by that
 branch's context-budget work but useful independently of it.
 
-Status: not scheduled. This document records the motivation, the mechanism,
-and the design decisions that must be made before implementation.
+Status: not scheduled. This document covers the `summarize_source` tool
+itself — the sub-context extraction call, provenance of extracted facts,
+model choice, execution shape, pricing. Its storage foundation — the
+web_source content store and material-class enum formerly sketched under
+Decision 1 — is defined and sequenced in
+[retrieval-quality.md](retrieval-quality.md) ("Source-content store
+(web_source) with material classes"), which builds it whether or not this
+tool is ever scheduled; the design below assumes that store exists.
 
 ## Motivation
 
@@ -94,10 +100,9 @@ must exceed the context window.
   time and summarizes the fresh body. No storage growth; but network
   latency/failure re-enters, cached/deduped fetch semantics get murky, and
   APIs with drift (or paid sources fetched once) become non-reproducible.
-- **Open question:** how large is "enough"? PokeAPI's full payload is
-  ~590K unpruned / ~379K pruned. A 100K store still can't hold it. Is a
-  partial store (first N chars) acceptable, with the summarizer told the
-  source is truncated? Or is store-size a per-source-class decision?
+- **Open question:** how large is "enough"? See the sizing requirement in
+  the design element below — it is the tool's constraint on the
+  retrieval-quality.md store.
 - **Resolved in design (2026-08-29): the tool owns acquisition.** Whatever
   the internal mix of store vs re-fetch, the *caller's* interface is one
   call: "deep-read this source." Internally the tool does store →
@@ -110,45 +115,32 @@ must exceed the context window.
   implementation detail, not a caller-visible protocol.
 
 #### Design element: web_source content store with material-class flag
-(added 2026-08-29, extends the cache note below)
 
-The full-body tier should live in its **own store, not inside the existing
-knowledge tables** — `workflow_runs.knowledge_snapshot`, the citations
-structure, and step details stay lean; stuffing them with 50–100K blobs
-would bloat every snapshot, every resume, and every eval capture.
+**Relocated 2026-09-11** to [retrieval-quality.md](retrieval-quality.md)
+("Source-content store (web_source) with material classes"), which needs the
+foundation independently of this tool: flag rendering in agent-facing
+views, snapshot serialization (including the `knowledge_summary()` gap — it
+drops even `depth` today), and hydration-on-fetch by `url_content` and
+passage-level retrieval. That doc owns the store shape, the four-class
+enum, serving caps, and scope policy. This document retains only the
+*tool's requirements* on that store:
 
-- **Shape:** a separate table (e.g. `source_contents`, keyed by URL hash /
-  citation id, with `fetched_at`, `content`, `content_type`, byte size) or a
-  content-addressed file store under `data/` — decision open, but either way
-  invisible to `knowledge_summary()` and the eval capture layer.
-- **Material-class flag (the point of the store):** every stored body carries
-  an explicit enum of *what kind of material it is*:
-
-  | class | meaning | today's analog |
-  |-------|---------|----------------|
-  | `snippet` | search-result excerpt; the page was never fetched | `Citation.depth == "snippet"` (via `_apply_sources`) |
-  | `clipped` | fetched, stored as a window (first N chars of the body) | `Citation.depth == "page"` at `CITATION_CONTENT_LIMIT` |
-  | `full` | fetched, complete body stored (the two-tier target) | none — bytes beyond the cap are discarded today |
-  | `summary` | model-generated condensation of a parent source, with provenance to it | none — `summarize_source` output lands here |
-
-  The flag makes "what does the agent actually have" a queryable fact
-  instead of something inferred from character counts. The jazz forensics
-  (run `b962d05e`: 27 of 30 citations were `snippet`s the agent treated as
-  if it had read the pages) is the motivating evidence.
-- `Citation.content` remains the serving window as today; `recall_source`
-  unchanged. Only `summarize_source` (and, if ever needed, the reviewer's
-  verify pass — see Decision 2) reads `full` bodies. Summaries are cached
-  back into the store (`summary` class) so repeated deep reads are cheap.
-- Option B (re-fetch) composes: a cache miss falls back to re-fetch and
-  *hydrates* the store with a `full` body, upgrading the record's class.
-- Cross-run reuse (same URL fetched in an earlier run) is technically free
-  once the store exists — treat as a separate policy decision (it amounts to
-  cross-invocation memory; compare the deferred cross-invocation failure
-  memory item). Start per-run scoped.
-- Open: eviction/size policy for the store itself (total bytes cap, LRU?);
-  whether `knowledge_summary()` should serialize the class flag (today it
-  drops even `depth`, so snapshots can't answer "what did the agent really
-  have" — see retrieval-quality.md's structural-flags section).
+- **Whole-source visibility.** The summarizer sub-call reads `full` bodies
+  from the store; serving caps everywhere else stay as they are. Store
+  sizing is therefore set by this tool: how large is "enough"? PokeAPI's
+  payload is ~590K unpruned / ~379K pruned — beyond any plausible cap. Is a
+  partial store (first N chars, summarizer told the source is truncated)
+  acceptable, or is store size a per-source-class decision?
+- **Acquisition ownership composes.** The resolved caller interface (one
+  "deep-read this source" call) maps onto the store's hydration-on-miss:
+  read store → fetch on miss → hydrate (upgrading the record's class) →
+  summarize in the sub-context. Internally, store-vs-fetch remains an
+  implementation detail; externally, nothing changes.
+- **Summary cache.** Outputs are cached back into the store as
+  `summary`-class material with provenance to the parent source, so
+  repeated deep reads are cheap. The class and its parent provenance
+  render in the sources UI like any other material
+  (retrieval-quality.md's "UI parity" rule).
 
 ### Decision 2: Provenance of extracted facts
 
@@ -172,6 +164,12 @@ caller treats them as verified, we've built a hallucination path.
   to a short verbatim quote. The reviewer's window limitation is real and
   must be answered (possibly: the reviewer gets the same summarize call
   when verifying, or verification targets the quote).
+- **UI parity:** whatever provenance shape is chosen must render in the
+  user interface, not only in agent-facing context — fact rows in the
+  knowledge panel show extraction origin (e.g. "via `summarize_source`"
+  with its quote anchor), so users can see which claims are model
+  extractions about a source rather than source text. Same rule as
+  retrieval-quality.md's "UI parity" section.
 
 ### Decision 3: Which model runs the summarizer
 
@@ -231,7 +229,7 @@ caller treats them as verified, we've built a hallucination path.
 |------|------------|
 | Summarizer hallucinates claims about the source | Claims enter as `unverified` with quote anchors; reviewer verifies (Decision 2) |
 | Sub-call latency/cost balloons (long sources, chatty model) | invocation_cost pricing + per-pass call limits (Decision 5); output bounded by feedback cap |
-| Storage growth in snapshots/DB | Snapshot policy decision (Decision 1); measure before/after |
+| Storage growth in snapshots/DB | Full bodies live in the separate source-content store (built in retrieval-quality.md), not in knowledge tables; measure before/after |
 | Model summarizes instead of searching when search is right | Planning guidance (Decision 6); measure tool-choice distribution in evals |
 | Duplicates recall_source conceptually; model confusion | Keep recall for cheap re-read of the window; summarize for beyond-window extraction; tool docs must draw the line sharply |
 
