@@ -71,6 +71,13 @@ they belong in an insufficient-evidence section or are omitted. Hedging
 Prerequisite: jazz also needs acquisition help (verified-fact counts of 2 in
 recent batches), so pair with retrieval-quality work.
 
+**Confirmed 2026-09-11 forensics (09-11 batch, `b0f770ca`):** 5 unsupported
+conclusions (telescope 2; nostalgia, tyranitar, water 1 each) — all present
+in report text. They carry citation references, so the report rules'
+citation+derivation gating passes them while ignoring status. This is the
+first unpark candidate after the planning-freedom Phase 6 gate concludes
+(prompts frozen until then).
+
 ## 4. Knowledge-model scoring dimension — bench rebalance (deferred by user)
 
 The general rubric grades the report; the knowledge model's quality (fact

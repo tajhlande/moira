@@ -228,3 +228,44 @@ Evals above this point have a bug:
 - Agent model: z-ai/glm-5.2
 - Note: Evaluating phase 5 of planning freedom
   Sampling parameters on ninfer were incorrect.
+
+## 2026-09-11 batch (commit b0f770ca, planning-freedom)
+
+| Question                   | Rubric  | Score | web_search | Status |
+|----------------------------|---------|-------|------------|--------|
+| flaming-hot-cheetos        | general | 19/25 | 10         | PASS   |
+| future-nostalgia           | general | 18/25 | 11         | PASS   |
+| jazz-trumpeters            | general | 15/25 | 10         | FAIL   |
+| telescope-mount-cost       | general | 18/25 | 10         | PASS   |
+| trade-policy-manufacturing | general | 18/25 | 10         | PASS   |
+| tyranitar-ou               | pokemon | 13/16 | 10         | FAIL   |
+| water-blood-pressure       | general | 22/25 | 10         | PASS   |
+
+- Agent model: z-ai/glm-5.2
+- Note: Evaluating planning-freedom branch - 1st pass. Gate check 
+  (planning-freedom Phase 6): 5/7 PASS matches the 08-18 baseline's 
+  pass/fail set with +4 aggregate (jazz 13→15, tyranitar 12→13, both 
+  still FAIL). Verified facts 41 (~5.9/run, top of the historical 4–8 
+  band), duplicate queries intercepted 1, hallucinated fact IDs 0, 
+  uncited conclusions 0, request attribution holding. 
+  Miss: unsupported conclusions 5 (telescope 2; nostalgia, tyranitar, 
+  water 1 each) against a criterion of 0. Watch items: url_content 23 
+  calls (~3.3/run vs ~0.5% of citations historically), multi-fact 
+  requests 12/92 despite the Phase 2 bundling guard, 17 unknown facts 
+  (11 targeted, 6 never targeted). Verdict shaping as Iterate pending 
+  the 2nd same-commit batch.
+
+## 2026-09-11 batch (commit b0f770ca, planning-freedom)
+
+| Question                   | Rubric  | Score | web_search | Status |
+|----------------------------|---------|-------|------------|--------|
+| flaming-hot-cheetos        | general | 20/25 | 10         | PASS   |
+| future-nostalgia           | general | 16/25 | 10         | FAIL   |
+| jazz-trumpeters            | general | 17/25 | 10         | PASS   |
+| telescope-mount-cost       | general | 19/25 | 10         | PASS   |
+| trade-policy-manufacturing | general | 21/25 | 10         | PASS   |
+| tyranitar-ou               | pokemon | 11/16 | 10         | FAIL   |
+| water-blood-pressure       | general | 21/25 | 10         | PASS   |
+
+- Agent model: z-ai/glm-5.2
+- Note: Evaluating planning-freedom branch - 2nd pass. Gate check: 5/7 PASS again, aggregate 125/166 (batch 1: 123, baseline: 119), per-question swings within the ±4 noise floor — quality ≥ main holds across same-commit replicates. Verified facts 42 (~6.0/run), duplicate queries intercepted 1, hallucinated fact IDs 0, uncited conclusions 0, attribution holding. Unsupported conclusions 2 (trade, water) — the sole criterion miss in both batches; diagnosis confirmed as the report status-tiering gap (judgment-quality-levers #3). Gate verdict: Iterate with one work item. Acquisition variance persists: jazz vf 1→4 (FAIL→PASS), nostalgia vf 7→3 (PASS→FAIL) between same-commit batches. Harness note: pass 2 overwrote pass 1's artifacts in moira_eval/results/b0f770ca/ (results keyed by sha alone) — per-pass headline numbers preserved in these log notes.
