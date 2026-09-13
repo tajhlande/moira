@@ -1,7 +1,10 @@
 # Retrieval Quality: Consistency and Power of Information Search
 
-> **Status:** Brainstorm / pre-plan. Captures findings and design directions.
-> Not yet phased for implementation. Sibling to
+> **Status:** Design direction — findings, rationale, technique survey.
+> Now has an implementation plan: see
+> [retrieval-quality-plan.md](retrieval-quality-plan.md) for phased scope,
+> code touchpoints, tests, and gates. This document stays the "why";
+> the plan is the "how" and tracks phase status. Sibling to
 > [source-quality-and-verification.md](source-quality-and-verification.md)
 > (verification-side) and [planning-freedom.md](planning-freedom.md)
 > (planning/orchestration-side); this document covers the retrieval side.
