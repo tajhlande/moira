@@ -93,7 +93,7 @@ class TestSamplingDefaults:
             "model": "test-model",
             "messages": [{"role": "user", "content": "hi"}],
             "temperature": 1.0,
-            "max_tokens": 65536,
+            "max_tokens": 32768,
         }
 
     async def test_extra_body_sent_when_passed(self):

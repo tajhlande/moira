@@ -24,6 +24,8 @@ Qwen3.5 architecture family models.
 
 DEFAULT_TEMPERATURE = 1.0
 
+DEFAULT_MAX_TOKENS = 32768
+
 DEFAULT_INTELLIGENCE_EXTRA_BODY: dict[str, float] = {
     "top_p": 0.95,
     "top_k": 20,

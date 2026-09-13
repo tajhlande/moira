@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 
 from moira.inference.adapters import ToolCallingAdapter, get_adapter
-from moira.inference.defaults import DEFAULT_TEMPERATURE
+from moira.inference.defaults import DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
 from moira.tools.base import ToolCall, ToolDefinition
 
 logger = logging.getLogger(__name__)
@@ -106,7 +106,7 @@ class InferenceClient:
         model: str,
         messages: list[dict[str, Any]],
         temperature: float = DEFAULT_TEMPERATURE,
-        max_tokens: int = 65536,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
         extra_body: dict | None = None,
         tools: list[ToolDefinition] | None = None,
         tool_choice: str = "auto",
