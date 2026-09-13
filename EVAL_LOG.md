@@ -269,3 +269,18 @@ Evals above this point have a bug:
 
 - Agent model: z-ai/glm-5.2
 - Note: Evaluating planning-freedom branch - 2nd pass. Gate check: 5/7 PASS again, aggregate 125/166 (batch 1: 123, baseline: 119), per-question swings within the ±4 noise floor — quality ≥ main holds across same-commit replicates. Verified facts 42 (~6.0/run), duplicate queries intercepted 1, hallucinated fact IDs 0, uncited conclusions 0, attribution holding. Unsupported conclusions 2 (trade, water) — the sole criterion miss in both batches; diagnosis confirmed as the report status-tiering gap (judgment-quality-levers #3). Gate verdict: Iterate with one work item. Acquisition variance persists: jazz vf 1→4 (FAIL→PASS), nostalgia vf 7→3 (PASS→FAIL) between same-commit batches. Harness note: pass 2 overwrote pass 1's artifacts in moira_eval/results/b0f770ca/ (results keyed by sha alone) — per-pass headline numbers preserved in these log notes.
+
+## 2026-09-13 batch (commit 630a2e6b, retrieval-quality)
+
+| Question | Rubric | Score | web_search | Status |
+|----------|--------|-------|------------|--------|
+| flaming-hot-cheetos | general | 21/25 | 10 | PASS |
+| future-nostalgia | general | 22/25 | 10 | PASS |
+| jazz-trumpeters | general | 18/25 | 7 | PASS |
+| telescope-mount-cost | general | 21/25 | 10 | PASS |
+| trade-policy-manufacturing | general | 20/25 | 10 | PASS |
+| tyranitar-ou | pokemon | 15/16 | 10 | FAIL |
+| water-blood-pressure | general | 22/25 | 10 | PASS |
+
+- Agent model: z-ai/glm-5.2
+- Note: Tested on Qwen3.8-27B (the syv-ai optimized version). Took 2h 34m and had to manually restart one (another automatically restarted).  Best run yet. url_content calls tripled, verified facts doubled. but many more fact needs than resolved.
