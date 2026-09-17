@@ -17,6 +17,7 @@ Usage::
     metrics = compute_metrics(artifacts)
 """
 
+from statistics import mean, stdev
 from typing import Any
 
 # Tools considered "generic" — not domain-specific.  The ratio of specialized
@@ -289,3 +290,158 @@ def compute_metrics(artifacts: dict) -> dict:
     metrics.update(_planner_metrics(artifacts.get("planning_attempts", []), knowledge))
     metrics.update(_researcher_metrics(artifacts, knowledge))
     return metrics
+
+
+# ---------------------------------------------------------------------------
+# Retrieval-harness metrics (Phase 1 of retrieval-quality-plan.md)
+#
+# These operate on harness repeat artifacts — a different input shape than
+# capture_artifacts output. Each repeat carries "fact_scores"
+# ({fact_id: {present, found_at_k, with_pages, queries, ...}}) plus the
+# per-run counts, produced by moira_eval.retrieval_harness.
+# ---------------------------------------------------------------------------
+
+
+def harness_per_fact_recall(repeat: dict[str, Any]) -> list[dict[str, Any]]:
+    """Per-fact recall rows for one harness repeat.
+
+    Each row joins the fact's identity with its score: recall@k is the
+    indicator that found_at_k <= k. Facts that were never queried are
+    included — they are retrieval failures too.
+
+    "original" marks facts produced by decomposition (the planning
+    targets). Research's overflow-split path spawns additional facts that
+    are never queried; they are kept in the rows but must be separated
+    before reading recall — spawn deflates the denominator. When the
+    repeat lacks "original_fact_ids" (older artifacts), every fact is
+    treated as original.
+    """
+    facts = repeat.get("facts", [])
+    scores = repeat.get("fact_scores", {})
+    original_ids = set(repeat.get("original_fact_ids") or []) or {f["id"] for f in facts}
+    rows = []
+    for fact in facts:
+        score = scores.get(fact["id"], {})
+        found_at_k = score.get("found_at_k")
+        rows.append(
+            {
+                "id": fact["id"],
+                "subject": fact.get("subject", ""),
+                "fact_needed": fact.get("fact_needed", ""),
+                "original": fact["id"] in original_ids,
+                "queries": score.get("queries", 0),
+                "present": bool(score.get("present")),
+                "found_at_k": found_at_k,
+                **{
+                    f"recall_at_{k}": found_at_k is not None and found_at_k <= k for k in (1, 3, 5)
+                },
+                "with_pages": bool(score.get("with_pages")),
+                "never_queried": bool(score.get("never_queried")),
+                "quote": score.get("quote", ""),
+            }
+        )
+    return rows
+
+
+def _mean_sd(values: list[float]) -> dict[str, float]:
+    """Mean and sample stdev (0.0 when fewer than two values)."""
+    if not values:
+        return {"mean": 0.0, "sd": 0.0}
+    sd = stdev(values) if len(values) > 1 else 0.0
+    return {"mean": round(mean(values), 4), "sd": round(sd, 4)}
+
+
+def harness_recall_summary(repeats: list[dict[str, Any]], ks: tuple[int, ...] = (1, 3, 5)) -> dict:
+    """Aggregate recall metrics across harness repeats.
+
+    THE DEFINITIVE LIST OF SUMMARY FIELDS (each a {mean, sd} over repeats):
+
+    - recall_at_{k}: fraction of ALL facts whose needed information was
+      found at rank <= k (spawn included) — the honest bottom line.
+    - recall_at_{k}_original: same, restricted to decomposition-produced
+      facts (the planning targets) — the headline number.
+    - recall_at_{k}_queried: same, restricted to facts that received at
+      least one attributed query — retrieval effectiveness isolated from
+      planning-coverage failures.
+    - recall_with_pages: fraction of original facts found only in fetched
+      page bodies (url_content), not in search snippets — the page-rescue
+      rate.
+    - queries_per_resolved_fact: mean attributed queries among facts that
+      resolved (present) — measures fan-out (1.0 = single-shot lottery).
+    - coverage: fraction of original facts that received >= 1 query —
+      planning's fact-coverage discipline.
+    - unresolved_fact_count: facts (all) whose needed information was not
+      found.
+    - unresolved_original_fact_count: same, original facts only.
+    - never_queried_fact_count: facts (all) with zero attributed queries —
+      a separate failure mode from searched-and-missed.
+    - spawned_fact_count: facts created by research's overflow-split path
+      (never planning targets).
+    - facts_per_run: total facts in the final state.
+    - web_search_calls / url_content_calls: recorded tool calls per run.
+    - url_content_failures: fetches per run that failed outright (blocked
+      hosts, timeouts, oversized responses) — these consume call budget,
+      produce no content, and structurally cap the page-rescue rate.
+
+    Three populations per repeat, because research's overflow-split path
+    spawns facts that are never queried: all / original / queried as
+    described above. Plus the companion metrics the plan gates on.
+    """
+    summary: dict[str, Any] = {}
+    all_rows = [harness_per_fact_recall(repeat) for repeat in repeats]
+
+    def frac(rows: list[dict[str, Any]], pred, denominator_pred=None) -> float:
+        """Fraction of rows matching pred. Denominator defaults to all rows;
+        pass denominator_pred to restrict the population."""
+        denom = rows if denominator_pred is None else [r for r in rows if denominator_pred(r)]
+        if not denom:
+            return 0.0
+        return _safe_div(sum(1 for r in denom if pred(r)), len(denom))
+
+    for k in ks:
+        key = f"recall_at_{k}"
+        summary[key] = _mean_sd([frac(rows, lambda r: r[key]) for rows in all_rows])
+        summary[f"{key}_original"] = _mean_sd(
+            [frac(rows, lambda r: r[key], lambda r: r["original"]) for rows in all_rows]
+        )
+        summary[f"{key}_queried"] = _mean_sd(
+            [frac(rows, lambda r: r[key], lambda r: r["queries"] > 0) for rows in all_rows]
+        )
+
+    pages_per_repeat = [
+        frac(rows, lambda r: r["with_pages"], lambda r: r["original"]) for rows in all_rows
+    ]
+    summary["recall_with_pages"] = _mean_sd(pages_per_repeat)
+
+    queries_resolved: list[float] = []
+    for rows in all_rows:
+        resolved_queries = [r["queries"] for r in rows if r["present"]]
+        queries_resolved.append(mean(resolved_queries) if resolved_queries else 0.0)
+    summary["queries_per_resolved_fact"] = _mean_sd(queries_resolved)
+
+    summary["coverage"] = _mean_sd(
+        [frac(rows, lambda r: r["queries"] > 0, lambda r: r["original"]) for rows in all_rows]
+    )
+    summary["unresolved_fact_count"] = _mean_sd(
+        [sum(1 for r in rows if not r["present"]) for rows in all_rows]
+    )
+    summary["unresolved_original_fact_count"] = _mean_sd(
+        [sum(1 for r in rows if r["original"] and not r["present"]) for rows in all_rows]
+    )
+    summary["never_queried_fact_count"] = _mean_sd(
+        [sum(1 for r in rows if r["never_queried"]) for rows in all_rows]
+    )
+    summary["spawned_fact_count"] = _mean_sd(
+        [sum(1 for r in rows if not r["original"]) for rows in all_rows]
+    )
+    summary["facts_per_run"] = _mean_sd([len(rep.get("facts", [])) for rep in repeats])
+    summary["web_search_calls"] = _mean_sd(
+        [rep.get("counts", {}).get("web_search_calls", 0) for rep in repeats]
+    )
+    summary["url_content_calls"] = _mean_sd(
+        [rep.get("counts", {}).get("url_content_calls", 0) for rep in repeats]
+    )
+    summary["url_content_failures"] = _mean_sd(
+        [rep.get("counts", {}).get("url_content_failures", 0) for rep in repeats]
+    )
+    return summary

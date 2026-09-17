@@ -316,7 +316,7 @@ class TestCLIJudgedRun:
         """Predefined question with pokemon rubric."""
         env = {
             "MOIRA_EVAL_JUDGE_ENDPOINT": "http://mock",
-            "MOIRA_EVAL_JUDGE_MODEL": "mock-model",
+            "MOIRA_EVAL_JUDGE_MODEL_BATCH": "mock-model",
             "MOIRA_EVAL_JUDGE_API_KEY": "mock-key",
         }
 
@@ -352,7 +352,7 @@ class TestCLIJudgedRun:
         """No --question-id: ad hoc run with general rubric."""
         env = {
             "MOIRA_EVAL_JUDGE_ENDPOINT": "http://mock",
-            "MOIRA_EVAL_JUDGE_MODEL": "mock-model",
+            "MOIRA_EVAL_JUDGE_MODEL_BATCH": "mock-model",
             "MOIRA_EVAL_JUDGE_API_KEY": "mock-key",
         }
 
@@ -386,7 +386,7 @@ class TestCLIJudgedRun:
     def test_unknown_question_id_exits_with_error(self, fixture_db, capsys):
         env = {
             "MOIRA_EVAL_JUDGE_ENDPOINT": "http://mock",
-            "MOIRA_EVAL_JUDGE_MODEL": "mock-model",
+            "MOIRA_EVAL_JUDGE_MODEL_BATCH": "mock-model",
         }
         with patch.dict("os.environ", env):
             sys.argv = [
@@ -409,7 +409,7 @@ class TestCLIJudgedRun:
 
         env = {
             "MOIRA_EVAL_JUDGE_ENDPOINT": "http://mock",
-            "MOIRA_EVAL_JUDGE_MODEL": "mock-model",
+            "MOIRA_EVAL_JUDGE_MODEL_BATCH": "mock-model",
             "MOIRA_EVAL_JUDGE_API_KEY": "mock-key",
         }
 

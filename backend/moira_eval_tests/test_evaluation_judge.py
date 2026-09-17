@@ -458,17 +458,17 @@ class TestParseGeneralResponse:
 class TestJudgeConfigFromEnv:
     def test_returns_none_when_endpoint_missing(self, monkeypatch):
         monkeypatch.delenv("MOIRA_EVAL_JUDGE_ENDPOINT", raising=False)
-        monkeypatch.setenv("MOIRA_EVAL_JUDGE_MODEL", "gpt-4o")
+        monkeypatch.setenv("MOIRA_EVAL_JUDGE_MODEL_BATCH", "gpt-4o")
         assert judge_config_from_env() is None
 
     def test_returns_none_when_model_missing(self, monkeypatch):
         monkeypatch.setenv("MOIRA_EVAL_JUDGE_ENDPOINT", "https://api.openai.com/v1")
-        monkeypatch.delenv("MOIRA_EVAL_JUDGE_MODEL", raising=False)
+        monkeypatch.delenv("MOIRA_EVAL_JUDGE_MODEL_BATCH", raising=False)
         assert judge_config_from_env() is None
 
     def test_returns_config_when_both_set(self, monkeypatch):
         monkeypatch.setenv("MOIRA_EVAL_JUDGE_ENDPOINT", "https://api.openai.com/v1")
-        monkeypatch.setenv("MOIRA_EVAL_JUDGE_MODEL", "gpt-4o")
+        monkeypatch.setenv("MOIRA_EVAL_JUDGE_MODEL_BATCH", "gpt-4o")
         monkeypatch.setenv("MOIRA_EVAL_JUDGE_API_KEY", "sk-test")
         config = judge_config_from_env()
         assert config is not None
@@ -477,10 +477,37 @@ class TestJudgeConfigFromEnv:
 
     def test_strips_whitespace(self, monkeypatch):
         monkeypatch.setenv("MOIRA_EVAL_JUDGE_ENDPOINT", "  https://api.openai.com/v1  ")
-        monkeypatch.setenv("MOIRA_EVAL_JUDGE_MODEL", "  gpt-4o  ")
+        monkeypatch.setenv("MOIRA_EVAL_JUDGE_MODEL_BATCH", "  gpt-4o  ")
         config = judge_config_from_env()
         assert config.endpoint == "https://api.openai.com/v1"
         assert config.model == "gpt-4o"
+
+    def test_purpose_selects_its_own_model_var(self, monkeypatch):
+        monkeypatch.setenv("MOIRA_EVAL_JUDGE_ENDPOINT", "https://api.openai.com/v1")
+        monkeypatch.setenv("MOIRA_EVAL_JUDGE_MODEL_BATCH", "judge-batch")
+        monkeypatch.setenv("MOIRA_EVAL_JUDGE_MODEL_ITERATION", "judge-flash")
+        monkeypatch.setenv("MOIRA_EVAL_JUDGE_MODEL_MILESTONE", "judge-precise")
+
+        assert judge_config_from_env().model == "judge-batch"
+        assert judge_config_from_env("batch").model == "judge-batch"
+        assert judge_config_from_env("iteration").model == "judge-flash"
+        assert judge_config_from_env("milestone").model == "judge-precise"
+
+    def test_purpose_missing_model_var_returns_none(self, monkeypatch):
+        monkeypatch.setenv("MOIRA_EVAL_JUDGE_ENDPOINT", "https://api.openai.com/v1")
+        monkeypatch.setenv("MOIRA_EVAL_JUDGE_MODEL_ITERATION", "judge-flash")
+        # Milestone slot unset: milestone scoring must refuse, not silently
+        # fall back to another purpose's model.
+        assert judge_config_from_env("milestone") is None
+
+    def test_unknown_purpose_raises(self, monkeypatch):
+        import pytest
+
+        from moira_eval.judge import judge_model_var
+
+        with pytest.raises(ValueError, match="unknown judge purpose"):
+            judge_model_var("nonsense")
+        assert judge_model_var("iteration") == "MOIRA_EVAL_JUDGE_MODEL_ITERATION"
 
 
 # ---------------------------------------------------------------------------

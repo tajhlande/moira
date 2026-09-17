@@ -269,7 +269,7 @@ def main() -> None:
     else:
         print(
             "WARNING: judge env vars not set "
-            "(MOIRA_EVAL_JUDGE_ENDPOINT, MOIRA_EVAL_JUDGE_MODEL). "
+            "(MOIRA_EVAL_JUDGE_ENDPOINT, MOIRA_EVAL_JUDGE_MODEL_BATCH). "
             "Falling back to metrics-only.",
             file=sys.stderr,
         )

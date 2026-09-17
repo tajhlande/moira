@@ -1,6 +1,8 @@
 # Retrieval Quality: Implementation Plan
 
-> **Status:** Plan — phases not started. Implements the sequencing in
+> **Status:** In progress — Phase 1 complete (harness + full-sweep
+> milestone baseline, 2026-09-14). Next:
+> 2a or 3. Implements the sequencing in
 > [retrieval-quality.md](retrieval-quality.md), which stays the
 > design-direction document (evidence, failure modes, rationale). This
 > document is the build plan: phases, code touchpoints, tests, gates.
@@ -12,7 +14,7 @@
 
 | Phase | Scope | Testable behavior (gate) | Status |
 |-------|-------|--------------------------|--------|
-| 1 | Retrieval-isolation harness | CLI emits per-fact recall@k + queries-per-fact for a fixed question; repeats quantify variance | Not started |
+| 1 | Retrieval-isolation harness | CLI emits per-fact recall@k + queries-per-fact for a fixed question; repeats quantify variance | **Complete** (milestone baseline: full sweep, 2026-09-14) |
 | 2a | Depth rendering + serialization | `depth` survives snapshots; retry table + UI badges show snippet/page | Not started |
 | 2b | Source-content store + material classes | Fetched bodies stored beyond the serving cap; class upgrades; 4-class badges in UI | Not started |
 | 3 | Delegated query-writer pass | Harness A/B: query-writer vs freeform on same decomposition | Not started |
@@ -170,6 +172,155 @@ water-blood-pressure --repeats 3` prints a per-fact table (recall@k,
 k-found, queries) + summary stats. Record a baseline artifact in
 `agent-docs/` notes; EVAL_LOG stays for full-pipeline scores only.
 
+**Baseline recorded (2026-09-13, live run, `water-blood-pressure` ×3,
+freeform variant, artifact
+`backend/moira_eval/results/harness/water-blood-pressure/freeform/20260913T180953.json`).**
+Headline numbers (original = decomposition facts; queried = facts with ≥1
+attributed query; the run predates the original-fact snapshot, so
+originals are approximated as planning-targeted — undercounts coverage
+slightly):
+
+- recall@5: **0.11** all-facts / **0.14** original / **0.49 ± 0.22** queried
+- recall@1: 0.09 / 0.12 / 0.44 ± 0.29 — recall@1≈recall@5 means hits, when
+  they happen, rank #1; misses don't improve with depth
+- planning coverage: **0.32** of original facts ever got a query
+- queries/resolved fact: **1.00** — every resolution came from a single
+  query; no fact got a second register (the fan-out Phase 4 targets)
+- page rescue: 0.02 (one fact); url_content 1.3/run vs web_search 9.7/run
+- spawn: research's overflow-split path added ~4.7 facts/run that are never
+  queried (excluded from the headline denominator; ~0.9 of the 10-search
+  budget was consumed before spawn even exists)
+- Variance is the story: queried-recall@5 per repeat was 0.33/0.40/0.75 —
+  the lottery, now a number
+- Superseded as the milestone baseline by the full-sweep record below
+  (kept for the original single-question forensics)
+
+**Milestone baseline (2026-09-14, full sweep, all 7 benchmark questions ×
+3 repeats, freeform variant, judge `z-ai/glm-5.2` (milestone), Qwen
+workflow model; rows in
+`backend/moira_eval/results/harness/summary.csv`, artifacts under
+`results/harness/<qid>/freeform/20260914T1*.json`).**
+
+Macro numbers (means over questions):
+
+- **recall@5_original = 0.108 ≈ coverage 0.21 × queried-recall 0.52 — the
+  identity holds almost exactly per-question, not just in aggregate.**
+  Retrieval quality decomposes cleanly: *coverage* (does a decomposition
+  fact ever get an attributed query?) times *queried recall* (given a
+  query, does the needed info appear in top-5?). Coverage is the
+  bottleneck — 2.4× the leverage of query phrasing.
+- Per question (means over 3 repeats):
+
+  | question | queried@5 | coverage | original@5 | facts/run | searches | fetches |
+  |---|---|---|---|---|---|---|
+  | trade-policy | 0.83 | 0.26 | 0.209 | 28.7 | 9.7 | 7.3 |
+  | jazz | 0.75 | 0.18 | 0.107 | 21.7 | 4.7 | 2.3 |
+  | telescope | 0.68 | 0.28 | 0.190 | 22.3 | 7.3 | 4.3 |
+  | cheetos | 0.44 | 0.29 | 0.116 | 14.7 | 8.7 | 4.0 |
+  | future-nostalgia | 0.44 | 0.11 | 0.053 | **44.3** | 9.7 | 2.7 |
+  | water | 0.33 | 0.22 | 0.060 | 27.0 | 9.0 | 2.0 |
+  | tyranitar | **0.15** | **0.089** | **0.020** | 33.3 | 6.3 | 1.0 |
+
+- **Fact explosion drives the coverage ceiling:** ~27 decomposition
+  facts/run macro vs ~8 searches (~1 query per fact per round). At 44
+  facts (future-nostalgia) coverage 0.11 is arithmetically inevitable.
+  Decomposition consolidation is the cheapest lever — halving facts
+  roughly doubles coverage at zero search cost.
+- **tyranitar fails at both levels** (worst queried recall *and* worst
+  coverage) — the one question where query/ranking quality is also
+  broken, not just volume. Consistent with its history (needed fact in
+  pages never fetched).
+- **No reformulation sweep-wide:** queries-per-resolved-fact ≈ 1.0 on
+  every question — single-shot queries; misses are never re-queried
+  (Phase 6's target).
+- **url_content doesn't rescue recall:** 1–7 fetches/run, yet
+  `recall_with_pages` ≈ 0 everywhere — fetches don't target missed facts.
+- **~22% of url_content fetches fail, and they fail on exactly the hosts
+  we most need** (2026-09-14 sweep: 17 of 79 fetches failed; all-time DB
+  tool-metrics: 256 of 1129 = 22.7%). Failures are concentrated on
+  bot-protected/paywalled authoritative sources — bls.gov 3/3, aeaweb.org
+  3/3, usitc.gov 2/2, plus sciencedirect, karger, tandfonline,
+  fred.stlouisfed.org, bea.gov, medium.com, cepr.org — while
+  federalreserve.gov was the only blocked-class host with any success
+  (1/2). This is the editorial/reference taxonomy. Failed fetches still
+  consume per-run call limits and the model sometimes retries the same
+  blocked URL. Fetch unblocking (rational browser-like headers, robots
+  policy decision, cache of partial successes) is a prerequisite for the
+  page-rescue path (Phase 5) to have anything to rank — recorded as a
+  known obstacle there. Harness now counts `url_content_failures` and
+  keeps the bounded error string per failed call (see implementation
+  notes).
+- Judge cost verification: 92 scorer calls, $0.23 actual — matches
+  glm-5.2 pricing (~$0.21 predicted); flash would have been ~$0.05.
+  Milestone judging on every sweep is affordable (~$0.23/sweep).
+
+**Implementation notes (2026-09-13):** landed as described, with these
+concretizations:
+
+- Attribution: fact → queries follows the evidence-request chain
+  (`evidence_requests.target_fact_ids` → `request_attempts[request_id]`,
+  `tool == web_search`). Duplicate query texts count once. Facts with no
+  attributed queries score as `never_queried` (counted separately from
+  unresolved).
+- Rank scoring: each fact's entries are the top-k results of its
+  attributed queries (rank-labeled) plus page excerpts from url_content
+  fetches of those results' URLs. `found_at_k` = min rank among passages
+  the judge marked; `recall@k` derives from it. `with_pages` marks
+  page-only rescues (present in fetched body, not snippets).
+- Gold scorer lives in `moira_eval/gold/<question_id>.json`
+  (`{"entries": [{"fact_keywords": [...], "markers": [...]}]}`);
+  facts matching no gold entry score `present: null` (unknown), not
+  absent — judge-drift guard, not a second oracle.
+- Research executes only **model-emitted** tool calls (text mode carries
+  `request_id` per call for strict attribution) — planned calls from
+  planning's output are advisory. Smoke test fixtures reflect this.
+- Scoring runs after all repeats (a scorer failure never wastes
+  retrieval passes); judge input capped at 30 entries/fact, pages at
+  3000 chars.
+- CLI records the resolved intelligence model + variant label in the
+  artifact; results are timestamp-keyed, not sha-keyed.
+- Failed url_content calls are recorded, not just counted: each recorded
+  tool call keeps a bounded `error` string (300 chars — the only record
+  of *why* a fetch failed; output is empty on failure), repeat counts
+  include `url_content_failures`, and the summary/CSV carry
+  `url_content_failures` mean/sd (added 2026-09-14 after the blocked-host
+  finding).
+- Original-vs-spawn separation (added after the first live run): the
+  harness captures decomposition's fact ids via a `values`-mode stream and
+  stores `original_fact_ids` per repeat; metrics report three populations
+  (all / original / queried) plus `coverage` and `spawned_fact_count`,
+  because overflow-split spawn was deflating the all-facts denominator.
+- Every run appends a row to the accumulating summary CSV at
+  `backend/moira_eval/results/harness/summary.csv` (question_id, variant,
+  model, timestamp, repeats, then mean/sd per summary field; the header
+  grows to accommodate new fields, old rows gain blanks). Field
+  definitions live in the `harness_recall_summary` docstring in
+  `backend/moira_eval/metrics.py`.
+- Runner plumbing: `./run.sh eval:retrieval ...` (sources `.env` for
+  MOIRA_SECRETS_KEY, passes MOIRA_CONFIG_FILE/MOIRA_DATA_DIR like the dev
+  commands — the harness loads services in-process, unlike other eval
+  sub-actions).
+- Judge models are purpose-scoped env slots (shared endpoint/key):
+  `MOIRA_EVAL_JUDGE_MODEL_BATCH` (full-pipeline eval), and for this
+  harness `MOIRA_EVAL_JUDGE_MODEL_ITERATION` (default; cheap judge for
+  A/B iteration) vs `MOIRA_EVAL_JUDGE_MODEL_MILESTONE` (`--milestone`
+  flag; precise judge for baselines). Chosen after a head-to-head
+  rescore (2026-09-14): judges disagree on ~1/4 of borderline verdicts,
+  flash skews loose (false positives on generic snippets), so iteration
+  and milestone scoring are never mixed. Artifacts and the summary CSV
+  record `judge_model` alongside the workflow model.
+- Batch-2 forensics (2026-09-14, second water run): coverage is the
+  ceiling — only 4–6 of ~21–29 decomposition facts get any attributed
+  query per repeat; ~half of web_search calls are unattributed
+  (model-issued, no request linkage) and thus invisible to promotion
+  and to scoring. Both judges confirm repeats 1–2 were genuine misses
+  (collapse is real variance, not the judge swap). Phase 3/4 ordering
+  should weigh facts-touched-per-run (attribution discipline,
+  decomposition consolidation) above per-query phrasing quality.
+
+Remaining for the gate: done — baseline above. A gold file for
+`water-blood-pressure` would enable judge-free re-scoring later.
+
 ## Phase 2a — Depth rendering + serialization (ships independently)
 
 **Goal:** "what did the agent actually have" becomes a serialized,
@@ -319,6 +470,15 @@ overhaul. **Requires Phase 2b** (fetched bodies must land in the store).
   with harness numbers before enabling by default; default off.
 - Fallbacks: fetch failures degrade to snippet-only results (today's
   behavior); N fetched per search capped (default 3) — budget discipline.
+- **Known obstacle — blocked fetches (2026-09-14 sweep data):** ~22% of
+  url_content fetches fail outright, concentrated on the authoritative
+  hosts passage ranking most needs (bls.gov, aeaweb.org, sciencedirect,
+  fred.stlouisfed.org, …). Snippet-only degradation on those hosts
+  reproduces today's page-level luck rather than fixing it. Before or
+  alongside this phase: fetch unblocking work (headers/robots policy,
+  failure-aware URL selection that stops retrying known-blocked hosts
+  within a run). The harness's `url_content_failures` count is the
+  regression signal.
 - **Tests:** BM25 unit tests (known corpus, expected ranking); chunking
   edge cases; degradation paths; integration test with mocked fetches.
   Harness variant `passage`.

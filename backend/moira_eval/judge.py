@@ -18,9 +18,16 @@ keeps it honest.
 
 Configuration via environment variables:
 
-- ``MOIRA_EVAL_JUDGE_ENDPOINT`` — base URL (e.g. ``https://api.openai.com/v1``)
-- ``MOIRA_EVAL_JUDGE_MODEL`` — model ID (e.g. ``gpt-4o``)
+- ``MOIRA_EVAL_JUDGE_ENDPOINT`` — base URL (e.g. ``https://api.openrouter.ai/v1``)
+- ``MOIRA_EVAL_JUDGE_MODEL_BATCH`` — judge model for the full-pipeline
+  batch evaluation
+- ``MOIRA_EVAL_JUDGE_MODEL_ITERATION`` — judge model for cheap
+  retrieval-harness iteration runs
+- ``MOIRA_EVAL_JUDGE_MODEL_MILESTONE`` — judge model for
+  retrieval-harness milestone baselines
 - ``MOIRA_EVAL_JUDGE_API_KEY`` — API key (bearer token)
+
+Endpoint and API key are shared; only the model is per-purpose.
 """
 
 import logging
@@ -195,18 +202,42 @@ class JudgeError(Exception):
 # ---------------------------------------------------------------------------
 
 _ENV_ENDPOINT = "MOIRA_EVAL_JUDGE_ENDPOINT"
-_ENV_MODEL = "MOIRA_EVAL_JUDGE_MODEL"
 _ENV_API_KEY = "MOIRA_EVAL_JUDGE_API_KEY"
 
+# One model slot per eval function — the batch (full-pipeline) evaluation,
+# retrieval-harness iteration runs, and retrieval-harness milestone
+# baselines are deliberately judged by different models (cheap/fast for
+# iteration, precise/comparable for batch and milestone scoring).
+_JUDGE_MODEL_VARS = {
+    "batch": "MOIRA_EVAL_JUDGE_MODEL_BATCH",
+    "iteration": "MOIRA_EVAL_JUDGE_MODEL_ITERATION",
+    "milestone": "MOIRA_EVAL_JUDGE_MODEL_MILESTONE",
+}
 
-def judge_config_from_env() -> JudgeConfig | None:
+
+def judge_model_var(purpose: str) -> str:
+    """Return the env var name holding the judge model for ``purpose``."""
+    try:
+        return _JUDGE_MODEL_VARS[purpose]
+    except KeyError:
+        raise ValueError(
+            f"unknown judge purpose {purpose!r}; expected one of {sorted(_JUDGE_MODEL_VARS)}"
+        ) from None
+
+
+def judge_config_from_env(purpose: str = "batch") -> JudgeConfig | None:
     """Build a ``JudgeConfig`` from environment variables.
+
+    ``purpose`` selects the model variable: ``"batch"`` (full-pipeline
+    evaluation, the default), ``"iteration"`` (retrieval-harness
+    iteration runs) or ``"milestone"`` (retrieval-harness milestone
+    baselines). The endpoint and API key are shared across purposes.
 
     Returns ``None`` if the endpoint or model is not set, signalling the
     caller to fall back to metrics-only mode.
     """
     endpoint = os.environ.get(_ENV_ENDPOINT, "").strip()
-    model = os.environ.get(_ENV_MODEL, "").strip()
+    model = os.environ.get(judge_model_var(purpose), "").strip()
     if not endpoint or not model:
         return None
     api_key = os.environ.get(_ENV_API_KEY, "").strip()

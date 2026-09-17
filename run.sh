@@ -20,6 +20,7 @@ usage() {
     echo "  eval:invoke     Trigger workflow runs without the UI (moira_eval.invoke)"
     echo "  eval:batch      Batch-evaluate all benchmark questions (moira_eval.batch)"
     echo "  eval:log        Log results to EVAL_LOG.md (moira_eval.log)"
+    echo "  eval:retrieval    Retrieval-isolation harness (moira_eval.retrieval_harness)"
     echo "  test            Run all tests"
     echo "  test:backend    Run backend tests"
     echo "  test:eval       Run evaluation harness tests"
@@ -183,6 +184,20 @@ cmd_eval_log() {
     uv run --project "$REPO_ROOT/backend" --env-file "$REPO_ROOT/.env-eval" python -m moira_eval.log "${@:2}"
 }
 
+cmd_eval_retrieval() {
+    # The harness loads app config and services in-process (unlike the other
+    # eval sub-actions, which go through the running server or the DB), so it
+    # needs the same environment plumbing as the dev/prod commands.
+    check_config
+    check_data_dir
+    # Same key the backend uses (.env) — the harness decrypts stored
+    # credentials in-process via init_services.
+    source "$REPO_ROOT/.env"
+    MOIRA_CONFIG_FILE="$CONFIG_FILE" MOIRA_DATA_DIR="$DATA_DIR" MOIRA_SECRETS_KEY="${MOIRA_SECRETS_KEY:-}" \
+        uv run --project "$REPO_ROOT/backend" --env-file "$REPO_ROOT/.env-eval" \
+        python -m moira_eval.retrieval_harness "${@:2}"
+}
+
 cmd_test() {
     cmd_test_backend
     cmd_test_eval
@@ -248,6 +263,7 @@ case "${1:-}" in
     eval:invoke)     cmd_eval_invoke "$@" ;;
     eval:batch)      cmd_eval_batch "$@" ;;
     eval:log)        cmd_eval_log "$@" ;;
+    eval:retrieval)    cmd_eval_retrieval "$@" ;;
     test)            cmd_test ;;
     test:backend)    cmd_test_backend ;;
     test:eval)       cmd_test_eval ;;
