@@ -12,6 +12,7 @@ import type {
   ConclusionRecord,
   CitationRecord,
 } from "../api/client";
+import SourceDepthBadge from "./SourceDepthBadge.vue";
 
 const props = defineProps<{
   knowledge: KnowledgeSummary;
@@ -52,6 +53,25 @@ const conclusionCounts = computed(() => {
 });
 
 const citationCount = computed(() => props.knowledge.citations?.length ?? 0);
+
+// Citation id → depth lookup so fact citation refs can carry the material
+// badge without repeating the full citation entry per fact.
+const citationDepth = computed<Map<string, string>>(() => {
+  const map = new Map<string, string>();
+  for (const c of props.knowledge.citations ?? []) {
+    if (c.id && c.depth) map.set(c.id, c.depth);
+  }
+  return map;
+});
+
+// Citation id → true body size (chars) for the badge hover text.
+const citationSize = computed<Map<string, number>>(() => {
+  const map = new Map<string, number>();
+  for (const c of props.knowledge.citations ?? []) {
+    if (c.id && c.byte_size != null) map.set(c.id, c.byte_size);
+  }
+  return map;
+});
 
 const hasContent = computed(
   () =>
@@ -263,8 +283,12 @@ function toggleExpand() {
                     v-for="cid in f.citation_ids"
                     :key="cid"
                     class="citation-ref"
-                    >{{ cid }}</span
-                  >
+                    >{{ cid
+                    }}<SourceDepthBadge
+                      :depth="citationDepth.get(cid)"
+                      :size="citationSize.get(cid)"
+                      class="citation-ref-depth"
+                  /></span>
                 </div>
               </div>
             </div>
@@ -317,6 +341,11 @@ function toggleExpand() {
             class="source-item"
           >
             <span class="source-name">{{ cit.source }}</span>
+            <SourceDepthBadge
+              :depth="cit.depth"
+              :size="cit.byte_size"
+              class="source-depth"
+            />
             <a
               v-if="cit.url"
               :href="cit.url"

@@ -121,6 +121,11 @@ class UrlContentTool(BaseTool):
             success=True,
             duration_ms=elapsed_ms,
             metadata={
+                # Reserved side-channel key: the pipeline (research node)
+                # persists this pre-window body to the source-content store
+                # and strips it from every agent/stream-facing view. Nothing
+                # downstream should read it except store hydration.
+                "full_body": content,
                 "results": [
                     {
                         "url": url,
@@ -128,7 +133,7 @@ class UrlContentTool(BaseTool):
                         "snippet": content[:_METADATA_SNIPPET_LENGTH],
                         "content": content[:_METADATA_CONTENT_LENGTH],
                     }
-                ]
+                ],
             },
         )
 

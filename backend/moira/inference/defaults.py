@@ -17,8 +17,8 @@ repair paths lower it).
 
 The specific values for ``top_p``, ``top_k``, ``min_p``,
 ``presence_penalty``, and ``repetition_penalty`` below are the
-recommended general inference parameters for 
-Qwen3.5 architecture family models. 
+recommended general inference parameters for
+Qwen3.5 architecture family models.
 
 """
 

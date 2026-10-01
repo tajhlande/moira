@@ -1,8 +1,9 @@
 # Retrieval Quality: Implementation Plan
 
-> **Status:** In progress — Phase 1 complete (harness + full-sweep
-> milestone baseline, 2026-09-14). Next:
-> 2a or 3. Implements the sequencing in
+> **Status:** In progress — Phase 3 gate run complete (2026-09-18: null
+> macro result; register enforcement extracted as Phase 4). Phases 1,
+> 2a, 2b complete (milestone baseline:
+> full sweep, 2026-09-14). Implements the sequencing in
 > [retrieval-quality.md](retrieval-quality.md), which stays the
 > design-direction document (evidence, failure modes, rationale). This
 > document is the build plan: phases, code touchpoints, tests, gates.
@@ -15,16 +16,23 @@
 | Phase | Scope | Testable behavior (gate) | Status |
 |-------|-------|--------------------------|--------|
 | 1 | Retrieval-isolation harness | CLI emits per-fact recall@k + queries-per-fact for a fixed question; repeats quantify variance | **Complete** (milestone baseline: full sweep, 2026-09-14) |
-| 2a | Depth rendering + serialization | `depth` survives snapshots; retry table + UI badges show snippet/page | Not started |
-| 2b | Source-content store + material classes | Fetched bodies stored beyond the serving cap; class upgrades; 4-class badges in UI | Not started |
-| 3 | Delegated query-writer pass | Harness A/B: query-writer vs freeform on same decomposition | Not started |
-| 4 | Per-fact fan-out + fact-type templates | Fan-out variant measured by harness; budget watch | Not started |
-| 5 | Passage-level retrieval | web_search returns ranked passages; recall@k lift vs Phase-1 baseline | Not started |
-| 6 | Within-run feedback memory | Zero-yield queries force register change; PRF reformulation; harness validates | Not started |
+| 2a | Depth rendering + serialization | `depth` survives snapshots; retry table + UI badges show snippet/page | **Complete** (2026-09-17) |
+| 2b | Source-content store + material classes | Fetched bodies stored beyond the serving cap; class upgrades; 4-class badges in UI | **Complete** (2026-09-17) |
+| 3 | Delegated query-writer pass | Harness A/B: query-writer vs freeform on same decomposition | **Gate run complete** (2026-09-18: null macro result — see implementation notes; register enforcement extracted as Phase 4) |
+| 4 | Register-enforced query generation | ≥2 distinct registers per fact set enforced in code; register distribution reported alongside recall | Not started |
+| 5 | Per-fact fan-out + fact-type templates | Fan-out variant measured by harness; budget watch | Not started |
+| 6 | Passage-level retrieval | web_search returns ranked passages; recall@k lift vs Phase-1 baseline | Not started |
+| 7 | Within-run feedback memory | Zero-yield queries force register change; PRF reformulation; harness validates | Not started |
+| 8 | Source-store lifecycle (retention/eviction) | `source_contents` size stays bounded under a configurable policy; fresh runs unaffected | Not started |
 
 Phases 1 and 2 are independent and can proceed in parallel. Phase 3
-depends on 1 (baseline). Phase 4 depends on 3. Phase 5 depends on 2b
-(store hydration). Phase 6 depends on 3 (query-writer is the consumer).
+depends on 1 (baseline). Phase 4 (register enforcement) depends on 3.
+Phase 5 (fan-out) depends on 4 — fanning out a single-register variant
+set would just buy more of the same miss. Phase 6 depends on 2b (store
+hydration). Phase 7 depends on 3/4 (the writer is the consumer). Phase
+8 is store hygiene: it depends only on 2b and can land at any
+point — it should land before long-running use makes unbounded growth a
+real problem.
 
 ## Grounding: what the code actually does
 
@@ -185,7 +193,7 @@ slightly):
   they happen, rank #1; misses don't improve with depth
 - planning coverage: **0.32** of original facts ever got a query
 - queries/resolved fact: **1.00** — every resolution came from a single
-  query; no fact got a second register (the fan-out Phase 4 targets)
+  query; no fact got a second register (the fan-out Phase 5 targets)
 - page rescue: 0.02 (one fact); url_content 1.3/run vs web_search 9.7/run
 - spawn: research's overflow-split path added ~4.7 facts/run that are never
   queried (excluded from the headline denominator; ~0.9 of the 10-search
@@ -232,7 +240,7 @@ Macro numbers (means over questions):
   pages never fetched).
 - **No reformulation sweep-wide:** queries-per-resolved-fact ≈ 1.0 on
   every question — single-shot queries; misses are never re-queried
-  (Phase 6's target).
+  (Phase 7's target).
 - **url_content doesn't rescue recall:** 1–7 fetches/run, yet
   `recall_with_pages` ≈ 0 everywhere — fetches don't target missed facts.
 - **~22% of url_content fetches fail, and they fail on exactly the hosts
@@ -246,7 +254,7 @@ Macro numbers (means over questions):
   consume per-run call limits and the model sometimes retries the same
   blocked URL. Fetch unblocking (rational browser-like headers, robots
   policy decision, cache of partial successes) is a prerequisite for the
-  page-rescue path (Phase 5) to have anything to rank — recorded as a
+  page-rescue path (Phase 6) to have anything to rank — recorded as a
   known obstacle there. Harness now counts `url_content_failures` and
   keeps the bounded error string per failed call (see implementation
   notes).
@@ -314,7 +322,7 @@ concretizations:
   query per repeat; ~half of web_search calls are unattributed
   (model-issued, no request linkage) and thus invisible to promotion
   and to scoring. Both judges confirm repeats 1–2 were genuine misses
-  (collapse is real variance, not the judge swap). Phase 3/4 ordering
+  (collapse is real variance, not the judge swap). Phase 3/5 ordering
   should weigh facts-touched-per-run (attribution discipline,
   decomposition consolidation) above per-query phrasing quality.
 
@@ -350,11 +358,14 @@ store": full bodies beyond the serving cap, material-class enum, hydration
 on fetch.
 
 - **Migration** `025_source_contents.sql`: table
-  `source_contents(url_hash TEXT PRIMARY KEY, url TEXT, run_id TEXT,
+  `source_contents(url_hash TEXT, url TEXT, run_id TEXT,
   citation_id TEXT, material_class TEXT, content TEXT, content_type TEXT,
-  byte_size INTEGER, fetched_at TEXT)`. Per-run scoped now (`run_id`
-  column; cross-run reuse is a later policy flip). In moira.db, not a
-  sidecar file — it joins against runs for forensics.
+  byte_size INTEGER, truncated INTEGER, fetched_at TEXT,
+  PRIMARY KEY (run_id, url_hash))`. Per-run scoped now (`run_id` column;
+  cross-run reuse is a later policy flip). In moira.db, not a sidecar
+  file — it joins against runs for forensics. The key includes `run_id`
+  so storage scope matches `get`/`evict_run` scope: two runs fetching
+  the same URL keep independent rows.
 - **Class enum:** carry it in the existing `Citation.depth` field, widened
   to `snippet | clipped | full | summary` (legacy `"page"` renders as
   `clipped`). One field, one vocabulary, all consumers — avoids a
@@ -373,7 +384,7 @@ on fetch.
   already bounds it, `url_content.py:26`) into the store and set
   `depth = "full"` (or `clipped` if truncated) on the citation; `Citation.content`
   stays the 5,000-char serving window, unchanged. Fetch-on-miss
-  re-hydration composes later (Phase 5 / the deferred tool).
+  re-hydration composes later (Phase 6 / the deferred tool).
 - `knowledge_summary()` serializes the class flag (from 2a) but never the
   body — snapshots stay lean.
 - UI: badges upgrade to the 4-class vocabulary (`KnowledgePanel.vue`,
@@ -387,6 +398,29 @@ on fetch.
 
 **Gate:** after a run that fetched a long page, the store row exists with
 the full body; the citation serializes `depth: "full"`; UI shows it.
+
+**Implementation notes (2026-09-17):** landed as described, with these
+refinements:
+
+- Full body travels from `url_content` to the store via a reserved
+  metadata key (`full_body`) — a side channel the research node strips
+  from every agent-facing and stream view (`_strip_reserved_metadata`),
+  so neither the writer events nor `tool_results_log` ever carry 100K
+  bodies. The 5K `Citation.content` window is unchanged by design.
+- Store writes go through the async write queue (fire-and-forget, same
+  pattern as executor metrics). When store services are absent the
+  citation is marked truthfully `clipped` (window), not `full`.
+- `Citation.byte_size` records the true fetched size; it feeds
+  `knowledge_summary` and the UI hover ("N chars stored") alongside the
+  depth badge.
+- **Key fix (same day):** the table initially keyed `url_hash` alone, so
+  run B's fetch of a URL run A had fetched stole the row — the storage
+  scope contradicted the `get`/`evict_run` scope. Re-keyed to composite
+  `PRIMARY KEY (run_id, url_hash)` (migration 025 rewritten in place, live
+  table dropped and re-created, no data preserved); the redundant
+  `run_id` index was dropped because the composite PK's leftmost column
+  covers run-scoped queries. Regression tests pin cross-run independence
+  and eviction asymmetry.
 
 ## Phase 3 — Delegated query-writer pass
 
@@ -410,7 +444,7 @@ targeted fact.
   attributed to a request with targeted facts and the config flag
   `research.query_writer_enabled` is on, the model's query is replaced by
   the writer's first query, and remaining variants are held as the
-  fan-out list (Phase 4 consumes them). Record both original and written
+  fan-out list (Phase 5 consumes them). Record both original and written
   query in `request_attempts` (extend the ledger entry with
   `written_query`, `register`) — forensics + A/B attribution.
 - **Tests:** unit tests with a mocked client asserting register diversity,
@@ -421,7 +455,139 @@ targeted fact.
 **Gate:** harness A/B on ≥ 2 questions shows recall delta freeform vs
 query-writer with variance bounds.
 
-## Phase 4 — Per-fact fan-out + fact-type templates
+**Implementation notes (2026-09-17):** landed as described, with these
+refinements:
+
+- Writer module is `backend/moira/workflow/nodes/query_writer.py`
+  (`write_queries(...)`), prompted by `query_writer.system` in
+  `resources/prompts.md`. Output normalization enforces the contract
+  mechanically: ≤ `MAX_QUERIES` (3), ≤ 60 chars each, dedup within the
+  set, suppression of already-tried queries (case/whitespace-blind),
+  and *any* model/parse failure degrades to `[]` — the writer can only
+  add suggestions, never block a search.
+- The hook lives in `_rewrite_calls_with_writer` (research.py), called
+  from both tool loops *after* call validation but *before*
+  `_execute_tools`, so rewritten queries still pass through near-dupe
+  interception and the run-scoped query ledger like any other query.
+  Only `web_search` calls attributed (via `request_id`) to an evidence
+  request with ≥ 1 targeted fact are rewritten; model free-issues pass
+  through untouched. Writer output is cached per request id within a
+  batch — several calls serving one request share one sub-call.
+- Ledger (`request_attempts`) entries gain `original_query`,
+  `written_query`, and `register` when a rewrite happened; `query` is
+  what actually executed. Both phrasings are therefore forensically
+  visible, and the harness/spreadsheet can attribute hits to the
+  writer vs the model.
+- Remaining writer variants ride in the rewrite record as
+  `queued_variants` — Phase 5's fan-out consumes them; they are not
+  executed in Phase 3 (depth stays 1 query per call).
+- Config: `MoiraConfig.research` (`ResearchSettings`):
+  `query_writer_enabled` (default false) + `query_writer_model`
+  (empty = same workflow model; the plan's resolved open question).
+  Harness wiring: `_apply_variant(config, variant)` in
+  `moira_eval/retrieval_harness.py` maps the `--variant query-writer`
+  label to the flag, so the A/B is
+  `./run.sh eval:retrieval --question <qid> --variant query-writer`
+  vs `freeform` on the same decomposition, scored identically.
+- Tests: `tests/test_query_writer.py` (7 — normalization contract,
+  tried-suppression, decline-to-empty, prompt carries context),
+  `TestQueryWriterHook` in `tests/test_research_internals.py` (5 —
+  rewrite/pass-through/decline/ledger), `TestApplyVariant` in
+  `moira_eval_tests/test_retrieval_harness.py` (3). Full suite green
+  (1254 backend+eval), ruff clean.
+
+**A/B interim (2026-09-18, water-blood-pressure ×3, both arms judged by
+glm-5.2):** query-writer 6 facts hit (4/1/1 per repeat, ranks 1–4) vs
+freeform 2 (2/0/0, all rank 1); recall@5 queried 0.58 vs 0.22,
+original 0.13 vs 0.05. Direction positive, but n=3 on one question is
+variance-dominated — the full-sweep gate run decides. The judge-model
+confound (flash judged the arm before the 5.2 rescore) was checked: both
+judges produced identical verdicts on this artifact. Writer forensics:
+it fired on every attributed call (4/2/4 rewrites vs 8/4/10 searches);
+the remaining searches were unattributed model free-issues that bypass
+it. All rewrites landed in the `technical` register.
+
+**Full-sweep gate (2026-09-18, 7 questions × 3 repeats, both arms
+glm-5.2):** macro recall@5-original 0.108 (freeform) vs 0.109
+(query-writer) — **null result**. recall@5-queried 0.52 vs 0.53;
+coverage 0.207 vs 0.206; queries/resolved 1.00 vs 0.93. Per-question
+r@5-original deltas: cheetos +0.08, tyranitar +0.05, jazz +0.02,
+future-nostalgia +0.01, trade −0.02, water −0.03, telescope −0.11.
+Compounding notes: the query-writer arm decomposed into MORE facts
+(31.0 vs 27.4/run — worse denominators), used slightly fewer searches
+(7.2 vs 7.9) and fetches (2.6 vs 3.4); its url_content blocked/run
+(0.24) is real while the baseline column is missing data (the failure
+counter postdates the 09-14 sweep — blank, not zero). Hook forensics
+across the sweep: 102 rewrites, ~85% of attributed calls — but **all
+102 in the `technical` register**. The designed treatment (deliberate
+register diversity) was not delivered: the same 27B model rephrases in
+one academic register regardless of the prompt's three-register
+contract. Verdict: Phase 3 alone is null, but the treatment was
+diluted — the writer needs mechanical register enforcement (per the
+inherited principle: structured-data rules over prompt-hope). Extracted
+as Phase 4; only then can Phase 5 fan-out test deliberate diversity.
+
+**rep1 forensics (why one repeat covered 2/20 requests):** not budget
+(28/150 consumed), not dedup (0), not blocked fetches (0) — the model
+emitted calls in only 2 of the 3 internal rounds
+(`DEFAULT_MAX_ROUNDS`, research.py:66), then declared research done
+with 122 budget unspent ("model believes it's done" termination). Two
+compounding observations: (a) 8 of the 20 evidence requests were
+extraction-detail requests ("Methods detail from the key relevant
+source…") that presuppose stage-one identification of that source —
+premature specificity the research pass skipped past; (b) the harness
+subgraph runs a single research invocation with no review/retry
+routing, so harness coverage measures intra-pass discipline and
+under-claims what the full graph (which routes back through planning on
+review failure) would retrieve. Full-sweep A/B gate run pending.
+- The Phase-3 gate: **run complete** (2026-09-18, results above — live
+  model + SearXNG, same repeat count as the freeform baseline).
+
+## Phase 4 — Register-enforced query generation
+
+**Goal:** variant sets are register-diverse by construction — enforced in
+code, not prompt-hope. Extracted from the Phase-3 gate (2026-09-18): the
+writer hook fired on ~85% of attributed calls across the sweep, but
+every rewrite came back in the `technical` register (102/102) — the
+prompt's three-register contract did not survive contact with the model.
+
+- **Slot assignment is code's job:** the hook assigns 2–3 distinct
+  registers per fact from the fact-type template table
+  (retrieval-quality.md §"Fact-type query templates": numeric/spec →
+  spec-sheet + product-review registers, causal/medical → scholarly,
+  cost/comparative → forum/"vs" colloquial, event/historical → news).
+  The writer does not choose registers; it fills them.
+- **Fill-and-check:** the writer prompt passes the assigned slots;
+  the response validator (`_normalize_response` in
+  `backend/moira/workflow/nodes/query_writer.py`) requires one query
+  per assigned register. A missing or off-register slot falls back to
+  a deterministic templated skeleton built from
+  `fact_needed`/`subject`; duplicate registers collapse. Compliance is
+  a structural property of the output, never an assumption.
+- **No execution change:** one query per fact still executes (first
+  variant); `queued_variants` still queue for Phase 5. The rewrite
+  ledger already records `register` per variant — it becomes a gate
+  metric (register distribution), reported alongside recall by the
+  harness.
+- **Tests:** assignment is table-driven by fact type; skeleton fallback
+  when the writer omits or echoes slots; off-register
+  relabel-or-drop; distribution shows ≥ 2 distinct registers per fact
+  set. Harness variant `query-writer-enforced` (the label exists for
+  the A/B; fold into `query-writer` if it wins).
+- **Design note:** deciding whether to classify fact type in code
+  (keyword heuristics on `fact_needed`) or to ask the writer for it
+  with the assignment — code keeps it deterministic; the decomposition
+  node already emits `subject` that can anchor it.
+
+**Gate:** enforced vs current query-writer on the same question set,
+same judge (glm-5.2): register distribution must show ≥ 2 registers in
+real sweeps, recall@5 compared against the 2026-09-18 query-writer
+numbers. Reads two ways: enforcement alone lifts recall → Phase 5
+fan-out's extra-search trade may be unnecessary; diversity moves
+nothing → the miss is ranking/snippets, and Phases 5/6 carry the
+burden.
+
+## Phase 5 — Per-fact fan-out + fact-type templates
 
 **Goal:** issue all register variants per fact; a fact sinks only if every
 register misses.
@@ -439,9 +605,9 @@ register misses.
   `budget.default_limit` (150) and web_search `call_limit_per_run` (10).
   The harness measures whether to raise the limit or keep breadth — no
   default change until numbers say so.
-- Templates: the fact-type → registers table is data the query-writer
-  prompt consumes (Phase 3 already encodes it); Phase 4's addition is
-  *execution*, not more prompt surface.
+- Templates: the fact-type → registers table now feeds code-enforced
+  slot assignment (Phase 4); Phase 5's addition is *execution* of the
+  filled variant set, not more prompt surface.
 - **Tests:** hook issues N variants once each; cross-variant exemption +
   prior-round dedup; merge behavior; budget accounting (N calls charged).
   Harness variant `fanout`.
@@ -449,7 +615,7 @@ register misses.
 **Gate:** harness variant `fanout` vs `query-writer` on the question set:
 recall lift per additional search spent.
 
-## Phase 5 — Passage-level retrieval
+## Phase 6 — Passage-level retrieval
 
 **Goal:** convert page-level luck into passage-level recall — the web_search
 overhaul. **Requires Phase 2b** (fetched bodies must land in the store).
@@ -486,7 +652,7 @@ overhaul. **Requires Phase 2b** (fetched bodies must land in the store).
 **Gate:** recall@k(large) lift over Phase-1 baseline on ≥ 2 questions;
 cost per resolved fact reported.
 
-## Phase 6 — Within-run feedback memory
+## Phase 7 — Within-run feedback memory
 
 **Goal:** mechanical feedback instead of re-rolling guesses.
 
@@ -512,17 +678,68 @@ cost per resolved fact reported.
   variant `feedback` (repeats should show tighter variance, not just
   higher mean).
 
-**Gate:** harness repeats: unresolved-fact variance shrinks vs Phase 3/4
-artifact.
+**Gate:** harness repeats: unresolved-fact variance shrinks vs Phase 3/5
+artifacts.
+
+## Phase 8 — Source-store lifecycle (retention and eviction)
+
+**Goal:** `source_contents` growth stays bounded. Today nothing calls
+`evict_run`; the table accumulates ~100K-char bodies per fetched page
+indefinitely. Standing policy (2026-09-17): the store is per-run and a
+fresh workflow run fetches fresh content — cross-run reuse is a separate
+future debate. This phase only bounds the table; it does not change
+visibility semantics.
+
+- **Policy (configurable combination, defaults chosen at
+  implementation):**
+  - **Max age** — delete rows older than
+    `source_store.max_age_days` (default proposal: 30) based on
+    `fetched_at`.
+  - **Size cap** — when total `byte_size` exceeds
+    `source_store.max_total_bytes` (default proposal: 500 MB), evict
+    oldest-`fetched_at` rows (LRU-by-age as the proxy; there is no
+    access-time tracking and adding one is not worth it for this
+    store) until under the cap. Age wins first, then cap.
+  - **Per-run ceiling guardrail** — a pathological run can fetch far
+    more than most; `evict_run` remains available for explicit
+    cleanup (e.g. wired into run deletion later, if runs become
+    deletable).
+- **Mechanism:** extend the existing periodic-cleanup pattern
+  (service_setup already runs a search-cache cleanup thread) with a
+  `source_contents` sweeper — same thread or a sibling. Lazy alternative
+  (run the sweep opportunistically on hydration, every N-th write) is
+  acceptable if the thread plumbing fights back; state the choice in
+  implementation notes.
+- **Repo primitives:** beyond `evict_run`, the repository needs
+  `delete_older_than(cutoff) -> int` and
+  `evict_to_size(max_total_bytes) -> int` (oldest-first). Keep them
+  plain SQL so the sweeper is cheap; avoid loading bodies into Python
+  (`SUM(byte_size)`, delete by `fetched_at` ordering, count-only
+  reads).
+- **Config:** add the two knobs to `SourceStoreConfig` next to
+  `max_body_chars`; document that `0`/`None` disables a dimension.
+- **Tests:** repo-level — age cutoff deletes old rows only; cap
+  eviction removes oldest first and stops at the cap; disabled
+  dimensions are no-ops. Sweep-level — the sweeper calls the repo with
+  configured values; a failure in the sweep is logged, never raises
+  into the run path.
+- **Non-goals:** no cross-run body sharing, no compression, no
+  access-frequency (true LRU) tracking — this store's workload (write
+  once, read rarely, forensics later) doesn't justify the bookkeeping.
+
+**Gate:** with the policy active, inserting more content than the cap
+allows reduces the table to the cap (oldest evicted); recent runs'
+`get()` results are unaffected; sweep failures never break a run.
 
 ## Open questions (defaults chosen above)
 
 | Question | Default | Revisit when |
 |----------|---------|--------------|
 | Query-writer model: small model vs same model | Same model, separate cheap prompt (Phase 3) | Harness latency/cost numbers |
-| Fan-out vs 10-call ceiling | No limit change until harness says depth wins (Phase 4) | Phase 4 results |
-| BM25 vs embeddings for passages | Inline BM25 (Phase 5) | Recall shortfall vs manual inspection |
+| Fan-out vs 10-call ceiling | No limit change until harness says depth wins (Phase 5) | Phase 5 results |
+| BM25 vs embeddings for passages | Inline BM25 (Phase 6) | Recall shortfall vs manual inspection |
 | Store body cap | 100K chars, `full` only when body fit (Phase 2b) | summarize-source.md scheduling |
+| Store retention policy | Max age + size cap sweep (Phase 8) | Observed growth rate; cross-run reuse debate |
 | Playbook persistence | Deferred (per-run only) | retrieval-quality.md parked list |
 | Engine determinism | Assume stable SearXNG config; harness records engines per result | Engine mix drift in harness artifacts |
 
@@ -531,14 +748,14 @@ artifact.
 - Cross-run query playbook, engine fusion — see retrieval-quality.md
   §Deferred.
 - `summarize_source` tool — summarize-source.md, unscheduled; consumes the
-  Phase 2b store when built.
+  Phase 2b store (built 2026-09-17).
 
 ## Verification (every phase)
 
 - Backend: `uv run pytest tests/ -q -x --ignore=tests/test_url_content.py`
   (+ `moira_eval_tests` where touched), `.venv/bin/ruff check`,
   `.venv/bin/ruff format --check` — from `backend/`.
-- Frontend (2a, 2b, 6): `npm run lint`, `npm run test:unit`,
+- Frontend (2a, 2b, 7): `npm run lint`, `npm run test:unit`,
   `npm run build` — from `frontend/`.
 - Harness numbers recorded under `backend/moira_eval/results/harness/`
   and summarized in the phase table above when a phase completes.

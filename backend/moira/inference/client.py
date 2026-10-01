@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 
 from moira.inference.adapters import ToolCallingAdapter, get_adapter
-from moira.inference.defaults import DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
+from moira.inference.defaults import DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE
 from moira.tools.base import ToolCall, ToolDefinition
 
 logger = logging.getLogger(__name__)

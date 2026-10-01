@@ -44,7 +44,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from moira.config import MoiraConfig, load_config
+from moira.config import MoiraConfig, ResearchSettings, load_config
 from moira_eval.judge import JudgeConfig, judge_config_from_env, judge_model_var
 from moira_eval.metrics import harness_per_fact_recall, harness_recall_summary
 from moira_eval.questions import QUESTIONS, get_question
@@ -865,6 +865,19 @@ def print_report(payload: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _apply_variant(config: MoiraConfig, variant: str) -> MoiraConfig:
+    """Map a harness variant label onto research-loop config (Phase 3).
+
+    ``query-writer`` flips the delegated query-writer hook on; the
+    default ``freeform`` label (and any label without a config mapping
+    yet — e.g. future fan-out variants) leaves research settings
+    untouched. Returns a copy so the caller's config stays immutable.
+    """
+    if variant == "query-writer":
+        return config.model_copy(update={"research": ResearchSettings(query_writer_enabled=True)})
+    return config
+
+
 async def _run_single(
     question_id: str,
     question_text: str,
@@ -881,6 +894,8 @@ async def _run_single(
     run_harness_all) — the sweep shares one init across questions.
     """
     from moira.service_setup import service_provider
+
+    config = _apply_variant(config, variant)
 
     budget_limit = float(
         budget

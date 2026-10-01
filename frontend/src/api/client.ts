@@ -78,6 +78,12 @@ export interface CitationRecord {
   title?: string;
   excerpt?: string;
   snippets?: string[];
+  // Material class of the stored source: "snippet" | "page" | "clipped" |
+  // "full" | "summary". Missing = legacy citation (unknown).
+  depth?: string;
+  // True size in chars of the fetched body — content is only the serving
+  // window; full-class bodies live in the source-content store.
+  byte_size?: number;
 }
 
 export interface KnowledgeSummary {
@@ -99,6 +105,8 @@ export interface ResearchReport {
     title?: string;
     excerpt?: string;
     snippets?: string[];
+    depth?: string;
+    byte_size?: number;
   }[];
   uncited_sources: {
     source: string;

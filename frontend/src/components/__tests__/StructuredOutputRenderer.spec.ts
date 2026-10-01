@@ -98,7 +98,10 @@ describe("StructuredOutputRenderer", () => {
         },
       ],
     });
-    expect(wrapper.text()).toContain("Planned Calls");
+    // "calls" is no longer a registered field (fbfa06c moved planning to
+    // evidence_requests); an unregistered object-list falls through to the
+    // generic inference path, which labels with the key.
+    expect(wrapper.text()).toContain("Calls");
     expect(wrapper.text()).toContain("web_search");
     expect(wrapper.text()).toContain("Search for info");
     expect(wrapper.find(".so-kv-list").exists()).toBe(true);

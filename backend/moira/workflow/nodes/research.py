@@ -57,6 +57,7 @@ from moira.workflow.nodes._helpers_deps import (
     _check_stop,
     _resolve_intelligence,
 )
+from moira.workflow.nodes.query_writer import write_queries
 
 logger = logging.getLogger(__name__)
 
@@ -1114,6 +1115,7 @@ def _record_request_attempt(
     name: str,
     args: dict[str, Any],
     result: ToolResult,
+    rewrite: dict | None = None,
 ) -> None:
     """Append one attempt record to the per-request attempt ledger.
 
@@ -1131,18 +1133,171 @@ def _record_request_attempt(
             query = str(args)
     structured = result.metadata.get("results") if result.metadata else None
     n_results = len(structured) if isinstance(structured, list) else (1 if result.output else 0)
-    ledger.setdefault(rid, []).append(
-        {
-            "tool": name,
-            "query": str(query)[:80],
-            "success": bool(result.success),
-            "results": n_results,
-            # Synthetic duplicate rejections are recorded too: they are
-            # evidence the model already tried this angle and was blocked,
-            # which the retry prompt surfaces as exhaustion signal (4b).
-            "deduped": bool(result.metadata.get("deduped")) if result.metadata else False,
+    entry = {
+        "tool": name,
+        "query": str(query)[:80],
+        "success": bool(result.success),
+        "results": n_results,
+        # Synthetic duplicate rejections are recorded too: they are
+        # evidence the model already tried this angle and was blocked,
+        # which the retry prompt surfaces as exhaustion signal (4b).
+        "deduped": bool(result.metadata.get("deduped")) if result.metadata else False,
+    }
+    if rewrite:
+        # Phase 3 query-writer: record both phrasings — ``query`` is what
+        # actually executed (the written query, since args were rewritten
+        # pre-execution), ``original_query`` is the model's freeform
+        # phrasing, kept for A/B attribution and forensics.
+        entry["original_query"] = str(rewrite.get("original_query") or "")[:80]
+        entry["written_query"] = str(rewrite.get("written_query") or "")[:80]
+        entry["register"] = str(rewrite.get("register") or "")[:24]
+    ledger.setdefault(rid, []).append(entry)
+
+
+# Metadata keys that carry large side-channel data destined for the
+# source-content store (retrieval-quality plan Phase 2b). They are stripped
+# from every agent/stream-facing view (stream events, tool_results_log) —
+# only store hydration reads them. Contract: tools may return bodies of
+# arbitrary size under these keys; the pipeline persists them; the stream
+# never carries them.
+_RESERVED_METADATA_KEYS = frozenset({"full_body"})
+
+
+@dataclass
+class _QueryWriterContext:
+    """Model plumbing for the delegated query-writer pass (Phase 3).
+
+    Everything else the writer needs (facts, evidence requests, the
+    attempt ledger, issued queries, citations) already lives in the tool
+    loops' scope; this carries only the resolved client + model id so
+    ``research()`` owns the on/off decision and the loops stay testable
+    with a stub client.
+    """
+
+    client: Any
+    model_id: str = ""
+
+
+async def _rewrite_calls_with_writer(
+    valid_calls: list[ToolCall],
+    ctx: _QueryWriterContext,
+    facts: list[Fact],
+    evidence_requests: list,
+    request_attempts: dict[str, list[dict]] | None,
+    issued_queries: list[str] | None,
+    citations: list[Citation],
+) -> tuple[list[ToolCall], dict[str, dict]]:
+    """Swap freeform web_search queries for writer variants (Phase 3).
+
+    Only calls attributed (via ``request_id``) to an evidence request
+    with targeted facts are rewritten — unattributed model free-issues
+    pass through untouched, preserving their forensics value. The
+    writer's first variant becomes the executed query; the remaining
+    variants ride along in the rewrite record as ``queued_variants`` for
+    Phase 4 fan-out. Writer output is cached per request id within the
+    batch: several calls serving the same request share one sub-call.
+
+    Returns ``(new_calls, rewrites_by_call_id)``; rewrites feed
+    ``_record_request_attempt`` so the ledger keeps both phrasings.
+    """
+    facts_by_id = {f.get("id"): f for f in facts if f.get("id")}
+    requests_by_id = {r.get("id"): r for r in evidence_requests if r.get("id")}
+    rewrites: dict[str, dict] = {}
+    cache: dict[str, list[dict]] = {}
+    new_calls: list[ToolCall] = []
+    for call in valid_calls:
+        rid = call.request_id or ""
+        request = requests_by_id.get(rid)
+        if call.name != _WEB_SEARCH_TOOL_NAME or not request or not request.get("target_fact_ids"):
+            new_calls.append(call)
+            continue
+        if rid not in cache:
+            fact = facts_by_id.get(request["target_fact_ids"][0]) or {}
+            # Queries already tried for THIS request plus the run's most
+            # recent queries — the writer must change angle, not re-roll.
+            queries_tried = [
+                str(a.get("query") or "") for a in (request_attempts or {}).get(rid, [])
+            ] + list(issued_queries or [])[-10:]
+            snippets_seen = [
+                f"{c.get('title') or ''}: {c.get('snippet') or ''}".lstrip(": ")
+                for c in citations[-5:]
+                if c.get("snippet")
+            ]
+            cache[rid] = await write_queries(
+                fact.get("fact_needed", ""),
+                fact.get("subject", ""),
+                str(request.get("evidence_needed") or ""),
+                queries_tried,
+                snippets_seen,
+                ctx.client,
+                model_id=ctx.model_id,
+            )
+        variants = cache[rid]
+        if not variants:
+            # Writer declined/failed: the model's own query survives.
+            new_calls.append(call)
+            continue
+        first = variants[0]
+        rewrites[call.id] = {
+            "rid": rid,
+            "original_query": str(call.arguments.get("query") or ""),
+            "written_query": first["query"],
+            "register": first["register"],
+            "queued_variants": [v["query"] for v in variants[1:]],
         }
+        new_calls.append(replace(call, arguments={**call.arguments, "query": first["query"]}))
+    return new_calls, rewrites
+
+
+def _strip_reserved_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Copy tool metadata without reserved side-channel keys."""
+    if not metadata:
+        return {}
+    return {k: v for k, v in metadata.items() if k not in _RESERVED_METADATA_KEYS}
+
+
+def _store_full_body(run_id: str, citation_id: str, url: str | None, body: str) -> str | None:
+    """Persist a fetched body to the source-content store; return its class.
+
+    Returns the material class the citation may claim — ``"full"`` when the
+    whole body was stored, ``"clipped"`` when it exceeded the configured cap
+    and was truncated — or ``None`` when no store/write-queue/config services
+    are available (bare unit-test contexts). Callers must NOT claim ``full``
+    on a ``None`` return: without the store, only the serving window exists.
+    """
+    if not url or not body:
+        return None
+    from moira.service_setup import service_provider
+
+    try:
+        repo = service_provider("source_content_repository")
+        write_queue = service_provider("write_queue")
+        max_chars = int(
+            getattr(
+                getattr(service_provider("config"), "source_store", None),
+                "max_body_chars",
+                100_000,
+            )
+        )
+    except (RuntimeError, AttributeError, TypeError):
+        return None
+    truncated = len(body) > max_chars
+    material_class = "clipped" if truncated else "full"
+    # Fire-and-forget through the write queue (same pattern as tool-metrics
+    # recording): the body is already in memory; losing the store row on a
+    # crash would cost a re-fetch, not correctness.
+    write_queue.enqueue(
+        lambda: repo.upsert(
+            run_id=run_id,
+            url=url,
+            content=body[:max_chars],
+            material_class=material_class,
+            citation_id=citation_id,
+            truncated=truncated,
+            fetched_at=_now(),
+        )
     )
+    return material_class
 
 
 def _process_execution_results(
@@ -1159,6 +1314,8 @@ def _process_execution_results(
     new_budget: float,
     total_tool_cost: float,
     request_attempts: dict[str, list[dict]] | None = None,
+    run_id: str = "",
+    query_rewrites: dict[str, dict] | None = None,
 ) -> tuple[list[str], float, float]:
     """Process execution results into citations, summaries, and cost tracking.
 
@@ -1180,7 +1337,14 @@ def _process_execution_results(
         args = call.arguments
         rid = call.request_id
         if request_attempts is not None and rid:
-            _record_request_attempt(request_attempts, rid, name, args, result)
+            _record_request_attempt(
+                request_attempts,
+                rid,
+                name,
+                args,
+                result,
+                rewrite=(query_rewrites or {}).get(call.id),
+            )
         writer(
             {
                 "event": "tool_result",
@@ -1191,7 +1355,9 @@ def _process_execution_results(
                     "duration_ms": result.duration_ms,
                     "success": result.success,
                     "node": NODE_NAME,
-                    "metadata": result.metadata,
+                    # Reserved side-channel keys (full_body) never reach
+                    # the stream — they can dwarf the display payload.
+                    "metadata": _strip_reserved_metadata(result.metadata),
                     # Attribution: which evidence request this call served.
                     "request_id": rid,
                 },
@@ -1213,7 +1379,7 @@ def _process_execution_results(
                     "output": result.output[:_SNIPPET_MAX_LENGTH] if result.output else "",
                     "duration_ms": result.duration_ms,
                     "success": result.success,
-                    "metadata": result.metadata,
+                    "metadata": _strip_reserved_metadata(result.metadata),
                     "request_id": rid,
                 }
             )
@@ -1241,6 +1407,22 @@ def _process_execution_results(
                     ]
                     or None,
                 )
+                # Store hydration (Phase 2b): when the tool carried the
+                # full pre-window body, persist it and upgrade the
+                # citation's material class from "page" (fetched, window
+                # only) to "full"/"clipped" — a queryable record of what
+                # the agent actually had, not what its context window
+                # showed. Citation.content stays the 5K serving window.
+                full_body = result.metadata.get("full_body") if result.metadata else None
+                if full_body:
+                    stored_class = _store_full_body(run_id, cit_id, sr.get("url"), full_body)
+                    for c in citations:
+                        if c["id"] == cit_id:
+                            c["byte_size"] = len(full_body)
+                            # No store backing → "clipped" is the truthful
+                            # claim: only the serving window exists.
+                            c["depth"] = stored_class or "clipped"
+                            break
                 status = "SUCCESS" if result.success else "FAILED"
                 recurring = "" if is_new else " (recurring source)"
                 # Fetch tools (url_content, RESTTool) provide a "content"
@@ -1295,7 +1477,7 @@ def _process_execution_results(
                 "output": result.output[:_SNIPPET_MAX_LENGTH] if result.output else "",
                 "duration_ms": result.duration_ms,
                 "success": result.success,
-                "metadata": result.metadata,
+                "metadata": _strip_reserved_metadata(result.metadata),
                 "request_id": rid,
             }
         )
@@ -1915,6 +2097,8 @@ async def _run_native_tool_loop(
     fetched_urls: dict[str, dict[str, Any]] | None = None,
     request_attempts: dict[str, list[dict]] | None = None,
     issued_queries: list[str] | None = None,
+    run_id: str = "",
+    query_writer: _QueryWriterContext | None = None,
 ) -> _LoopResult:
     """Run the native tool-calling loop.
 
@@ -1985,6 +2169,21 @@ async def _run_native_tool_loop(
 
         had_valid_calls = True
 
+        # Delegated query-writer pass (Phase 3): swap freeform queries
+        # for register-diverse variants before execution. Rewrite records
+        # flow into the attempt ledger via _process_execution_results.
+        query_rewrites: dict[str, dict] = {}
+        if query_writer is not None:
+            valid_calls, query_rewrites = await _rewrite_calls_with_writer(
+                valid_calls,
+                query_writer,
+                facts,
+                evidence_requests,
+                request_attempts,
+                issued_queries,
+                citations,
+            )
+
         try:
             results = await _execute_tools(
                 valid_calls,
@@ -2013,6 +2212,8 @@ async def _run_native_tool_loop(
             new_budget,
             total_tool_cost,
             request_attempts=request_attempts,
+            run_id=run_id,
+            query_rewrites=query_rewrites or None,
         )
 
         # Record url_content outcomes for future dedup. Runs after
@@ -2081,6 +2282,8 @@ async def _run_text_tool_loop(
     fetched_urls: dict[str, dict[str, Any]] | None = None,
     request_attempts: dict[str, list[dict]] | None = None,
     issued_queries: list[str] | None = None,
+    run_id: str = "",
+    query_writer: _QueryWriterContext | None = None,
 ) -> _LoopResult:
     """Run the text-based tool-calling loop.
 
@@ -2234,6 +2437,21 @@ async def _run_text_tool_loop(
 
         had_valid_calls = True
 
+        # Delegated query-writer pass (Phase 3): swap freeform queries
+        # for register-diverse variants before execution. Rewrite records
+        # flow into the attempt ledger via _process_execution_results.
+        query_rewrites: dict[str, dict] = {}
+        if query_writer is not None:
+            valid_calls, query_rewrites = await _rewrite_calls_with_writer(
+                valid_calls,
+                query_writer,
+                facts,
+                evidence_requests,
+                request_attempts,
+                issued_queries,
+                citations,
+            )
+
         # Execute tool calls (recall_source + url_content + query dupes)
         try:
             results = await _execute_tools(
@@ -2264,6 +2482,8 @@ async def _run_text_tool_loop(
             new_budget,
             total_tool_cost,
             request_attempts=request_attempts,
+            run_id=run_id,
+            query_rewrites=query_rewrites or None,
         )
 
         # Record url_content outcomes for future dedup
@@ -2312,6 +2532,10 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     planning is provided as guidance, but the model drives execution.
     """
     _check_stop(NODE_NAME, config)
+    # Run-scoped key for the source-content store (Phase 2b hydration).
+    # Empty outside live runs (e.g. harness subgraph) — hydration then
+    # records bodies under the empty-string run scope.
+    run_id = str(config.get("configurable", {}).get("run_id", ""))
     writer = get_stream_writer()
     writer({"event": "node_start", "payload": {"node": NODE_NAME, "timestamp": _now()}})
 
@@ -2447,6 +2671,19 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     resolved = await _resolve_intelligence(config)
     last_model_id = resolved.model_id
 
+    # Delegated query-writer pass (retrieval-quality Phase 3). Off by
+    # default; the harness A/B flips it via config
+    # (research.query_writer_enabled, variant "query-writer").
+    research_settings = getattr(
+        config.get("configurable", {}).get("moira_config"), "research", None
+    )
+    query_writer_ctx = None
+    if research_settings is not None and research_settings.query_writer_enabled:
+        query_writer_ctx = _QueryWriterContext(
+            client=resolved.client,
+            model_id=research_settings.query_writer_model or resolved.model_id,
+        )
+
     # Select prompts based on tool-calling mode
     if resolved.native_tool_calling:
         system_prompt = render_prompt(
@@ -2537,6 +2774,8 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             fetched_urls=_fetched_urls,
             request_attempts=request_attempts,
             issued_queries=issued_queries,
+            run_id=run_id,
+            query_writer=query_writer_ctx,
         )
     else:
         loop_result = await _run_text_tool_loop(
@@ -2562,6 +2801,8 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             fetched_urls=_fetched_urls,
             request_attempts=request_attempts,
             issued_queries=issued_queries,
+            run_id=run_id,
+            query_writer=query_writer_ctx,
         )
 
     total_call_count = loop_result.total_call_count

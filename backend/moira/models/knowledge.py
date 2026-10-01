@@ -38,11 +38,21 @@ class Citation(TypedDict):
     # citation). Populated in research; used for cross-referencing in review
     # and evaluation.
     content: NotRequired[str]
-    # Whether a page body was fetched ("page") or the citation only holds
-    # search-result fragments ("snippet"). recall_source refuses snippet-depth
-    # citations — re-serving snippets the model already saw is circular — and
-    # points the model at url_content instead. Missing = legacy citation.
+    # Material class of what the agent actually holds. Enum: "snippet"
+    # (search-result fragments, page never fetched), "page" (legacy fetch
+    # marker — renders as clipped), "clipped" (fetched, only the serving
+    # window persisted), "full" (complete body in the source-content store),
+    # "summary" (model-generated condensation with parent provenance —
+    # reserved for the deferred summarize_source tool). recall_source
+    # refuses snippet-depth citations — re-serving snippets the model
+    # already saw is circular — and points the model at url_content instead.
+    # Missing = legacy citation.
     depth: NotRequired[str]
+    # Size in characters of the fetched body this citation represents (set
+    # when a tool carried a full_body side-channel). Distinct from
+    # len(content): content is the 5K serving window, byte_size is the truth
+    # about how much material exists (possibly in the source-content store).
+    byte_size: NotRequired[int]
 
 
 # Canonical cap for Citation.content. This is the single source of truth —
@@ -303,6 +313,15 @@ def knowledge_summary(knowledge: Knowledge) -> dict:
                 "title": c.get("title"),
                 "excerpt": c.get("excerpt"),
                 "snippets": c.get("snippets"),
+                # Material class of the stored source (snippet/page today;
+                # widened to the 4-class enum by the source-content store).
+                # Serialized so snapshots can answer "what did the agent
+                # actually have" — missing means legacy citation, consumers
+                # treat it as unknown.
+                "depth": c.get("depth"),
+                # True size of the fetched body (content is only the 5K
+                # serving window). Never serializes the body itself.
+                "byte_size": c.get("byte_size"),
                 # Safety net so post-hoc analysis can see what the reviewer
                 # saw without risking unbounded growth in the persisted
                 # snapshot. Same canonical cap the pipeline enforces at

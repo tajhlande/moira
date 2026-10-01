@@ -37,6 +37,7 @@ REQUIRED_SECTIONS = [
     "research.parse_correction",
     "research.summary",
     "research.tool_feedback",
+    "query_writer.system",
     "research.system_native_tools",
     "research.user_native",
     "research.system_retry_review",

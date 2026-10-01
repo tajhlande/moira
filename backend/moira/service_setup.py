@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 #   "tool_discovery"                       -> ToolDiscovery
 #   "tool_executor"                        -> ToolExecutor
 #   "tool_metrics_repository"              -> ToolMetricsRepository
+#   "source_content_repository"            -> SourceContentRepository
 #   "tool_embedding_repo"                  -> ToolEmbeddingRepository
 #   "workflow_step_repository"             -> WorkflowStepRepository
 #   "research_graph"                       -> CompiledStateGraph
@@ -256,6 +257,13 @@ async def init_services(
 
     metrics_repo = SqliteToolMetricsRepository(db_path)
     _services["tool_metrics_repository"] = metrics_repo
+
+    # Source-content store: full fetched bodies with material classes
+    # (retrieval-quality plan Phase 2b). Registered unconditionally; research
+    # hydration tolerates its absence for test/harness contexts.
+    from moira.persistence.sqlite.repos import SqliteSourceContentRepository
+
+    _services["source_content_repository"] = SqliteSourceContentRepository(db_path)
 
     from moira.persistence.sqlite.repos import SqliteWorkflowStepRepository
 

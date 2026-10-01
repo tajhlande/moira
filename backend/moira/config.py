@@ -61,6 +61,36 @@ class MCPServerConfig(BaseModel):
     address: str
 
 
+class SourceStoreConfig(BaseModel):
+    """Source-content store settings (retrieval-quality plan Phase 2b).
+
+    ``max_body_chars`` bounds what a single fetched body may occupy in the
+    store. A body longer than this is stored truncated and the record's
+    material class says ``clipped`` — never ``full`` — so "full" remains a
+    truthful claim that the whole body is persisted.
+    """
+
+    max_body_chars: int = 100_000
+
+
+class ResearchSettings(BaseModel):
+    """Research-loop behavior switches (retrieval-quality plan Phase 3).
+
+    ``query_writer_enabled`` turns on the delegated query-writer pass: for
+    web_search calls attributed to an evidence request with targeted
+    facts, the model's freeform query is replaced by the writer's first
+    register-diverse variant before execution. Off by default — the
+    harness A/B (variant ``query-writer``) flips it per run.
+
+    ``query_writer_model`` selects a different (e.g. smaller/cheaper)
+    model for the writer sub-call; empty string means "same workflow
+    intelligence model", the plan's resolved default.
+    """
+
+    query_writer_enabled: bool = False
+    query_writer_model: str = ""
+
+
 class AppConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8000
@@ -73,6 +103,8 @@ class MoiraConfig(BaseModel):
     embedding: EmbeddingConfig = EmbeddingConfig()
     tools: list[ToolConfig] = []
     mcp_servers: list[MCPServerConfig] = []
+    source_store: SourceStoreConfig = SourceStoreConfig()
+    research: ResearchSettings = ResearchSettings()
     app: AppConfig = AppConfig()
 
     @property

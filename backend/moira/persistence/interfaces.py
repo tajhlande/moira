@@ -454,3 +454,54 @@ class ApiSourceRepository(ABC):
 
     @abstractmethod
     async def delete(self, source_id: str) -> bool: ...
+
+
+@dataclass
+class SourceContent:
+    """A stored full-body source record with an explicit material class.
+
+    ``material_class`` is the four-class enum from the retrieval-quality plan
+    (``clipped`` / ``full`` / ``summary``; ``snippet`` records never enter this
+    store — a search excerpt is not a fetched body). ``byte_size`` is the
+    authoritative size of the stored body; ``Citation.content`` remains a
+    serving window and must not be used to infer what is available.
+    """
+
+    url_hash: str
+    url: str
+    run_id: str
+    citation_id: str | None
+    material_class: str
+    content: str
+    content_type: str
+    byte_size: int
+    truncated: bool
+    fetched_at: str
+
+
+class SourceContentRepository(ABC):
+    """Persistence interface for the source_contents store.
+
+    Scoped per run for now: cross-run reuse of fetched bodies is a policy
+    decision (cross-invocation memory) that stays out until taken
+    deliberately.
+    """
+
+    @abstractmethod
+    async def upsert(
+        self,
+        run_id: str,
+        url: str,
+        content: str,
+        material_class: str,
+        citation_id: str | None = None,
+        content_type: str = "text/markdown",
+        truncated: bool = False,
+        fetched_at: str = "",
+    ) -> None: ...
+
+    @abstractmethod
+    async def get(self, run_id: str, url: str) -> SourceContent | None: ...
+
+    @abstractmethod
+    async def evict_run(self, run_id: str) -> int: ...

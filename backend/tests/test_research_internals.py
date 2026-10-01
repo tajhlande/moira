@@ -1165,6 +1165,53 @@ class TestRetryContextHelpers:
         row2 = lines[3]
         assert row2.startswith("| cit002 | snippet | f002 |")
 
+    def test_format_prior_citations_reads_depth_field(self):
+        """The depth column reads the Citation.depth field (the same field
+        recall_source refuses on), not content presence. Content inference is
+        a legacy fallback only."""
+        from moira.workflow.nodes._helpers import _format_prior_citations
+
+        citations = [
+            # Field wins: content exists but the citation is snippet-class.
+            {"id": "cit001", "title": "A", "content": "x" * 2500, "depth": "snippet"},
+            # No content, but the field says page — field still wins.
+            {"id": "cit002", "title": "B", "depth": "page"},
+            {"id": "cit003", "title": "C", "depth": "full", "content": "x" * 1200},
+            {"id": "cit004", "title": "D", "depth": "summary"},
+        ]
+        result = _format_prior_citations(citations)
+        rows = result.splitlines()[2:]
+        assert rows[0].startswith("| cit001 | snippet |")
+        assert rows[1].startswith("| cit002 | page 1k |")
+        assert rows[2].startswith("| cit003 | full 1k |")
+        assert rows[3].startswith("| cit004 | summary |")
+
+
+class TestKnowledgeSummaryDepth:
+    """knowledge_summary serializes the material-class flag so run
+    snapshots can answer "what did the agent actually have" (Phase 2a);
+    the body is capped but never the class."""
+
+    def test_citations_carry_depth(self):
+        from moira.models.knowledge import CITATION_CONTENT_LIMIT, knowledge_summary
+
+        knowledge = {
+            "question": "q",
+            "citations": [
+                {"id": "c1", "source": "s", "depth": "snippet"},
+                {"id": "c2", "source": "s", "depth": "page", "content": "x" * 200},
+                # Legacy citation without the field serializes missing (None),
+                # not a guessed value.
+                {"id": "c3", "source": "s"},
+            ],
+        }
+        summary = knowledge_summary(knowledge)
+        depths = [c["depth"] for c in summary["citations"]]
+        assert depths == ["snippet", "page", None]
+        # Content cap still enforced alongside the new field.
+        assert len(summary["citations"][1]["content"]) == 200
+        assert CITATION_CONTENT_LIMIT > 0
+
     def test_format_prior_citations_cross_subject_facts(self):
         """Facts are a flat list of dict-like entries; every fact linking a
         citation appears in that citation's linked-facts cell."""
@@ -3407,3 +3454,168 @@ class TestPruneRedundantUrls:
         assert "example.com/a" not in result
         assert "example.com/b" not in result
         assert "pixel art" in result
+
+
+class TestQueryWriterHook:
+    """Phase 3: the research-loop rewrite hook and its ledger records."""
+
+    def _writer_client(self, queries: list[dict]):
+        import json
+        from unittest.mock import AsyncMock
+
+        from moira.inference.client import ChatResponse, InferenceClient
+
+        client = AsyncMock(spec=InferenceClient)
+        client.chat_completion = AsyncMock(
+            return_value=ChatResponse(content=json.dumps({"queries": queries}))
+        )
+        return client
+
+    async def test_rewrite_replaces_query_and_records_variants(self):
+        from moira.tools.base import ToolCall
+        from moira.workflow.nodes.research import (
+            _QueryWriterContext,
+            _rewrite_calls_with_writer,
+        )
+
+        client = self._writer_client(
+            [
+                {"query": "monstera lux tolerance", "register": "technical"},
+                {"query": "why do monstera leaves yellow", "register": "question"},
+            ]
+        )
+        calls = [
+            ToolCall(
+                id="call_1",
+                name="web_search",
+                arguments={"query": "monstera light"},
+                request_id="req0001",
+            )
+        ]
+        facts = [{"id": "f001", "subject": "Monstera", "fact_needed": "lux range"}]
+        requests = [
+            {
+                "id": "req0001",
+                "target_fact_ids": ["f001"],
+                "evidence_needed": "care guides",
+            }
+        ]
+        new_calls, rewrites = await _rewrite_calls_with_writer(
+            calls,
+            _QueryWriterContext(client=client, model_id="m1"),
+            facts,
+            requests,
+            {},
+            [],
+            [],
+        )
+        assert new_calls[0].arguments["query"] == "monstera lux tolerance"
+        assert new_calls[0].request_id == "req0001"
+        rec = rewrites["call_1"]
+        assert rec["original_query"] == "monstera light"
+        assert rec["written_query"] == "monstera lux tolerance"
+        assert rec["register"] == "technical"
+        assert rec["queued_variants"] == ["why do monstera leaves yellow"]
+
+    async def test_unattributed_and_untargeted_calls_pass_through(self):
+        from moira.tools.base import ToolCall
+        from moira.workflow.nodes.research import (
+            _QueryWriterContext,
+            _rewrite_calls_with_writer,
+        )
+
+        client = self._writer_client(
+            [{"query": "monstera lux tolerance", "register": "technical"}]
+        )
+        calls = [
+            # No request_id — model free-issue.
+            ToolCall(id="call_1", name="web_search", arguments={"query": "free"}),
+            # Attributed, but the request targets no facts.
+            ToolCall(
+                id="call_2",
+                name="web_search",
+                arguments={"query": "untargeted"},
+                request_id="req0002",
+            ),
+        ]
+        new_calls, rewrites = await _rewrite_calls_with_writer(
+            calls,
+            _QueryWriterContext(client=client),
+            [],
+            [{"id": "req0002", "target_fact_ids": []}],
+            {},
+            [],
+            [],
+        )
+        assert new_calls[0].arguments["query"] == "free"
+        assert new_calls[1].arguments["query"] == "untargeted"
+        assert rewrites == {}
+        client.chat_completion.assert_not_awaited()
+
+    async def test_writer_decline_keeps_model_query(self):
+        from moira.tools.base import ToolCall
+        from moira.workflow.nodes.research import (
+            _QueryWriterContext,
+            _rewrite_calls_with_writer,
+        )
+
+        client = self._writer_client([])
+        calls = [
+            ToolCall(
+                id="call_1",
+                name="web_search",
+                arguments={"query": "model query"},
+                request_id="req0001",
+            )
+        ]
+        new_calls, rewrites = await _rewrite_calls_with_writer(
+            calls,
+            _QueryWriterContext(client=client),
+            [{"id": "f001", "fact_needed": "x"}],
+            [{"id": "req0001", "target_fact_ids": ["f001"]}],
+            {},
+            [],
+            [],
+        )
+        assert new_calls[0].arguments["query"] == "model query"
+        assert rewrites == {}
+
+    def test_ledger_records_both_phrasings_on_rewrite(self):
+        from moira.tools.base import ToolResult
+        from moira.workflow.nodes.research import _record_request_attempt
+
+        ledger: dict = {}
+        result = ToolResult(tool_name="web_search", output="...", success=True)
+        _record_request_attempt(
+            ledger,
+            "req0001",
+            "web_search",
+            {"query": "monstera lux tolerance"},
+            result,
+            rewrite={
+                "original_query": "monstera light",
+                "written_query": "monstera lux tolerance",
+                "register": "technical",
+            },
+        )
+        entry = ledger["req0001"][0]
+        assert entry["query"] == "monstera lux tolerance"
+        assert entry["original_query"] == "monstera light"
+        assert entry["written_query"] == "monstera lux tolerance"
+        assert entry["register"] == "technical"
+
+    def test_ledger_unchanged_without_rewrite(self):
+        from moira.tools.base import ToolResult
+        from moira.workflow.nodes.research import _record_request_attempt
+
+        ledger: dict = {}
+        _record_request_attempt(
+            ledger,
+            "req0001",
+            "web_search",
+            {"query": "plain"},
+            ToolResult(tool_name="web_search", output="...", success=True),
+        )
+        entry = ledger["req0001"][0]
+        assert "original_query" not in entry
+        assert "register" not in entry

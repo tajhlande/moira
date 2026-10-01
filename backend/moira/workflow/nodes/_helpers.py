@@ -564,9 +564,11 @@ def _format_prior_citations(citations: list, facts: list | None = None) -> str:
 
     - **id** — citation ID (what ``recall_source`` takes as its argument).
     - **depth** — how much evidence the stored source holds. ``page Nk``
-      means full fetched page content (~N thousand chars, mined via
-      ``recall_source``). ``snippet`` means only a short search-result
-      excerpt — little left to extract, recalling it is rarely useful.
+      means fetched page content (~N thousand chars, mined via
+      ``recall_source``); ``full Nk`` means the complete body is stored,
+      beyond what the window serves. ``snippet`` means only a short
+      search-result excerpt — little left to extract, recalling it is
+      rarely useful.
     - **linked facts** — fact IDs already extracted from this source.
       Empty (—) means the source is unmined: deep content with no facts
       linked yet is the prime ``recall_source`` target.
@@ -589,7 +591,22 @@ def _format_prior_citations(citations: list, facts: list | None = None) -> str:
                 linked.setdefault(cit_id, []).append(f["id"])
 
     def _depth(c: dict) -> str:
+        # Read the Citation.depth field — the same field recall_source's
+        # refusal logic reads — so the retry table never disagrees with the
+        # tool about what a citation holds. Content-presence inference is a
+        # legacy fallback for citations created before the field existed.
+        depth = c.get("depth")
         content = c.get("content") or ""
+        if depth in ("snippet", "summary"):
+            return depth
+        if depth in ("page", "clipped", "full"):
+            # byte_size is the authoritative fetched-body size; content is
+            # only the 5K serving window (full bodies live in the store).
+            size = f"{max(1, (c.get('byte_size') or len(content)) // 1000)}k"
+            if depth == "full":
+                return f"full {size}"
+            return f"page {size}"
+        # Legacy citation without the field: infer from content presence.
         if content.strip():
             return f"page {max(1, len(content) // 1000)}k"
         return "snippet"

@@ -13,6 +13,7 @@ from moira.persistence.sqlite.repos.inference_metrics import SqliteInferenceMetr
 from moira.persistence.sqlite.repos.inference_providers import SqliteInferenceProviderRepository
 from moira.persistence.sqlite.repos.model_prefs import SqliteModelPreferencesRepository
 from moira.persistence.sqlite.repos.settings import SqliteSystemSettingsRepository
+from moira.persistence.sqlite.repos.source_contents import SqliteSourceContentRepository
 from moira.persistence.sqlite.repos.tool_metrics import SqliteToolMetricsRepository
 from moira.persistence.sqlite.repos.tools import SqliteToolRepository
 from moira.persistence.sqlite.repos.workflow_steps import SqliteWorkflowStepRepository
@@ -26,6 +27,7 @@ __all__ = [
     "SqliteInferenceProviderRepository",
     "SqliteModelPreferencesRepository",
     "SqliteSystemSettingsRepository",
+    "SqliteSourceContentRepository",
     "SqliteToolMetricsRepository",
     "SqliteToolRepository",
     "SqliteWorkflowStepRepository",

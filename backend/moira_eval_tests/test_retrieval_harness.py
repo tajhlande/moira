@@ -913,3 +913,30 @@ class TestRunHarnessAll:
             variant="freeform", repeats=1, budget=None, scorer_kind="llm", milestone=True
         )
         assert seen == [True]
+
+
+class TestApplyVariant:
+    """Phase 3: variant labels map onto research-loop config."""
+
+    def test_query_writer_variant_enables_hook(self):
+        from moira.config import MoiraConfig
+        from moira_eval.retrieval_harness import _apply_variant
+
+        config = _apply_variant(MoiraConfig(), "query-writer")
+        assert config.research.query_writer_enabled is True
+
+    def test_freeform_variant_leaves_config_untouched(self):
+        from moira.config import MoiraConfig
+        from moira_eval.retrieval_harness import _apply_variant
+
+        base = MoiraConfig()
+        config = _apply_variant(base, "freeform")
+        assert config.research.query_writer_enabled is False
+        assert config is base
+
+    def test_unknown_variant_is_freeform_by_default(self):
+        from moira.config import MoiraConfig
+        from moira_eval.retrieval_harness import _apply_variant
+
+        config = _apply_variant(MoiraConfig(), "fanout")
+        assert config.research.query_writer_enabled is False

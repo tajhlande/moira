@@ -12,6 +12,7 @@ import type { ResearchReport } from "../api/client";
 import MarkdownContent from "./MarkdownContent.vue";
 import CitationMarkdown from "./CitationMarkdown.vue";
 import CopyButton from "./CopyButton.vue";
+import SourceDepthBadge from "./SourceDepthBadge.vue";
 import "./workflow-artifacts.css";
 
 const props = defineProps<{ report: ResearchReport }>();
@@ -217,6 +218,7 @@ function handleTooltipLeave() {
           <div class="citation-row">
             <span class="citation-label">
               {{ c.source }}
+              <SourceDepthBadge :depth="c.depth" />
               <a
                 v-if="c.url"
                 :href="c.url"
