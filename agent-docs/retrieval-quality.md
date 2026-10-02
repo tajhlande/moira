@@ -13,6 +13,20 @@
 > and sequenced *here* (moved from summarize-source.md, which now covers
 > only the deferred `summarize_source` deep-read tool).
 
+> **Change in perspective (2026-10-01):** the harness baseline split
+> recall into coverage (0.21) × queried recall (0.52). Coverage is the
+> larger lever, and its causes are control-flow problems rather than query
+> phrasing: decomposition creates far more facts than research searches,
+> the model stops early with budget left, and about half of searches are
+> issued without being linked to a request. The project is moving toward
+> giving the research agent more freedom to choose its actions (a
+> research-agency plan on main). Techniques here that assume code decides
+> what gets searched (query-writer slot enforcement, per-fact fan-out
+> over every fact, request-ledger feedback memory) are paused. Tool-level
+> work that helps under any control structure (passage retrieval, fetch
+> unblocking, the source store) remains in scope. Revised sequencing:
+> [retrieval-quality-amended.md](retrieval-quality-amended.md).
+
 ## Problem
 
 Batch-to-batch eval noise is dominated by variance in information retrieval,

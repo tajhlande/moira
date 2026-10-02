@@ -11,6 +11,17 @@
 > [summarize-source.md](summarize-source.md)); only the shared
 > source-content foundation (Phase 2) is.
 
+> **Superseded sequencing (2026-10-01):** this plan will not be completed
+> as written. Phases 1–3 stand as done (the query-writer stays behind its
+> default-off flag). Phases 4, 5 and 7 are paused: they improve queried
+> recall for request-attributed calls, but the Phase 1 baseline shows
+> coverage is the binding factor, and coverage is being addressed by
+> giving the research agent more freedom to choose its actions (a
+> research-agency plan on main). Phases 6 and 8 carry forward. Revised
+> order and new harness work:
+> [retrieval-quality-amended.md](retrieval-quality-amended.md). Phase
+> detail below remains the mechanism reference.
+
 ## Phase status
 
 | Phase | Scope | Testable behavior (gate) | Status |
