@@ -7,6 +7,12 @@ parked doc: `judgment-quality-levers.md` (this is the delivery vehicle for
 its strongest items). Also relates to `../retrieval-quality.md` and
 `../hierarchical-decomposition.md`.
 
+> **Absorbed (2026-10-01):** Stages 1–2 are now Phases 3–4 of
+> [../research-agency.md](../research-agency.md). Stage 2 changes there:
+> the agent's director step chooses which facts get a focused sub-loop,
+> instead of code fanning out over every fact. This doc remains the
+> mechanism reference.
+
 ## Motivations
 
 1. **Prompt-length returns have collapsed for this model class.** 
