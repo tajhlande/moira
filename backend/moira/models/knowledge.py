@@ -80,6 +80,18 @@ class Fact(TypedDict):
     # fact from "contradicted" to "verified". Lets downstream nodes and the UI
     # surface that the claim was refined during review.
     corrected: NotRequired[bool]
+    # Provenance of this fact's creation — which stage produced it:
+    #   "decomposition" — initial decomposition output (the planning
+    #                      targets; harness "original" population).
+    #   "overflow"       — split off by research when one response cited
+    #                      multiple entries for the same fact.
+    #   "discovered"     — new fact the model introduced during research
+    #                      (fact_needed entry or cited-claim fallback) —
+    #                      the research-agency signal.
+    # Carried on the fact itself — not step detail — so measurement/eval
+    # can group by origin directly. Facts from snapshots predating the
+    # field lack it (read as unknown, never as a value).
+    origin: NotRequired[str]
 
 
 class Conclusion(TypedDict):
@@ -279,6 +291,11 @@ def knowledge_summary(knowledge: Knowledge) -> dict:
                 "verification_note": f.get("verification_note"),
                 "citation_ids": f.get("citation_ids", []),
                 "corrected": f.get("corrected", False),
+                # Creation provenance ("decomposition" | "overflow" |
+                # "discovered"); "" on snapshots from before the field
+                # existed. Must survive the summary so run forensics and
+                # the retrieval harness can split fact populations.
+                "origin": f.get("origin", ""),
             }
         )
 

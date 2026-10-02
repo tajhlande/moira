@@ -37,6 +37,9 @@ def _research_detail(**extra):
         "issued_query_count": 4,
         "new_facts": 2,
         "stalled": False,
+        # Optional since 2026-10 (agency observability): historical rows
+        # predate it. Present in the fixture to pin the documented shape.
+        "exhausted_rounds": False,
     }
     detail.update(extra)
     return detail
@@ -242,6 +245,17 @@ def test_progress_signal_keys_required_on_research():
     assert matched is None
     assert any("new_facts" in err for err in errors)
     assert any("stalled" in err for err in errors)
+
+
+def test_exhausted_rounds_optional_on_research():
+    # exhausted_rounds was added 2026-10 (agency observability); runs
+    # predating it lack the key, so its absence must still validate
+    # cleanly against the full-pass def.
+    detail = _research_detail()
+    del detail["exhausted_rounds"]
+    errors, matched = validate_detail("research", detail)
+    assert errors == []
+    assert matched == "research_detail"
 
 
 def test_extra_keys_are_tolerated():

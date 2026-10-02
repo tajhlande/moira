@@ -329,6 +329,8 @@ def build_repeat_artifact(
             "fact_needed": f.get("fact_needed", ""),
             "status": f.get("status", ""),
             "citation_ids": f.get("citation_ids", []),
+            # "" on artifacts that predate the origin field.
+            "origin": f.get("origin", ""),
         }
         for f in knowledge.get("facts", [])
     ]
@@ -361,7 +363,7 @@ def build_repeat_artifact(
         1 for c in recorded_calls if c["tool"] == "url_content" and not c.get("success")
     )
 
-    return {
+    artifact = {
         "index": index,
         "facts": facts,
         "original_fact_ids": sorted(original_fact_ids) if original_fact_ids is not None else None,
@@ -376,6 +378,10 @@ def build_repeat_artifact(
             "url_content_failures": url_content_failures,
             "total_tool_calls": len(recorded_calls),
         },
+        # Loop outcome of the final research pass (rounds / cap hit /
+        # stall signal). None on artifacts from graphs that never
+        # surfaced it — the summary treats those as missing.
+        "research_loop": es.get("research_loop"),
         "budget_consumed": round(es.get("budget_limit", 0.0) - es.get("budget_remaining", 0.0), 2),
         "budget_limit": es.get("budget_limit", 0.0),
         "duplicate_queries_intercepted": sum(
@@ -385,6 +391,17 @@ def build_repeat_artifact(
             if a.get("deduped")
         ),
     }
+    # web_search calls whose query serves no evidence request — the
+    # agent searched off-plan. Counted at call level (failed searches
+    # included): a call is attributed only when its exact query text
+    # appears in some request's attempt ledger.
+    artifact["counts"]["unattributed_web_search_calls"] = sum(
+        1
+        for c in recorded_calls
+        if c["tool"] == "web_search"
+        and c.get("args", {}).get("query", "") not in attributed_queries(artifact)
+    )
+    return artifact
 
 
 # ---------------------------------------------------------------------------
@@ -449,6 +466,20 @@ def _page_texts(artifact: dict) -> dict[str, str]:
     return pages
 
 
+def attributed_queries(artifact: dict) -> set[str]:
+    """All query texts attributed to ANY fact via the request chain.
+
+    The complement (successful or failed web_search calls whose query is
+    not in this set) is the unattributed population: searches the agent
+    issued without serving a planned evidence request. Coverage_any
+    scores their material against every fact.
+    """
+    attributed: set[str] = set()
+    for queries in fact_queries(artifact).values():
+        attributed.update(queries)
+    return attributed
+
+
 def assemble_fact_entries(artifact: dict, fact_id: str) -> tuple[list[dict], list[dict]]:
     """(snippet_entries, page_entries) for scoring one fact.
 
@@ -456,28 +487,54 @@ def assemble_fact_entries(artifact: dict, fact_id: str) -> tuple[list[dict], lis
     results) so ``found_at_k`` can be derived from judge output. Page
     entries are url_content bodies for URLs that appeared in the fact's
     search results — acquisition evidence, unranked.
+
+    Candidates are the fact's attributed queries PLUS every unattributed
+    query executed in the repeat (entries tagged ``attributed``).
+    Unattributed entries are appended after attributed ones so the
+    per-fact cap can never drop an attributed entry in favor of an
+    unattributed one — attributed (back-comparable) metrics stay exact;
+    ``present_any`` / ``found_at_k_any`` are derived from the union.
     """
     queries = fact_queries(artifact).get(fact_id, [])
+    attributed = attributed_queries(artifact)
     ranked = _search_results_by_query(artifact)
     pages = _page_texts(artifact)
+
+    def _snippet_entries_for(query: str, is_attributed: bool) -> tuple[list[dict], set[str]]:
+        entries: list[dict] = []
+        urls: set[str] = set()
+        for i, r in enumerate(ranked.get(query, [])[:K_MAX]):
+            entries.append(
+                {
+                    "query": query,
+                    "rank": i + 1,
+                    "url": r.get("url", ""),
+                    "text": f"{r.get('title', '')} — {r.get('snippet', '')}".strip(),
+                    "attributed": is_attributed,
+                }
+            )
+            if r.get("url"):
+                urls.add(r["url"])
+        return entries, urls
 
     snippet_entries: list[dict] = []
     page_urls: set[str] = set()
     for q in queries:
-        for i, r in enumerate(ranked.get(q, [])[:K_MAX]):
-            snippet_entries.append(
-                {
-                    "query": q,
-                    "rank": i + 1,
-                    "url": r.get("url", ""),
-                    "text": f"{r.get('title', '')} — {r.get('snippet', '')}".strip(),
-                }
-            )
-            if r.get("url"):
-                page_urls.add(r["url"])
+        entries, urls = _snippet_entries_for(q, True)
+        snippet_entries.extend(entries)
+        page_urls |= urls
+    # Unattributed material comes after attributed entries so the per-fact
+    # cap can never drop an attributed entry in favor of an unattributed
+    # one — attributed (back-comparable) metrics stay exact while
+    # present_any / found_at_k_any score the union.
+    unattributed_queries = [q for q in ranked if q not in attributed]
+    for q in unattributed_queries:
+        entries, urls = _snippet_entries_for(q, False)
+        snippet_entries.extend(entries)
+        page_urls |= urls
 
     page_entries = [
-        {"url": url, "rank": None, "text": pages[url][:_PAGE_EXCERPT_CHARS]}
+        {"url": url, "rank": None, "text": pages[url][:_PAGE_EXCERPT_CHARS], "attributed": True}
         for url in sorted(page_urls)
         if url in pages
     ]
@@ -652,18 +709,23 @@ async def score_repeat(
             if not entries:
                 return fid, _no_query_score()
             raw = await scorer.score(fact["fact_needed"], entries)
-            ranks = [
-                entries[i]["rank"]
-                for i in raw["passages"]
-                if 0 <= i < len(entries) and entries[i]["rank"] is not None
+            picks = [entries[i] for i in raw["passages"] if 0 <= i < len(entries)]
+            attr_ranks = [
+                e["rank"] for e in picks if e.get("attributed") and e["rank"] is not None
             ]
+            any_ranks = [e["rank"] for e in picks if e["rank"] is not None]
+            present_any = bool(raw["present"])
+            # Attributed presence keeps the pre-union semantics: the judge
+            # must have identified at least one attributed passage. An empty
+            # pick list with present=true falls back to present_any — the
+            # judge saw the material, it just didn't cite a passage number.
+            present_attr = present_any and (not picks or any(e.get("attributed") for e in picks))
             return fid, {
-                "present": bool(raw["present"]),
-                "found_at_k": min(ranks) if ranks else None,
-                "with_pages": raw["present"]
-                and any(
-                    entries[i]["rank"] is None for i in raw["passages"] if 0 <= i < len(entries)
-                ),
+                "present": present_attr,
+                "found_at_k": min(attr_ranks) if attr_ranks else None,
+                "present_any": present_any,
+                "found_at_k_any": min(any_ranks) if any_ranks else None,
+                "with_pages": raw["present"] and any(e["rank"] is None for e in picks),
                 "queries": len(queries_by_fact.get(fid, [])),
                 "quote": raw["quote"],
                 "never_queried": False,
@@ -677,29 +739,36 @@ async def score_repeat(
     fact_scores: dict[str, dict] = {}
     for fact in artifact["facts"]:
         fid = fact["id"]
-        if not queries_by_fact.get(fid):
+        snippet_entries, page_entries = assemble_fact_entries(artifact, fid)
+        if not snippet_entries and not page_entries:
             # Nothing retrieved for this fact — nothing to score. Gold
             # scoring would report "unknown" (no keyword match against
             # empty evidence); absence-of-retrieval is the fact we want.
             fact_scores[fid] = _no_query_score()
             continue
-        snippet_entries, page_entries = assemble_fact_entries(artifact, fid)
-        result = gold_score_fact(fact["fact_needed"], snippet_entries, gold)
+        # Union scoring (present_any / found_at_k_any) over all entries;
+        # attributed scoring restricted to tagged entries — deterministic,
+        # so two marker passes are cheap.
+        result_any = gold_score_fact(fact["fact_needed"], snippet_entries, gold)
+        attr_snippets = [e for e in snippet_entries if e.get("attributed")]
+        result_attr = gold_score_fact(fact["fact_needed"], attr_snippets, gold)
         # Page-level presence only counts when a gold entry matched the
         # fact at all; unmatched facts stay unknown, not absent.
-        with_pages = bool(result["present"])
-        if not with_pages and result["matched_gold"]:
+        with_pages = bool(result_any["present"])
+        if not with_pages and result_any["matched_gold"]:
             pages_text = "\n".join(p["text"] for p in page_entries)
             markers = _markers_for_fact(fact["fact_needed"], gold)
             with_pages = any(m.lower() in pages_text.lower() for m in markers)
         fact_scores[fid] = {
-            "present": result["present"],
-            "found_at_k": result["found_at_k"],
+            "present": result_attr["present"] if result_attr["matched_gold"] else False,
+            "found_at_k": result_attr["found_at_k"],
+            "present_any": result_any["present"],
+            "found_at_k_any": result_any["found_at_k"],
             "with_pages": with_pages,
             "queries": len(queries_by_fact.get(fid, [])),
-            "quote": result["quote"],
+            "quote": result_any["quote"],
             "never_queried": not queries_by_fact.get(fid),
-            "matched_gold": result["matched_gold"],
+            "matched_gold": result_any["matched_gold"],
         }
     return fact_scores
 
@@ -709,6 +778,8 @@ def _no_query_score() -> dict:
     return {
         "present": False,
         "found_at_k": None,
+        "present_any": False,
+        "found_at_k_any": None,
         "with_pages": False,
         "queries": 0,
         "quote": "",

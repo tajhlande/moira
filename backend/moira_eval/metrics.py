@@ -315,6 +315,13 @@ def harness_per_fact_recall(repeat: dict[str, Any]) -> list[dict[str, Any]]:
     before reading recall — spawn deflates the denominator. When the
     repeat lacks "original_fact_ids" (older artifacts), every fact is
     treated as original.
+
+    "origin" carries the fact's creation provenance when present
+    ("decomposition" / "overflow" / "discovered"; "" on pre-field
+    artifacts) — the discovered population is the research-agency
+    signal. "present_any"/"found_at_k_any"/"recall_at_{k}_any" score the
+    union of attributed AND unattributed query material (coverage_any);
+    the un-suffixed fields stay attributed-only for comparability.
     """
     facts = repeat.get("facts", [])
     scores = repeat.get("fact_scores", {})
@@ -323,17 +330,25 @@ def harness_per_fact_recall(repeat: dict[str, Any]) -> list[dict[str, Any]]:
     for fact in facts:
         score = scores.get(fact["id"], {})
         found_at_k = score.get("found_at_k")
+        found_at_k_any = score.get("found_at_k_any")
         rows.append(
             {
                 "id": fact["id"],
                 "subject": fact.get("subject", ""),
                 "fact_needed": fact.get("fact_needed", ""),
                 "original": fact["id"] in original_ids,
+                "origin": fact.get("origin", ""),
                 "queries": score.get("queries", 0),
                 "present": bool(score.get("present")),
+                "present_any": bool(score.get("present_any")),
                 "found_at_k": found_at_k,
+                "found_at_k_any": found_at_k_any,
                 **{
                     f"recall_at_{k}": found_at_k is not None and found_at_k <= k for k in (1, 3, 5)
+                },
+                **{
+                    f"recall_at_{k}_any": found_at_k_any is not None and found_at_k_any <= k
+                    for k in (1, 3, 5)
                 },
                 "with_pages": bool(score.get("with_pages")),
                 "never_queried": bool(score.get("never_queried")),
@@ -370,13 +385,37 @@ def harness_recall_summary(repeats: list[dict[str, Any]], ks: tuple[int, ...] = 
       resolved (present) — measures fan-out (1.0 = single-shot lottery).
     - coverage: fraction of original facts that received >= 1 query —
       planning's fact-coverage discipline.
+    - coverage_any / coverage_any_at_{k}: fraction of original facts
+      whose needed information appeared in ANY executed query's material
+      (attributed or not) — the attribution-independent ceiling on
+      coverage. The gap to `coverage`/recall is loss to attribution
+      discipline, not to retrieval.
     - unresolved_fact_count: facts (all) whose needed information was not
       found.
     - unresolved_original_fact_count: same, original facts only.
     - never_queried_fact_count: facts (all) with zero attributed queries —
       a separate failure mode from searched-and-missed.
-    - spawned_fact_count: facts created by research's overflow-split path
-      (never planning targets).
+    - spawned_fact_count: facts not produced by decomposition (overflow
+      splits + model-discovered; the pre-origin lumped definition).
+    - discovered_fact_count / overflow_fact_count: origin-split counts
+      (""-origin facts from legacy artifacts count in neither).
+    - recall_at_{k}_discovered: recall among model-discovered facts,
+      scored on union material (present_any) — the research-agency
+      retrieval signal. None when no repeat produced discovered facts.
+    - discovered_resolution: fraction of discovered facts resolved
+      (present_any). None when no discovered facts.
+    - resolved_share_beyond_decomposition: among all facts resolved on
+      union material, the share NOT produced by decomposition — the
+      headline agency metric. None when nothing resolved.
+    - research_rounds / research_exhausted_rate / research_stalled_rate:
+      final research pass loop outcome — turns used, share of repeats
+      stopped by the round cap, share whose last pass produced no new
+      claims. Missing research_loop → repeat skipped.
+    - budget_unspent_share: unspent budget fraction at run end — early
+      stop discipline.
+    - unattributed_web_search_calls / unattributed_web_search_share:
+      searches that served no evidence request, count and share of all
+      web_search calls.
     - facts_per_run: total facts in the final state.
     - web_search_calls / url_content_calls: recorded tool calls per run.
     - url_content_failures: fetches per run that failed outright (blocked
@@ -386,6 +425,9 @@ def harness_recall_summary(repeats: list[dict[str, Any]], ks: tuple[int, ...] = 
     Three populations per repeat, because research's overflow-split path
     spawns facts that are never queried: all / original / queried as
     described above. Plus the companion metrics the plan gates on.
+    Discovered-population fields skip repeats with empty denominators
+    (mean over the repeats that produced the population, None when none
+    did) so an empty population never reads as a zero rate.
     """
     summary: dict[str, Any] = {}
     all_rows = [harness_per_fact_recall(repeat) for repeat in repeats]
@@ -397,6 +439,23 @@ def harness_recall_summary(repeats: list[dict[str, Any]], ks: tuple[int, ...] = 
         if not denom:
             return 0.0
         return _safe_div(sum(1 for r in denom if pred(r)), len(denom))
+
+    def frac_nonempty(rows, pred, denominator_pred) -> float | None:
+        """frac() over a restricted population, but None when the population
+        is empty — an absent denominator is "no such facts this repeat",
+        not a zero rate."""
+        denom = [r for r in rows if denominator_pred(r)]
+        if not denom:
+            return None
+        return _safe_div(sum(1 for r in denom if pred(r)), len(denom))
+
+    def _mean_sd_optional(values: list[float | None]) -> dict[str, float | None]:
+        """_mean_sd over the non-None values; {None, None} when all were
+        None (population never occurred)."""
+        present = [v for v in values if v is not None]
+        if not present:
+            return {"mean": None, "sd": None}
+        return _mean_sd(present)
 
     for k in ks:
         key = f"recall_at_{k}"
@@ -422,6 +481,17 @@ def harness_recall_summary(repeats: list[dict[str, Any]], ks: tuple[int, ...] = 
     summary["coverage"] = _mean_sd(
         [frac(rows, lambda r: r["queries"] > 0, lambda r: r["original"]) for rows in all_rows]
     )
+    # coverage_any: union-material presence, original population.
+    summary["coverage_any"] = _mean_sd(
+        [frac(rows, lambda r: r["present_any"], lambda r: r["original"]) for rows in all_rows]
+    )
+    for k in ks:
+        summary[f"coverage_any_at_{k}"] = _mean_sd(
+            [
+                frac(rows, lambda r: r[f"recall_at_{k}_any"], lambda r: r["original"])
+                for rows in all_rows
+            ]
+        )
     summary["unresolved_fact_count"] = _mean_sd(
         [sum(1 for r in rows if not r["present"]) for rows in all_rows]
     )
@@ -433,6 +503,63 @@ def harness_recall_summary(repeats: list[dict[str, Any]], ks: tuple[int, ...] = 
     )
     summary["spawned_fact_count"] = _mean_sd(
         [sum(1 for r in rows if not r["original"]) for rows in all_rows]
+    )
+    summary["discovered_fact_count"] = _mean_sd(
+        [sum(1 for r in rows if r["origin"] == "discovered") for rows in all_rows]
+    )
+    summary["overflow_fact_count"] = _mean_sd(
+        [sum(1 for r in rows if r["origin"] == "overflow") for rows in all_rows]
+    )
+    for k in ks:
+        summary[f"recall_at_{k}_discovered"] = _mean_sd_optional(
+            [
+                frac_nonempty(
+                    rows, lambda r: r[f"recall_at_{k}_any"], lambda r: r["origin"] == "discovered"
+                )
+                for rows in all_rows
+            ]
+        )
+    summary["discovered_resolution"] = _mean_sd_optional(
+        [
+            frac_nonempty(rows, lambda r: r["present_any"], lambda r: r["origin"] == "discovered")
+            for rows in all_rows
+        ]
+    )
+    summary["resolved_share_beyond_decomposition"] = _mean_sd_optional(
+        [
+            frac_nonempty(rows, lambda r: not r["original"], lambda r: r["present_any"])
+            for rows in all_rows
+        ]
+    )
+    # Loop outcome of the final research pass (None on artifacts whose
+    # graph never surfaced research_loop — legacy canned artifacts).
+    loops = [rep.get("research_loop") or {} for rep in repeats]
+    summary["research_rounds"] = _mean_sd_optional(
+        [float(loop["rounds"]) for loop in loops if loop.get("rounds") is not None]
+    )
+    summary["research_exhausted_rate"] = _mean_sd_optional(
+        [1.0 if loop.get("exhausted_rounds") else 0.0 for loop in loops if loop]
+    )
+    summary["research_stalled_rate"] = _mean_sd_optional(
+        [1.0 if loop.get("stalled") else 0.0 for loop in loops if loop]
+    )
+    unspent = []
+    for rep in repeats:
+        limit = rep.get("budget_limit", 0.0)
+        if limit and limit > 0:
+            unspent.append((limit - rep.get("budget_consumed", 0.0)) / limit)
+    summary["budget_unspent_share"] = _mean_sd_optional(unspent)
+    summary["unattributed_web_search_calls"] = _mean_sd(
+        [rep.get("counts", {}).get("unattributed_web_search_calls", 0) for rep in repeats]
+    )
+    summary["unattributed_web_search_share"] = _mean_sd(
+        [
+            _safe_div(
+                rep.get("counts", {}).get("unattributed_web_search_calls", 0),
+                rep.get("counts", {}).get("web_search_calls", 0),
+            )
+            for rep in repeats
+        ]
     )
     summary["facts_per_run"] = _mean_sd([len(rep.get("facts", [])) for rep in repeats])
     summary["web_search_calls"] = _mean_sd(

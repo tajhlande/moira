@@ -9,7 +9,7 @@
 
 | Step | Work | Gate | Status |
 |---|---|---|---|
-| 1 | Research-agency observability (Fact.origin, stop-reason, unattributed/coverage_any in harness) | Freeform 7-question sweep ×3 reports new fields; becomes "before" numbers for research-agency Phase 1 | Not started |
+| 1 | Research-agency observability (Fact.origin, stop-reason, unattributed/coverage_any in harness) | Freeform 7-question sweep ×3 reports new fields; becomes "before" numbers for research-agency Phase 1 | **Done** — implemented + gate run 2026-10-02 (989 backend / 277 eval tests, ruff clean); baseline table below |
 | 2 | Source-store retention/eviction | `source_contents` bounded under policy; eviction tests | Not started |
 | 3 | Fetch unblocking (failure classes, robots decision, blocked-host memory) | Failure rate vs 2026-09-14 baseline, broken down by class | Not started |
 | 4 | Park original Phases 4/5/7 (doc work) | parked/ entries + index.md updated | Not started |
@@ -107,6 +107,58 @@ no behavior change to the research loop.
 **Gate:** live freeform 7-question sweep ×3 (needs model + SearXNG; user
 runs). Deliverable: the amended doc's Step-1 field set, populated. This
 run is the "before" column for research-agency Phase 1.
+
+**Baseline interpretation notes (recorded 2026-10-02):**
+
+- Historical harness rows (2026-09-13/14 freeform, 2026-09-18
+  query-writer) all ran research model **Qwen3.8-27B-vllm-single**
+  (Qwen3.6-27B base + additional post-training, DFlash2-W4A16 quant).
+  A 2026-10-02 probe ran **Qwen3.6-35B-A3B-Q5** (same Qwen3.6
+  architecture, no extra post-training). The two regimes are NOT
+  directly comparable: the 35B-A3B probe produced 11.7 facts/run vs
+  22–27 historically — recall/coverage improvements are at least partly
+  a smaller-fact-set effect, not retrieval quality. Read
+  `recall_at_5_queried` alongside `facts_per_run`.
+- The 2026-10-02 probe (water-blood-pressure, query-writer variant, ×3)
+  hit the round cap in 3/3 repeats (rounds=3, exhausted) with ~2/3 of
+  budget unspent — first live confirmation of the control-flow asymmetry
+  the amended plan was written around.
+- Step 1 gate sweep must run the **freeform** variant (the probe above
+  was query-writer).
+
+**Gate run complete (2026-10-02, freeform ×3 ×7 questions, model
+Qwen3.6-35B-A3B-Q5, judge z-ai/glm-5.3-flash, ~76 min).** Cross-question
+"before" column for research-agency Phase 1 (full per-question rows in
+`backend/moira_eval/results/harness/summary.csv`, 2026-10-02 rows):
+
+| field | mean |
+|---|---|
+| recall_at_5 / _original / _queried | 0.310 / 0.412 / 0.586 |
+| coverage (attributed) | 0.739 |
+| coverage_any (union material) | 0.512 |
+| discovered_fact_count | **0.0** (all 21 runs) |
+| overflow_fact_count | 3.90 |
+| resolved_share_beyond_decomposition | 0.124 |
+| research_rounds | 2.90 (cap = 3) |
+| research_exhausted_rate | **0.952** |
+| research_stalled_rate | 0.0 |
+| budget_unspent_share | **0.696** |
+| unattributed_web_search_share | 0.348 |
+| facts_per_run | 12.52 |
+| web_search / url_content calls | 9.05 / 3.00 |
+| url_content_failures | 0.43 |
+| recall_with_pages | 0.044 |
+
+Readings: (1) the round cap, not budget and not stalling, ends nearly
+every run with ~70% of budget unspent — the control-flow bottleneck is
+confirmed at scale and is research-agency Phase 1's target; (2) the model
+introduces **zero discovered facts** — all non-original facts are
+overflow splits, so current "agency" is decomposition-fact resolution
+only; (3) ~35% of searches are unattributed, but union scoring
+(coverage_any 0.512) stays below attributed coverage (0.739) — the
+binding constraint is material presence (retrieval content), not
+attribution; (4) page-rescue is negligible (0.044) and fetch failures
+are rare at this volume.
 
 ---
 

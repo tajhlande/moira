@@ -145,7 +145,7 @@
     },
     "research_detail": {
       "type": "object",
-      "description": "Full research pass (normal completion). facts_resolved lists facts now unverified (claimed); facts_newly_unknown lists facts still unknown. request_attempt_counts is the compact per-request ledger; the full ledger lives in execution_state. tool_results is appended by active_run's tool_result handler, not by the node itself — absent when the pass issued no calls. new_facts/stalled were added with the 4b progress signal; runs predating it lack them.",
+      "description": "Full research pass (normal completion). facts_resolved lists facts now unverified (claimed); facts_newly_unknown lists facts still unknown. request_attempt_counts is the compact per-request ledger; the full ledger lives in execution_state. tool_results is appended by active_run's tool_result handler, not by the node itself — absent when the pass issued no calls. new_facts/stalled were added with the 4b progress signal; runs predating it lack them. exhausted_rounds was added with the retrieval-agency observability work (2026-10); runs predating it lack it.",
       "required": [
         "facts_resolved",
         "facts_newly_unknown",
@@ -178,6 +178,7 @@
         "issued_query_count": {"type": "integer", "minimum": 0},
         "new_facts": {"type": "integer", "minimum": 0},
         "stalled": {"type": "boolean"},
+        "exhausted_rounds": {"type": "boolean"},
         "thinking": {"type": "string"}
       }
     },

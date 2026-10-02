@@ -130,3 +130,27 @@ class TestDecomposition:
 
         ids = [f["id"] for f in result["knowledge"]["facts"]]
         assert ids == ["f001", "f002", "f003"]
+
+    async def test_facts_marked_decomposition_origin(self, config, mock_writer, mock_model):
+        """Decomposition-produced facts carry origin="decomposition" — the
+        baseline provenance the retrieval harness measures research
+        agency against."""
+        _inject_services(config, mock_model)
+        mock_model["client"].chat_completion.return_value = ChatResponse(
+            content=json.dumps(
+                {
+                    "user_goal": "g",
+                    "topic": "t",
+                    "entities": [],
+                    "concepts": [],
+                    "unknown_facts": [{"subject": "a", "fact_needed": "x"}],
+                }
+            )
+        )
+
+        from moira.workflow.nodes.decomposition import decomposition
+
+        state = _build_state(config, "q")
+        result = await decomposition(state, _make_run_config(config))
+
+        assert [f["origin"] for f in result["knowledge"]["facts"]] == ["decomposition"]

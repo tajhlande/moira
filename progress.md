@@ -12,6 +12,7 @@ the capability story behind them.
 
 ## 2026-08 (2026-07-22 → 2026-08-29, planning-freedom branch)
 
+
 **Headline:** general-rubric aggregate flat at ~106/150 (within the ±4/question
 noise band) — but achieved at half the retrieval budget (hard 10-search cap vs
 ~19 uncapped in July), a third of the context window (Q5/32K vs Q4/84K), and a

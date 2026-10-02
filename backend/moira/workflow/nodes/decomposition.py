@@ -119,6 +119,7 @@ async def decomposition(state: ResearchState, config: RunnableConfig) -> dict:
                     subject=item.get("subject", ""),
                     fact_needed=item["fact_needed"],
                     status="unknown",
+                    origin="decomposition",
                 )
             )
 

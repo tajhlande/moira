@@ -100,13 +100,14 @@ _STREAM_WRITER_MODULES = [
 ]
 
 
-def _fact(fid, subject="S", needed="N", status="unknown"):
+def _fact(fid, subject="S", needed="N", status="unknown", origin=""):
     return {
         "id": fid,
         "subject": subject,
         "fact_needed": needed,
         "status": status,
         "citation_ids": [],
+        "origin": origin,
     }
 
 
@@ -128,20 +129,31 @@ def _canned_repeat(
     url_content_calls=0,
     url_content_failures=0,
     original_ids=None,
+    research_loop=None,
+    budget_limit=None,
+    budget_consumed=None,
+    unattributed=0,
 ):
-    return {
+    counts = {
+        "web_search_calls": web_search_calls,
+        "url_content_calls": url_content_calls,
+        "url_content_failures": url_content_failures,
+        "total_tool_calls": web_search_calls + url_content_calls,
+        "unattributed_web_search_calls": unattributed,
+    }
+    repeat = {
         "facts": [_fact(fid) for fid in fact_scores],
         "fact_scores": fact_scores,
         # None = artifact predates the original-fact snapshot; metrics then
         # treat every fact as original.
         "original_fact_ids": original_ids,
-        "counts": {
-            "web_search_calls": web_search_calls,
-            "url_content_calls": url_content_calls,
-            "url_content_failures": url_content_failures,
-            "total_tool_calls": web_search_calls + url_content_calls,
-        },
+        "counts": counts,
+        "research_loop": research_loop,
     }
+    if budget_limit is not None:
+        repeat["budget_limit"] = budget_limit
+        repeat["budget_consumed"] = budget_consumed or 0.0
+    return repeat
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +258,11 @@ class TestSubgraph:
         assert artifact["facts"][0]["id"] == "f001"
         assert artifact["issued_queries"] == ["capital of France"]
         assert len(artifact["requests"]) >= 1
+
+        # Loop outcome recorded from research's execution state.
+        assert artifact["research_loop"]["rounds"] >= 1
+        assert artifact["research_loop"]["exhausted_rounds"] in (True, False)
+        assert artifact["research_loop"]["stalled"] in (True, False)
 
         # Attribution: the single query traces back to fact f001.
         queries = fact_queries(artifact)
@@ -402,7 +419,10 @@ class TestAttribution:
         assert len(page_entries) == 1
         assert page_entries[0]["url"] == "https://a"
 
-    def test_unattributed_fact_has_no_entries(self):
+    def test_unattributed_query_material_is_included_tagged(self):
+        # Union scoring (coverage_any): with no requests, every executed
+        # query is unattributed, and its material is a candidate for EVERY
+        # fact — tagged so attributed metrics stay exact.
         artifact = {
             "facts": [_fact("f1")],
             "requests": [],
@@ -415,6 +435,17 @@ class TestAttribution:
                     "results": [{"title": "a", "url": "https://a", "snippet": "sa"}],
                 }
             ],
+        }
+        snippet_entries, page_entries = assemble_fact_entries(artifact, "f1")
+        assert [e["rank"] for e in snippet_entries] == [1]
+        assert all(e["attributed"] is False for e in snippet_entries)
+
+    def test_no_material_yields_no_entries(self):
+        artifact = {
+            "facts": [_fact("f1")],
+            "requests": [],
+            "request_attempts": {},
+            "tool_calls": [],
         }
         snippet_entries, page_entries = assemble_fact_entries(artifact, "f1")
         assert snippet_entries == []
@@ -580,6 +611,40 @@ class TestLLMScorer:
         assert result["passages"] == [0]
         assert result["quote"] == "x"
 
+    async def test_unattributed_pick_scores_present_any_only(self):
+        # A judge pick from an unattributed query's results proves the fact
+        # is findable in the run's material but not via attributed queries:
+        # present_any True, attributed present False, found_at_k None.
+        artifact = {
+            "facts": [_fact("f1")],
+            "requests": [{"id": "r1", "target_fact_ids": ["f1"], "evidence_needed": "e"}],
+            "request_attempts": _attempts(
+                "r1", [{"tool": "web_search", "query": "q-attr", "success": True}]
+            ),
+            "tool_calls": [
+                {
+                    "tool": "web_search",
+                    "args": {"query": "q-attr"},
+                    "success": True,
+                    "results": [{"title": "a", "url": "https://a", "snippet": "miss"}],
+                },
+                {
+                    "tool": "web_search",
+                    "args": {"query": "q-free"},
+                    "success": True,
+                    "results": [{"title": "b", "url": "https://b", "snippet": "hit"}],
+                },
+            ],
+        }
+        # Entries: rank 1 = attributed miss, rank 2 = unattributed hit.
+        stub = _StubScorer({"present": True, "passages": [1], "quote": "hit"})
+        scores = await score_repeat(artifact, scorer=stub, gold=None)
+        assert stub.seen[0][1]["query"] == "q-free"
+        assert scores["f1"]["present_any"] is True
+        assert scores["f1"]["present"] is False
+        assert scores["f1"]["found_at_k"] is None
+        assert scores["f1"]["found_at_k_any"] == 1  # rank within its query
+
     async def test_scorer_tolerates_bad_json(self):
         scorer = LLMRecallScorer(JudgeConfig(endpoint="http://localhost:1", model="judge-model"))
         scorer._client = AsyncMock(spec=InferenceClient)
@@ -642,6 +707,94 @@ class TestHarnessMetrics:
         assert summary["coverage"]["mean"] == pytest.approx(0.5, abs=1e-3)
         assert summary["spawned_fact_count"]["mean"] == pytest.approx(1.0)
         assert summary["unresolved_original_fact_count"]["mean"] == pytest.approx(1.0)
+
+    def test_summary_splits_discovered_from_overflow(self):
+        repeat = _canned_repeat(
+            {
+                "f1": _score(present=True, found_at_k=1, queries=1, present_any=True),
+                "f2": _score(present=False, found_at_k=None, queries=0),
+                "s1": _score(present=False, found_at_k=None, queries=0),  # overflow
+                "d1": _score(
+                    present=False, found_at_k=None, present_any=True, found_at_k_any=4
+                ),  # discovered, only unattributed material
+            },
+            original_ids=["f1", "f2"],
+        )
+        repeat["facts"][2]["origin"] = "overflow"
+        repeat["facts"][3]["origin"] = "discovered"
+        summary = harness_recall_summary([repeat])
+        assert summary["discovered_fact_count"]["mean"] == pytest.approx(1.0)
+        assert summary["overflow_fact_count"]["mean"] == pytest.approx(1.0)
+        # spawn lump keeps its pre-origin definition: everything not original.
+        assert summary["spawned_fact_count"]["mean"] == pytest.approx(2.0)
+        # Discovered population is scored on union material.
+        assert summary["recall_at_5_discovered"]["mean"] == pytest.approx(1.0)
+        assert summary["discovered_resolution"]["mean"] == pytest.approx(1.0)
+        # Agency headline: of facts resolved on union material, the share
+        # beyond decomposition (d1 only — f1's present is attributed True).
+        assert summary["resolved_share_beyond_decomposition"]["mean"] == pytest.approx(0.5)
+
+    def test_discovered_fields_none_without_population(self):
+        repeat = _canned_repeat(
+            {"f1": _score(present=True, found_at_k=1, queries=1)},
+            original_ids=["f1"],
+        )
+        summary = harness_recall_summary([repeat])
+        assert summary["discovered_fact_count"]["mean"] == pytest.approx(0.0)
+        assert summary["recall_at_5_discovered"] == {"mean": None, "sd": None}
+        assert summary["discovered_resolution"] == {"mean": None, "sd": None}
+        assert summary["resolved_share_beyond_decomposition"] == {"mean": None, "sd": None}
+
+    def test_coverage_any_separates_attribution_from_retrieval(self):
+        # f2 is only findable via unattributed material: present False,
+        # present_any True — coverage misses it, coverage_any catches it.
+        repeat = _canned_repeat(
+            {
+                "f1": _score(
+                    present=True, found_at_k=1, queries=1, present_any=True, found_at_k_any=1
+                ),
+                "f2": _score(
+                    present=False, found_at_k=None, queries=0, present_any=True, found_at_k_any=2
+                ),
+            },
+            original_ids=["f1", "f2"],
+        )
+        summary = harness_recall_summary([repeat])
+        assert summary["coverage"]["mean"] == pytest.approx(0.5)
+        assert summary["coverage_any"]["mean"] == pytest.approx(1.0)
+        assert summary["coverage_any_at_1"]["mean"] == pytest.approx(0.5)
+        assert summary["coverage_any_at_3"]["mean"] == pytest.approx(1.0)
+
+    def test_loop_outcome_and_budget_metrics(self):
+        repeat = _canned_repeat(
+            {"f1": _score(present=True, found_at_k=1, queries=1)},
+            original_ids=["f1"],
+            web_search_calls=6,
+            unattributed=2,
+            research_loop={"rounds": 2, "exhausted_rounds": True, "stalled": False},
+            budget_limit=150.0,
+            budget_consumed=122.0,
+        )
+        summary = harness_recall_summary([repeat])
+        assert summary["research_rounds"]["mean"] == pytest.approx(2.0)
+        assert summary["research_exhausted_rate"]["mean"] == pytest.approx(1.0)
+        assert summary["research_stalled_rate"]["mean"] == pytest.approx(0.0)
+        assert summary["budget_unspent_share"]["mean"] == pytest.approx(28.0 / 150.0, abs=1e-4)
+        assert summary["unattributed_web_search_calls"]["mean"] == pytest.approx(2.0)
+        assert summary["unattributed_web_search_share"]["mean"] == pytest.approx(1 / 3, abs=1e-4)
+
+    def test_legacy_repeats_leave_new_fields_none(self):
+        # Artifacts predating observability: no research_loop, no origin,
+        # no budget, no present_any — new fields read None/0, nothing raises.
+        repeat = _canned_repeat({"f1": _score(present=True, found_at_k=1, queries=1)})
+        del repeat["research_loop"]
+        summary = harness_recall_summary([repeat])
+        assert summary["research_rounds"] == {"mean": None, "sd": None}
+        assert summary["research_exhausted_rate"] == {"mean": None, "sd": None}
+        assert summary["research_stalled_rate"] == {"mean": None, "sd": None}
+        assert summary["budget_unspent_share"] == {"mean": None, "sd": None}
+        assert summary["coverage_any"]["mean"] == pytest.approx(0.0)
+        assert summary["unattributed_web_search_share"]["mean"] == pytest.approx(0.0)
 
     def test_summary_aggregates_across_repeats(self):
         repeat1 = _canned_repeat(
@@ -778,6 +931,9 @@ class TestBuildRepeatArtifact:
             "url_content_calls": 2,
             "url_content_failures": 1,
             "total_tool_calls": 3,
+            # q1 is attributed via r1's attempt ledger (the deduped
+            # attempt still counts), so nothing is unattributed here.
+            "unattributed_web_search_calls": 0,
         }
         assert artifact["budget_consumed"] == pytest.approx(60.0)
         assert artifact["duplicate_queries_intercepted"] == 1

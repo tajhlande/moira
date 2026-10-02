@@ -1711,6 +1711,7 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
                 fact_needed=claim,
                 claim=claim,
                 status="unverified",
+                origin="overflow",
             )
             new_fact["citation_ids"] = disc_cites
             facts.append(new_fact)
@@ -1740,6 +1741,7 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
                     subject=disc.get("subject", ""),
                     fact_needed=fact_needed,
                     status="unknown",
+                    origin="discovered",
                 )
                 # Record an immediately-resolved claim only when it is
                 # backed by at least one citation. The 08-24 planning-freedom
@@ -1772,6 +1774,7 @@ def _apply_discovered_facts(parsed: dict, facts: list[Fact]) -> None:
                     fact_needed=claim,
                     claim=claim,
                     status="unverified",
+                    origin="discovered",
                 )
                 new_fact["citation_ids"] = disc_cites
                 facts.append(new_fact)
@@ -2648,6 +2651,12 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
                 "budget_remaining": new_budget,
                 "tool_call_counts": call_counts,
                 "total_tool_cost_consumed": total_tool_cost,
+                # No pass ran: zero rounds, no cap hit, no stall signal.
+                "research_loop": {
+                    "rounds": 0,
+                    "exhausted_rounds": False,
+                    "stalled": False,
+                },
             },
         }
 
@@ -2911,6 +2920,9 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
         # Structural progress signal (Phase 4b).
         "new_facts": new_facts,
         "stalled": research_progress["stalled"],
+        # Round-cap stop signal — distinguishes "hit the turn limit" from
+        # "stopped because stalled/finished" for the retrieval harness.
+        "exhausted_rounds": exhausted_rounds,
     }
     if last_response is not None:
         detail["response"] = last_response.content or ""
@@ -2952,6 +2964,14 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             "request_attempts": request_attempts,
             "issued_queries": issued_queries,
             "research_progress": research_progress,
+            # Compact loop outcome for state consumers (the retrieval
+            # harness reads this from final_state; detail goes only to
+            # workflow_steps). Latest research pass wins.
+            "research_loop": {
+                "rounds": detail["rounds"],
+                "exhausted_rounds": exhausted_rounds,
+                "stalled": research_progress["stalled"],
+            },
             "research_count": es.get("research_count", 0) + 1,
         },
     }

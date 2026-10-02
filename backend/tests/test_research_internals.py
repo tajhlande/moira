@@ -324,6 +324,68 @@ class TestResearchHelpers:
         assert new_facts[1]["subject"] == "Component weight"
         assert new_facts[1]["citation_ids"] == ["cit003"]
 
+    def test_apply_discovered_facts_marks_origin(self):
+        """Every creation path in _apply_discovered_facts tags the new
+        fact's origin — overflow splits vs model-discovered new facts.
+        The retrieval harness splits its spawned population on this
+        field, so a missing tag would silently blur the research-agency
+        signal.
+        """
+        from moira.workflow.nodes.research import _apply_discovered_facts
+
+        facts = [
+            Fact(
+                id="f001",
+                subject="Cost",
+                fact_needed="Typical price range of X",
+                status="unknown",
+            ),
+        ]
+
+        _apply_discovered_facts(
+            {
+                "discovered_facts": [
+                    # First cited entry updates f001 — updates must not
+                    # touch the existing fact's origin.
+                    {
+                        "fact_id": "f001",
+                        "subject": "Cost",
+                        "claim": "X retails for $400-$600",
+                        "citation_ids": ["cit001"],
+                    },
+                    # Overflow: second cited entry for the updated f001.
+                    {
+                        "fact_id": "f001",
+                        "subject": "Drive mechanics",
+                        "claim": "X uses a 360:1 worm gear drive",
+                        "citation_ids": ["cit002"],
+                    },
+                    # Discovered: new fact via fact_needed.
+                    {
+                        "subject": "Warranty",
+                        "fact_needed": "Length of X's warranty",
+                        "claim": "2 years",
+                        "citation_ids": ["cit003"],
+                    },
+                    # Discovered: cited-claim fallback (no fact_id, no
+                    # fact_needed).
+                    {
+                        "subject": "Release",
+                        "claim": "X released in 2023",
+                        "citation_ids": ["cit004"],
+                    },
+                ]
+            },
+            facts,
+        )
+
+        assert "origin" not in facts[0]
+        assert [f.get("origin") for f in facts[1:]] == [
+            "overflow",
+            "discovered",
+            "discovered",
+        ]
+
     def test_apply_discovered_facts_uncited_overflow_entry_dropped(self):
         """An overflow entry (fact already updated this response) without a
         citation is dropped — uncited claims cannot be verified or cited in
@@ -1211,6 +1273,25 @@ class TestKnowledgeSummaryDepth:
         # Content cap still enforced alongside the new field.
         assert len(summary["citations"][1]["content"]) == 200
         assert CITATION_CONTENT_LIMIT > 0
+
+    def test_facts_carry_origin(self):
+        """knowledge_summary preserves Fact.origin so run snapshots can
+        split decomposition / overflow / discovered populations (retrieval
+        observability); legacy facts without the field serialize as "",
+        not a guessed value."""
+        from moira.models.knowledge import knowledge_summary
+
+        knowledge = {
+            "question": "q",
+            "facts": [
+                {"id": "f001", "subject": "s", "origin": "decomposition"},
+                {"id": "f002", "subject": "s", "origin": "discovered"},
+                {"id": "f003", "subject": "s"},
+            ],
+        }
+        summary = knowledge_summary(knowledge)  # type: ignore[arg-type]
+        origins = [f["origin"] for f in summary["facts"]["s"]]
+        assert origins == ["decomposition", "discovered", ""]
 
     def test_format_prior_citations_cross_subject_facts(self):
         """Facts are a flat list of dict-like entries; every fact linking a
