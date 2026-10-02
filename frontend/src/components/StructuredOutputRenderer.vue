@@ -128,7 +128,14 @@ function inferItemFields(items: Record<string, unknown>[]): ItemFieldSpec[] {
     if (Array.isArray(sample) && sample.every((v) => typeof v === "string"))
       type = "pill-list";
     else if (typeof sample === "boolean") type = "badge";
-    else if (typeof sample === "object" && sample !== null) type = "code";
+    else if (typeof sample === "object" && sample !== null) {
+      // Flat objects (scalar values only, e.g. tool args) render as
+      // key-value pairs; anything nested falls back to a JSON code block.
+      const flat = Object.values(sample).every(
+        (v) => v == null || typeof v !== "object",
+      );
+      type = flat ? "key-value" : "code";
+    }
     return { key: k, label: prettyLabel(k), type };
   });
 }

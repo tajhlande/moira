@@ -68,9 +68,23 @@ class SourceStoreConfig(BaseModel):
     store. A body longer than this is stored truncated and the record's
     material class says ``clipped`` — never ``full`` — so "full" remains a
     truthful claim that the whole body is persisted.
+
+    Retention (amended plan Step 2, mechanism from Phase 8): ``max_age_days``
+    deletes rows older than N days; ``max_total_chars`` evicts
+    oldest-fetched rows (whole runs safe: the writing run's rows are
+    immune) until the table is under the cap. Age runs first, then cap.
+    Either knob at 0 disables that dimension; the sweep runs at
+    store-write time, so a disabled policy costs nothing.
     """
 
     max_body_chars: int = 100_000
+    # 0 = no age policy. 30d matches Phase 8's proposal: the store is
+    # per-run forensics, and runs older than a month are unlikely to be
+    # inspected.
+    max_age_days: int = 30
+    # 0 = no size cap. 500M chars ≈ the Phase 8 proposal (500 MB) with
+    # headroom for the store's observed growth (~1.4M chars / 2 weeks).
+    max_total_chars: int = 500_000_000
 
 
 class ResearchSettings(BaseModel):

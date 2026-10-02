@@ -20,6 +20,7 @@ import math
 import re
 import uuid
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, cast
 
 from langchain_core.runnables import RunnableConfig
@@ -1272,13 +1273,8 @@ def _store_full_body(run_id: str, citation_id: str, url: str | None, body: str) 
     try:
         repo = service_provider("source_content_repository")
         write_queue = service_provider("write_queue")
-        max_chars = int(
-            getattr(
-                getattr(service_provider("config"), "source_store", None),
-                "max_body_chars",
-                100_000,
-            )
-        )
+        source_store_cfg = getattr(service_provider("config"), "source_store", None)
+        max_chars = int(getattr(source_store_cfg, "max_body_chars", 100_000))
     except (RuntimeError, AttributeError, TypeError):
         return None
     truncated = len(body) > max_chars
@@ -1297,7 +1293,56 @@ def _store_full_body(run_id: str, citation_id: str, url: str | None, body: str) 
             fetched_at=_now(),
         )
     )
+    _enqueue_retention_sweep(write_queue, repo, run_id, source_store_cfg)
     return material_class
+
+
+def _enqueue_retention_sweep(write_queue, repo, run_id: str, source_store_cfg) -> None:
+    """Queue the source-store retention policy after this write (Step 2).
+
+    Enqueued behind the upsert in the same FIFO write queue, so the sweep
+    sees the row it follows. Skipped entirely when both knobs are off —
+    a disabled policy must cost zero extra queries. The sweep itself is
+    failure-isolated (see ``_run_retention_sweep``): retention must never
+    break a research run.
+    """
+    max_age_days = int(getattr(source_store_cfg, "max_age_days", 0) or 0)
+    max_total_chars = int(getattr(source_store_cfg, "max_total_chars", 0) or 0)
+    if not max_age_days and not max_total_chars:
+        return
+
+    def _sweep() -> Any:
+        return _run_retention_sweep(repo, run_id, max_age_days, max_total_chars)
+
+    write_queue.enqueue(_sweep)
+
+
+async def _run_retention_sweep(repo, run_id: str, max_age_days: int, max_total_chars: int) -> None:
+    """Apply source-store retention: age sweep first, then size cap.
+
+    Phase 8 ordering: age wins first (deterministic, cheap), then the cap
+    evicts oldest-fetched rows with the writing run's rows protected —
+    a run must not delete its own forensics. Failures are logged and
+    swallowed: the store is forensics, and a failed sweep just means the
+    table stays big until the next write.
+    """
+    try:
+        if max_age_days:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+            deleted = await repo.delete_older_than(cutoff)
+            if deleted:
+                logger.info("source-store age sweep deleted %d rows (cutoff %s)", deleted, cutoff)
+        if max_total_chars:
+            total = await repo.total_content_chars()
+            if total > max_total_chars:
+                deleted = await repo.evict_to_size(max_total_chars, protect_run_id=run_id)
+                logger.info(
+                    "source-store cap sweep deleted %d rows (was %d chars over cap)",
+                    deleted,
+                    total - max_total_chars,
+                )
+    except Exception:
+        logger.exception("source-store retention sweep failed")
 
 
 def _process_execution_results(
@@ -1418,7 +1463,9 @@ def _process_execution_results(
                     stored_class = _store_full_body(run_id, cit_id, sr.get("url"), full_body)
                     for c in citations:
                         if c["id"] == cit_id:
-                            c["byte_size"] = len(full_body)
+                            # Code points of the fetched body (the serving
+                            # window cap is also chars, so the units match).
+                            c["char_count"] = len(full_body)
                             # No store backing → "clipped" is the truthful
                             # claim: only the serving window exists.
                             c["depth"] = stored_class or "clipped"

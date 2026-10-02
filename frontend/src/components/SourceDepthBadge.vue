@@ -61,12 +61,9 @@ const title = computed(() => {
 </script>
 
 <template>
-  <span
-    v-if="info"
-    :class="['source-depth-badge', info.kind]"
-    :title="title"
-    >{{ info.label }}</span
-  >
+  <span v-if="info" :class="['source-depth-badge', info.kind]" :title="title">{{
+    info.label
+  }}</span>
 </template>
 
 <style scoped>

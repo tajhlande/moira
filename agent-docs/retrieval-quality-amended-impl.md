@@ -10,7 +10,7 @@
 | Step | Work | Gate | Status |
 |---|---|---|---|
 | 1 | Research-agency observability (Fact.origin, stop-reason, unattributed/coverage_any in harness) | Freeform 7-question sweep ×3 reports new fields; becomes "before" numbers for research-agency Phase 1 | **Done** — implemented + gate run 2026-10-02 (989 backend / 277 eval tests, ruff clean); baseline table below |
-| 2 | Source-store retention/eviction | `source_contents` bounded under policy; eviction tests | Not started |
+| 2 | Source-store retention/eviction | `source_contents` bounded under policy; eviction tests | **Done** — implemented 2026-10-02 (defaults: 30-day age, 500M-char cap; 1277 tests, ruff clean); live DB currently under both limits, first sweep is a no-op |
 | 3 | Fetch unblocking (failure classes, robots decision, blocked-host memory) | Failure rate vs 2026-09-14 baseline, broken down by class | Not started |
 | 4 | Park original Phases 4/5/7 (doc work) | parked/ entries + index.md updated | Not started |
 | 5 | Passage-level retrieval | — | **Deferred** (research-agency Phase 1 results first) |

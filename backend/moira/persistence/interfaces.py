@@ -462,9 +462,11 @@ class SourceContent:
 
     ``material_class`` is the four-class enum from the retrieval-quality plan
     (``clipped`` / ``full`` / ``summary``; ``snippet`` records never enter this
-    store — a search excerpt is not a fetched body). ``byte_size`` is the
-    authoritative size of the stored body; ``Citation.content`` remains a
-    serving window and must not be used to infer what is available.
+    store — a search excerpt is not a fetched body). ``char_count`` is the
+    authoritative size of the stored body in Unicode code points
+    (``len(content)``) — not UTF-8 bytes, which can be up to 4x larger;
+    ``Citation.content`` remains a serving window and must not be used to
+    infer what is available.
     """
 
     url_hash: str
@@ -474,7 +476,7 @@ class SourceContent:
     material_class: str
     content: str
     content_type: str
-    byte_size: int
+    char_count: int
     truncated: bool
     fetched_at: str
 
@@ -505,3 +507,21 @@ class SourceContentRepository(ABC):
 
     @abstractmethod
     async def evict_run(self, run_id: str) -> int: ...
+
+    @abstractmethod
+    async def delete_older_than(self, cutoff_iso: str) -> int:
+        """Delete rows fetched strictly before ``cutoff_iso`` (ISO string;
+        lexicographic comparison). Rows with an empty ``fetched_at`` count
+        as older than any cutoff — unknown age is treated as oldest.
+        Returns the number of rows deleted."""
+
+    @abstractmethod
+    async def total_content_chars(self) -> int:
+        """Sum of stored ``char_count`` across all runs (0 when empty)."""
+
+    @abstractmethod
+    async def evict_to_size(self, max_total_chars: int, protect_run_id: str | None = None) -> int:
+        """Delete oldest-fetched rows until the table is at or under
+        ``max_total_chars``. Rows belonging to ``protect_run_id`` (the run
+        triggering the sweep) are never evicted. Whole rows only — a
+        single body is never partially kept. Returns rows deleted."""

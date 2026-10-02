@@ -13,6 +13,8 @@ import logging
 import re
 from datetime import datetime, timezone
 
+from moira.models.knowledge import citation_char_count
+
 logger = logging.getLogger(__name__)
 
 
@@ -600,9 +602,10 @@ def _format_prior_citations(citations: list, facts: list | None = None) -> str:
         if depth in ("snippet", "summary"):
             return depth
         if depth in ("page", "clipped", "full"):
-            # byte_size is the authoritative fetched-body size; content is
-            # only the 5K serving window (full bodies live in the store).
-            size = f"{max(1, (c.get('byte_size') or len(content)) // 1000)}k"
+            # char_count is the authoritative fetched-body size (code
+            # points); content is only the 5K serving window (full bodies
+            # live in the store).
+            size = f"{max(1, (citation_char_count(c) or len(content)) // 1000)}k"
             if depth == "full":
                 return f"full {size}"
             return f"page {size}"

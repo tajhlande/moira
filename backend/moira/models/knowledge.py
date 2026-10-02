@@ -48,11 +48,27 @@ class Citation(TypedDict):
     # already saw is circular — and points the model at url_content instead.
     # Missing = legacy citation.
     depth: NotRequired[str]
-    # Size in characters of the fetched body this citation represents (set
-    # when a tool carried a full_body side-channel). Distinct from
-    # len(content): content is the 5K serving window, byte_size is the truth
-    # about how much material exists (possibly in the source-content store).
-    byte_size: NotRequired[int]
+    # Size in Unicode code points of the fetched body this citation
+    # represents (set when a tool carried a full_body side-channel).
+    # Distinct from len(content): content is the 5K serving window,
+    # char_count is the truth about how much material exists (possibly in
+    # the source-content store). Code points, not UTF-8 bytes. Snapshots
+    # from before 2026-10 serialized the same value under the mislabeled
+    # key "byte_size" — readers go through citation_char_count().
+    char_count: NotRequired[int]
+
+
+def citation_char_count(citation: Citation) -> int:
+    """Fetched-body size (code points) for a citation, tolerating old keys.
+
+    Pre-2026-10 snapshots stored this as ``byte_size`` (always a code-point
+    count despite the name); new snapshots use ``char_count``. Prefer the
+    new key, fall back to the old one, then 0.
+    """
+    # Citation is a TypedDict — reading a legacy key the type no longer
+    # declares needs a plain-dict view.
+    legacy = dict(citation).get("byte_size")
+    return citation.get("char_count") or legacy or 0
 
 
 # Canonical cap for Citation.content. This is the single source of truth —
@@ -338,7 +354,10 @@ def knowledge_summary(knowledge: Knowledge) -> dict:
                 "depth": c.get("depth"),
                 # True size of the fetched body (content is only the 5K
                 # serving window). Never serializes the body itself.
-                "byte_size": c.get("byte_size"),
+                # Normalized through citation_char_count so legacy
+                # "byte_size"-keyed snapshots re-serialize under the new
+                # name.
+                "char_count": citation_char_count(c) or None,
                 # Safety net so post-hoc analysis can see what the reviewer
                 # saw without risking unbounded growth in the persisted
                 # snapshot. Same canonical cap the pipeline enforces at
