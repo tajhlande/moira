@@ -18,7 +18,11 @@ logger = logging.getLogger(__name__)
 # resuming the run and re-executing the step (what the user does manually)
 # succeeds. Two retries with a short linear backoff covers observed flaps
 # without materially delaying a genuinely down backend.
-_TRANSIENT_STATUS_CODES = frozenset({502, 503, 504})
+# 524 is Cloudflare's "origin timed out" edge status: the provider's gateway
+# gave up waiting on the model server (e.g. a long thinking-model judge call).
+# The origin may still complete, and a retry often succeeds on a faster pass,
+# so it gets the same transient treatment as 504.
+_TRANSIENT_STATUS_CODES = frozenset({502, 503, 504, 524})
 _TRANSIENT_MAX_RETRIES = 2
 _TRANSIENT_BACKOFF_S = 3.0
 

@@ -87,6 +87,13 @@ def test_all_workflow_nodes_registered():
     [
         ("decomposition", _llm_detail(structured_output={}), "decomposition_detail"),
         (
+            # Retry-recovery shape: parse_failure_raw is optional on the
+            # success detail when a corrective retry recovered the parse.
+            "decomposition",
+            _llm_detail(structured_output={}, parse_failure_raw="broken {"),
+            "decomposition_detail",
+        ),
+        (
             "synthesis",
             _llm_detail(structured_output={"conclusions": []}),
             "synthesis_detail",

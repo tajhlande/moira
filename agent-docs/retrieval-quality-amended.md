@@ -113,8 +113,10 @@ failure classification; no limit charge on synthetic results.
 
 **Gate:** harness sweep shows the url_content failure rate down against
 the 2026-09-14 numbers, with failures broken down by class. Hosts that
-still block are listed as candidates for API tools (see
-`parked/additional-default-tools.md`: FRED, SEC EDGAR, OpenAlex).
+still block are recorded in the implementation plan's gate-run notes; a
+host only becomes a parked/additional-default-tools.md candidate when a
+specialized API endpoint could replace the need for that site (e.g. FRED
+for federal statistical agencies).
 
 ## Step 4 — Park original Phases 4, 5, 7
 

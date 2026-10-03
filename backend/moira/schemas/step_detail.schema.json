@@ -58,6 +58,10 @@
             "structured_output": {
               "type": "object",
               "description": "Raw parsed decomposition: user_goal, topic, entities, concepts, unknown_facts[{subject, fact_needed}]. Model output — keys checked loosely."
+            },
+            "parse_failure_raw": {
+              "type": "string",
+              "description": "Present when the first model response failed JSON parsing but a corrective retry recovered: the raw payload that defeated the parser, kept for diagnosis. On the error variant the same key may appear under decomposition_error_detail via detail."
             }
           }
         }

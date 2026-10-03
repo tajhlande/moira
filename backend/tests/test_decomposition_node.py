@@ -68,19 +68,56 @@ class TestDecomposition:
             await decomposition(state, _make_run_config(config))
 
     @pytest.mark.asyncio
-    async def test_malformed_json_response(self, config, mock_writer, mock_model):
+    async def test_malformed_json_retries_then_raises(self, config, mock_writer, mock_model):
         _inject_services(config, mock_model)
-        mock_model["client"].chat_completion.return_value = ChatResponse(
-            content="This is not JSON at all"
-        )
+        # First call plus two corrective retries all unparseable.
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(content="This is not JSON at all"),
+            ChatResponse(content="still not json"),
+            ChatResponse(content="nope"),
+        ]
+
+        from moira.workflow.nodes.decomposition import decomposition
+
+        state = _build_state(config, "Tell me about test topic")
+
+        with pytest.raises(RuntimeError, match="could not be parsed after 3 attempts"):
+            await decomposition(state, _make_run_config(config))
+
+        assert mock_model["client"].chat_completion.await_count == 3
+        # The failure surfaces as a run_error event, not a silent empty run.
+        error_events = [e for e in mock_writer if e["event"] == "run_error"]
+        assert len(error_events) == 1
+        assert "could not be parsed" in error_events[0]["payload"]["error"]
+        payload = error_events[0]["payload"]
+        assert payload["call_count"] == 3
+        assert payload["detail"]["parse_failure_raw"] == "This is not JSON at all"
+
+    @pytest.mark.asyncio
+    async def test_parse_retry_recovers(self, config, mock_writer, mock_model):
+        _inject_services(config, mock_model)
+        # First response defeats the parser; the corrective retry returns
+        # the standard payload.
+        mock_model["client"].chat_completion.side_effect = [
+            ChatResponse(content="broken { not json"),
+            ChatResponse(content=DECOMPOSITION_RESPONSE),
+        ]
 
         from moira.workflow.nodes.decomposition import decomposition
 
         state = _build_state(config, "Tell me about test topic")
         result = await decomposition(state, _make_run_config(config))
 
-        assert result["knowledge"]["user_goal"] == ""
-        assert result["knowledge"]["facts"] == []
+        assert mock_model["client"].chat_completion.await_count == 2
+        assert result["knowledge"]["user_goal"] == "Find information about test topic"
+        assert len(result["knowledge"]["facts"]) == 2
+        # The recovered run records what defeated the parser for diagnosis.
+        end_events = [e for e in mock_writer if e["event"] == "node_end"]
+        assert len(end_events) == 1
+        payload = end_events[0]["payload"]
+        assert payload["call_count"] == 2
+        assert payload["detail"]["parse_failure_raw"] == "broken { not json"
+        assert payload["detail"]["response"] == DECOMPOSITION_RESPONSE
 
     @pytest.mark.asyncio
     async def test_empty_unknown_facts(self, config, mock_writer, mock_model):

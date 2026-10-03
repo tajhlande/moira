@@ -11,7 +11,7 @@
 |---|---|---|---|
 | 1 | Research-agency observability (Fact.origin, stop-reason, unattributed/coverage_any in harness) | Freeform 7-question sweep ×3 reports new fields; becomes "before" numbers for research-agency Phase 1 | **Done** — implemented + gate run 2026-10-02 (989 backend / 277 eval tests, ruff clean); baseline table below |
 | 2 | Source-store retention/eviction | `source_contents` bounded under policy; eviction tests | **Done** — implemented 2026-10-02 (defaults: 30-day age, 500M-char cap; 1277 tests, ruff clean); live DB currently under both limits, first sweep is a no-op |
-| 3 | Fetch unblocking (failure classes, robots decision, blocked-host memory) | Failure rate vs 2026-09-14 baseline, broken down by class | **Code done** 2026-10-02 (robots decision: skip, documented in url_content docstring; 1020 backend / 279 eval tests, ruff clean). Live gate run pending |
+| 3 | Fetch unblocking (failure classes, robots decision, blocked-host memory) | Failure rate vs 2026-09-14 baseline, broken down by class | **Code done + gate runs** 2026-10-03 (two trade-policy runs; classes/memory/error-persistence verified in the wild; failure-rate reduction not demonstrated — host-mix dominated, see Step 3 section) |
 | 4 | Park original Phases 4/5/7 (doc work) | parked/ entries + index.md updated | Not started |
 | 5 | Passage-level retrieval | — | **Deferred** (research-agency Phase 1 results first) |
 
@@ -225,9 +225,11 @@ header fruit is done; measure before adding more header realism.
   implementing 3.2** rather than deciding unilaterally.
 
 **Gate:** repeat of a fetch-heavy question ×3; failure rate vs
-2026-09-14 (22%), broken down by class; still-blocked hosts listed as
-API-tool candidates under parked/additional-default-tools.md (FRED, SEC
-EDGAR, OpenAlex).
+2026-09-14 (22%), broken down by class. Still-blocked hosts are recorded
+below in the gate-run notes; a host is promoted to a
+parked/additional-default-tools.md candidate only when a specialized API
+endpoint could replace the need for that site (e.g. FRED for
+bls.gov/federalreserve.gov material).
 
 **Result (2026-10-02, code done — gate run pending):**
 
@@ -283,6 +285,41 @@ EDGAR, OpenAlex).
   Verification after: 1021 backend + 279 eval tests, ruff clean;
   `validate_step_details --all` shows only the known historical-noise
   violations (optional property reclassifies nothing).
+
+**Gate runs (2026-10-03, trade-policy-manufacturing ×3, freeform, 35B):**
+
+Two runs, same question, judge `glm-5.3` (03:18 via Neuralwatt CDN,
+06:17 via z-ai direct — same underlying model, so judge is comparable):
+
+- Fetch failures: 03:18 run 2/7 (29%); 06:17 run 7/10 (70%) —
+  `blocked` 3 + `unsupported` 4. Combined 9/17 (53%) vs the 2026-09-14
+  baseline 12/22 (55%) for this question. NOT a clear improvement: the
+  rate is host-mix dominated and each run samples a different mix.
+- Recurring refusals across runs and baseline: `bls.gov` (blocked),
+  `federalreserve.gov` (unsupported PDF — the content-type guard
+  working, but the Fed publishes as PDF). One-off refusals this gate:
+  `journals.uchicago.edu`, `oreilly.com`, `cepr.org`, `web.pdx.edu`,
+  `live.icai.org`, `justinrpierce.com`. The long tail rotates; only the
+  data/agencies recur — which strengthens the parked API-tools lane
+  (FRED covers bls.gov/federalreserve.gov material).
+- Blocked-host memory had nothing to intercept in either run (the model
+  does not re-attempt a refused host within a run) — working as designed.
+- Retrieval numbers moved modestly between the two runs (recall@5 0.45 →
+  0.50, recall@3 0.39 → 0.50, coverage 0.83 → 0.85); both runs sit well
+  above the 2026-09-14 same-question baseline (recall@5 0.16) with the
+  smaller fact sets of the 35B model.
+- `recall_with_pages` collapsed to 0.00 (0.05 prior run) because ~70% of
+  fetch attempts failed — page-backed evidence is structurally capped by
+  fetch success, not by retrieval or scoring. Fixing this belongs to the
+  API-tools lane (parked/additional-default-tools.md), not to more
+  fetch-side retries.
+
+Gate verdict: classes + blocked-host memory + error persistence all
+verified in the wild; failure-rate reduction NOT demonstrated on this
+question (host-mix variance, small n). Still-blocked hosts are recorded
+above (this section); none justify a parked/additional-default-tools.md
+candidate yet — bls.gov/federalreserve.gov material is the one lane with
+a replacing API (FRED, already on that list).
 
 ---
 

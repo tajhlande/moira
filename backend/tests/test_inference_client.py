@@ -60,6 +60,18 @@ class TestTransientRetry:
         assert client._client.post.await_count == 3
         assert [c.args[0] for c in slept.await_args_list] == [3.0, 6.0]
 
+    async def test_524_cloudflare_origin_timeout_retried_then_success(self):
+        """Cloudflare's 524 (origin timed out) gets the same transient
+        treatment as 504 — long thinking-model judge calls behind a CDN
+        can trip the edge timeout on one attempt and succeed on the next."""
+        client = _client_with_responses(
+            [_response(524, "<html>timeout</html>"), _response(200, _success_payload())]
+        )
+        with patch("moira.inference.client.asyncio.sleep", new=AsyncMock()):
+            resp = await _send(client)
+        assert resp.content == "ok"
+        assert client._client.post.await_count == 2
+
     async def test_persistent_502_raises_after_max_retries(self):
         client = _client_with_responses([_response(502)] * 3)
         with patch("moira.inference.client.asyncio.sleep", new=AsyncMock()):

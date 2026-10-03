@@ -2290,9 +2290,14 @@ async def _run_native_tool_loop(
         last_response = response
         last_thinking = getattr(response, "thinking", "") or ""
 
-        # Hybrid: parse content for facts/sources alongside tool calls
+        # Hybrid: parse content for facts/sources alongside tool calls.
+        # Guard on plausible JSON presence: Qwen models often emit a short
+        # narration line in content before their native tool calls, which
+        # would otherwise log a "Failed to extract JSON object" warning
+        # every round. Narration prose contains no braces/brackets; JSON
+        # content always does (leading whitespace or prose preamble is fine).
         content = response.content or ""
-        if content.strip():
+        if content.strip() and ("{" in content or "[" in content):
             parsed = _parse_json_object(content)
             _apply_discovered_facts(parsed, facts)
             _apply_sources(parsed, citations, seen_urls)

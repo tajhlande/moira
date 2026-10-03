@@ -140,6 +140,16 @@ Research question: {question}
 
 ---
 
+## decomposition.json_retry
+
+Your previous response could not be parsed as JSON. Return the complete JSON
+object again with the same structure and content, but strictly valid this time:
+double quotes only, no trailing commas, no unescaped double quotes or raw line
+breaks inside string values, no text before or after the object. Respond with
+the JSON object and nothing else.
+
+---
+
 ## planning.system
 
 You are a research planning assistant. Your job is to design a set of evidence

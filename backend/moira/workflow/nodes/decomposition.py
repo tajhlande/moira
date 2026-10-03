@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 NODE_NAME = "decomposition"
 
+# How many corrective re-asks to attempt when the model's JSON cannot be
+# parsed. Matches the report_generation citation-retry allowance.
+_MAX_PARSE_RETRIES = 2
+
 
 async def decomposition(state: ResearchState, config: RunnableConfig) -> dict:
     """Decompose the user question into goal, topic, entities, concepts, and
@@ -75,6 +79,7 @@ async def decomposition(state: ResearchState, config: RunnableConfig) -> dict:
     raw = response.content or ""
     thinking = getattr(response, "thinking", "") or ""
     new_budget = deduct_cost(es["step_costs"], NODE_NAME, es["budget_remaining"])
+    call_count = 1
 
     detail = {
         "prompt": user_prompt,
@@ -107,6 +112,70 @@ async def decomposition(state: ResearchState, config: RunnableConfig) -> dict:
         )
 
     parsed = _parse_json_object(raw)
+
+    # Retry with corrective feedback when the model's JSON cannot be parsed.
+    # A silent {} here empties the knowledge snapshot and every downstream
+    # node renders an empty prompt — the run finishes as a silent dud
+    # (observed live in eval repeats: 0 facts, 0 tool calls, model replying
+    # "your request is empty"). Recover via retry; fail loudly only when all
+    # attempts are exhausted.
+    parse_failure_raw = ""
+    for attempt in range(_MAX_PARSE_RETRIES):
+        if parsed:
+            break
+        if not parse_failure_raw:
+            # Keep the first failing payload for diagnosis even when a retry
+            # succeeds — the repair chain in _parse_json_object may need
+            # extending for whatever defeated it.
+            parse_failure_raw = raw
+        logger.warning(
+            "DECOMPOSITION: JSON parse failed (attempt %d/%d, response=%d chars), retrying",
+            attempt + 1,
+            _MAX_PARSE_RETRIES + 1,
+            len(raw),
+        )
+        messages.append({"role": "assistant", "content": raw})
+        messages.append({"role": "user", "content": render_prompt("decomposition.json_retry")})
+        response = await resolved.client.chat_completion(
+            messages=messages,
+            model=resolved.model_id,
+            temperature=DEFAULT_TEMPERATURE,
+            extra_body=DEFAULT_INTELLIGENCE_EXTRA_BODY,
+        )
+        call_count += 1
+        raw = response.content or ""
+        parsed = _parse_json_object(raw)
+
+    if not parsed:
+        err_msg = (
+            f"Decomposition JSON could not be parsed after {call_count} attempts "
+            f"(last response={len(raw)} chars)"
+        )
+        logger.error("DECOMPOSITION: %s", err_msg)
+        detail["response"] = raw
+        if parse_failure_raw:
+            detail["parse_failure_raw"] = parse_failure_raw
+        writer(
+            {
+                "event": "run_error",
+                "payload": {
+                    "error": err_msg,
+                    "budget_remaining": new_budget,
+                    "detail": detail,
+                    "purpose": NODE_NAME,
+                    "model": resolved.model_id,
+                    "call_count": call_count,
+                    **_response_meta(response),
+                },
+            }
+        )
+        raise RuntimeError(err_msg)
+
+    if parse_failure_raw:
+        # First response failed to parse but a retry recovered: record both
+        # the recovered response and the payload that defeated the parser.
+        detail["response"] = raw
+        detail["parse_failure_raw"] = parse_failure_raw
 
     # Build facts from parsed unknown_facts
     facts: list[Fact] = []
@@ -142,7 +211,7 @@ async def decomposition(state: ResearchState, config: RunnableConfig) -> dict:
                 "detail": detail,
                 "purpose": NODE_NAME,
                 "model": resolved.model_id,
-                "call_count": 1,
+                "call_count": call_count,
                 **_response_meta(response),
             },
         }
