@@ -24,6 +24,32 @@ from typing import Any
 # tool usage to total tool usage is a health signal for tool routing.
 _GENERIC_TOOLS = frozenset({"web_search", "url_content"})
 
+# Failure classes for url_content fetch failures, parsed from the stable
+# class prefixes in the tool's error strings (see url_content's failure
+# classification contract). "other" absorbs unprefixed errors, including
+# all errors recorded on artifacts that predate classification — so the
+# per-class counts sum to url_content_failures only on classified runs.
+URL_CONTENT_FAILURE_CLASSES = (
+    "blocked",
+    "timeout",
+    "not_found",
+    "too_large",
+    "unsupported",
+    "network",
+    "parse",
+    "other",
+)
+
+
+def failure_class(error: str | None) -> str:
+    """Parse the failure-class prefix from a url_content error string.
+
+    Returns the class when it is one of :data:`URL_CONTENT_FAILURE_CLASSES`,
+    "other" for unknown or missing prefixes (legacy errors included).
+    """
+    cls = (error or "").split(":", 1)[0].strip().lower()
+    return cls if cls in URL_CONTENT_FAILURE_CLASSES else "other"
+
 
 def _safe_div(numerator: float, denominator: float) -> float:
     """Division that returns 0.0 when denominator is zero."""
@@ -421,6 +447,11 @@ def harness_recall_summary(repeats: list[dict[str, Any]], ks: tuple[int, ...] = 
     - url_content_failures: fetches per run that failed outright (blocked
       hosts, timeouts, oversized responses) — these consume call budget,
       produce no content, and structurally cap the page-rescue rate.
+    - url_content_failures_{class}: the same failures broken down by
+      class (blocked / timeout / not_found / too_large / unsupported /
+      network / parse / other), parsed from the tool's stable error
+      prefixes. Classes sum to the total only on runs whose errors
+      carry prefixes; legacy repeats contribute zeros.
 
     Three populations per repeat, because research's overflow-split path
     spawns facts that are never queried: all / original / queried as
@@ -571,4 +602,15 @@ def harness_recall_summary(repeats: list[dict[str, Any]], ks: tuple[int, ...] = 
     summary["url_content_failures"] = _mean_sd(
         [rep.get("counts", {}).get("url_content_failures", 0) for rep in repeats]
     )
+    # Per-class breakdown of url_content failures (blocked hosts,
+    # timeouts, ...) parsed from error-string prefixes. Legacy repeats
+    # without classified errors contribute zeros to every class — their
+    # failures stay visible in url_content_failures.
+    for cls in URL_CONTENT_FAILURE_CLASSES:
+        summary[f"url_content_failures_{cls}"] = _mean_sd(
+            [
+                rep.get("counts", {}).get("url_content_failure_classes", {}).get(cls, 0)
+                for rep in repeats
+            ]
+        )
     return summary

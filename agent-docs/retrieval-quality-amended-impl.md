@@ -11,7 +11,7 @@
 |---|---|---|---|
 | 1 | Research-agency observability (Fact.origin, stop-reason, unattributed/coverage_any in harness) | Freeform 7-question sweep ×3 reports new fields; becomes "before" numbers for research-agency Phase 1 | **Done** — implemented + gate run 2026-10-02 (989 backend / 277 eval tests, ruff clean); baseline table below |
 | 2 | Source-store retention/eviction | `source_contents` bounded under policy; eviction tests | **Done** — implemented 2026-10-02 (defaults: 30-day age, 500M-char cap; 1277 tests, ruff clean); live DB currently under both limits, first sweep is a no-op |
-| 3 | Fetch unblocking (failure classes, robots decision, blocked-host memory) | Failure rate vs 2026-09-14 baseline, broken down by class | Not started |
+| 3 | Fetch unblocking (failure classes, robots decision, blocked-host memory) | Failure rate vs 2026-09-14 baseline, broken down by class | **Code done** 2026-10-02 (robots decision: skip, documented in url_content docstring; 1020 backend / 279 eval tests, ruff clean). Live gate run pending |
 | 4 | Park original Phases 4/5/7 (doc work) | parked/ entries + index.md updated | Not started |
 | 5 | Passage-level retrieval | — | **Deferred** (research-agency Phase 1 results first) |
 
@@ -228,6 +228,61 @@ header fruit is done; measure before adding more header realism.
 2026-09-14 (22%), broken down by class; still-blocked hosts listed as
 API-tool candidates under parked/additional-default-tools.md (FRED, SEC
 EDGAR, OpenAlex).
+
+**Result (2026-10-02, code done — gate run pending):**
+
+- 3.1: `url_content._fetch` raises `_FetchError(cls, detail)` →
+  `ToolResult.error = "{cls}: {detail}"` for every failure path.
+  Classes: `blocked` (401/403/429), `timeout`, `not_found` (404),
+  `too_large`, `unsupported` (content-type — new guard: rejects
+  PDFs/images before the body is read; text/*, xhtml, xml, json, rss,
+  atom allowed), `network` (transport + other 4xx/5xx), `parse`
+  (extraction), `invalid` (missing url). Non-2xx statuses still fail
+  as before (raise_for_status semantics preserved by an explicit
+  `status >= 400` catch-all).
+- Harness: `build_repeat_artifact` records
+  `counts["url_content_failure_classes"]` (parsed via
+  `moira_eval.metrics.failure_class`; unprefixed legacy errors →
+  `"other"`), and `harness_recall_summary` emits
+  `url_content_failures_{class}` {mean, sd} columns for all 8 classes.
+  Synthetic blocked-host interceptions never reach the executor, so
+  these counts reflect real fetch failures only.
+- 3.2: run-scoped `blocked_hosts: list[str]` in `ExecutionState`
+  (models/knowledge.py), seeded from state at research() entry,
+  appended by `_update_fetched_urls` when a REAL fetch fails with the
+  `blocked:` prefix (dedup'd; synthetic results skipped), consulted by
+  `_partition_url_content_calls` before execution — sibling URLs on a
+  refused host get a synthetic `host_blocked` ToolResult (no budget
+  charge, `metadata["host_blocked"]`, error `blocked: host ...` so the
+  harness classifies it the same way). Exact-URL dedup takes precedence
+  over host blocking. Cross-pass: persists in execution_state like
+  issued_queries.
+- 3.3: robots decision made with user sign-off — **skip robots.txt**.
+  Rationale documented in the url_content module docstring
+  (self-hosted research agent, trivial volume, browser-like headers;
+  politeness enforced behaviorally via blocked-host memory).
+- Tests: `tests/test_url_content_failure_classes.py` (new — the
+  existing tests/test_url_content.py is excluded from the standard
+  suite because of its network integration tail; these run MockTransport
+  through the real `_fetch`), `TestBlockedHostMemory` in
+  tests/test_research_internals.py (partition/synthetic/update +
+  non-blocked classes ignored + synthetic skipped), harness
+  failure-class counting + summary aggregation + legacy-repeat zeros.
+  Verification: 1020 backend + 279 eval tests, ruff check + format
+  clean.
+- Follow-up (found examining live run 1881ee32, whose two failed
+  url_content fetches persisted with NO reason): the failure reason
+  was dropped before every consumer except the harness's
+  RecordingExecutor. Fixed — research's tool_result event payload and
+  tool_results_log entries now carry `error` (null on success);
+  active_run persists it into `workflow_steps.detail.tool_results`
+  (schema: optional `error` on tool_result, eval capture passes it
+  through); and the model-facing zero-result/unstructured feedback
+  lines append the reason ("Status: FAILED (blocked: HTTP 403 from
+  ...)") so the model can tell a host refusal from a timeout.
+  Verification after: 1021 backend + 279 eval tests, ruff clean;
+  `validate_step_details --all` shows only the known historical-noise
+  violations (optional property reclassifies nothing).
 
 ---
 

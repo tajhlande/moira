@@ -46,7 +46,11 @@ from typing import Any
 
 from moira.config import MoiraConfig, ResearchSettings, load_config
 from moira_eval.judge import JudgeConfig, judge_config_from_env, judge_model_var
-from moira_eval.metrics import harness_per_fact_recall, harness_recall_summary
+from moira_eval.metrics import (
+    failure_class,
+    harness_per_fact_recall,
+    harness_recall_summary,
+)
 from moira_eval.questions import QUESTIONS, get_question
 
 # Depth at which snippet recall is scored. web_search's max_results
@@ -358,10 +362,19 @@ def build_repeat_artifact(
     url_content_calls = sum(1 for c in recorded_calls if c["tool"] == "url_content")
     # Blocked/failed fetches (403s on bot-protected hosts, timeouts, ...) —
     # tracked separately because they consume call budget and block the
-    # page-rescue path while producing no content.
+    # page-rescue path while producing no content. The per-class dict is
+    # parsed from the stable prefixes in ToolResult.error (see
+    # url_content's failure classification); synthetic blocked-host
+    # interceptions never reach the executor, so both figures count real
+    # fetch failures only.
     url_content_failures = sum(
         1 for c in recorded_calls if c["tool"] == "url_content" and not c.get("success")
     )
+    url_content_failure_classes: dict[str, int] = {}
+    for c in recorded_calls:
+        if c["tool"] == "url_content" and not c.get("success"):
+            cls = failure_class(c.get("error"))
+            url_content_failure_classes[cls] = url_content_failure_classes.get(cls, 0) + 1
 
     artifact = {
         "index": index,
@@ -376,6 +389,7 @@ def build_repeat_artifact(
             "web_search_calls": web_search_calls,
             "url_content_calls": url_content_calls,
             "url_content_failures": url_content_failures,
+            "url_content_failure_classes": url_content_failure_classes,
             "total_tool_calls": len(recorded_calls),
         },
         # Loop outcome of the final research pass (rounds / cap hit /

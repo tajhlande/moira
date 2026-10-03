@@ -1585,6 +1585,167 @@ class TestUpdateFetchedUrls:
         assert fetched_urls[url]["status"] == "success"
 
 
+class TestBlockedHostMemory:
+    """Tests for the run-scoped blocked-host memory — Step 3 of the
+    retrieval-quality amended plan.
+
+    A 401/403/429 refusal is host policy, so a refused host is benched
+    for the rest of the run: subsequent url_content calls to sibling URLs
+    on that host are intercepted before execution (synthetic result, no
+    budget charge), instead of burning a call on a fetch that will fail
+    the same way.
+    """
+
+    @staticmethod
+    def _make_call(url: str, call_id: str = "tc1") -> ToolCall:
+        return ToolCall(id=call_id, name="url_content", arguments={"url": url})
+
+    def test_url_host_extraction(self):
+        """_url_host parses hostnames and degrades to "" on garbage."""
+        from moira.workflow.nodes.research import _url_host
+
+        assert _url_host("https://www.bls.gov/data") == "www.bls.gov"
+        assert _url_host("http://Example.COM:8080/p") == "example.com"
+        assert _url_host("not a url") == ""
+        assert _url_host("") == ""
+
+    def test_partition_intercepts_blocked_host(self):
+        """A url_content call to a sibling URL on a blocked host is
+        intercepted with host_blocked info, not executed."""
+        from moira.workflow.nodes.research import _partition_url_content_calls
+
+        call = self._make_call("https://www.bls.gov/other-page")
+        to_execute, synthetics = _partition_url_content_calls(
+            [call], {}, [], blocked_hosts=["www.bls.gov"]
+        )
+        assert to_execute == []
+        assert len(synthetics) == 1
+        assert synthetics[0][0] is call
+        assert synthetics[0][1]["status"] == "host_blocked"
+        assert synthetics[0][1]["host"] == "www.bls.gov"
+
+    def test_partition_allows_unblocked_host(self):
+        """A call to a host NOT in the blocked list executes normally."""
+        from moira.workflow.nodes.research import _partition_url_content_calls
+
+        call = self._make_call("https://example.org/fresh")
+        to_execute, synthetics = _partition_url_content_calls(
+            [call], {}, [], blocked_hosts=["www.bls.gov"]
+        )
+        assert len(to_execute) == 1
+        assert synthetics == []
+
+    def test_partition_exact_url_failure_takes_precedence(self):
+        """A URL already in fetched_urls keeps its existing dedup info —
+        host blocking is only consulted for URLs not yet attempted."""
+        from moira.workflow.nodes.research import _partition_url_content_calls
+
+        url = "https://www.bls.gov/data"
+        call = self._make_call(url)
+        fetched_urls = {url: {"status": "failed", "cit_id": None, "error": "timeout"}}
+        to_execute, synthetics = _partition_url_content_calls(
+            [call], fetched_urls, [], blocked_hosts=["www.bls.gov"]
+        )
+        assert to_execute == []
+        assert synthetics[0][1]["status"] == "failed"  # not host_blocked
+
+    def test_partition_without_blocked_hosts_unchanged(self):
+        """blocked_hosts=None (legacy callers) behaves exactly as before."""
+        from moira.workflow.nodes.research import _partition_url_content_calls
+
+        call = self._make_call("https://www.bls.gov/data")
+        to_execute, synthetics = _partition_url_content_calls([call], {}, [])
+        assert len(to_execute) == 1
+        assert synthetics == []
+
+    def test_synthetic_host_blocked_result(self):
+        """The host-blocked synthetic result fails with the blocked: class
+        prefix (so the harness classifies it), is marked synthetic (no
+        budget charge), and tells the model why."""
+        from moira.workflow.nodes.research import _build_synthetic_url_result
+
+        call = self._make_call("https://www.bls.gov/x")
+        result = _build_synthetic_url_result(
+            call, {"status": "host_blocked", "host": "www.bls.gov"}, []
+        )
+        assert result.success is False
+        assert result.metadata.get("synthetic") is True
+        assert result.metadata.get("host_blocked") is True
+        assert result.error.startswith("blocked: host www.bls.gov")
+        assert "refused" in result.output
+        assert "different site" in result.output
+
+    def test_update_records_blocked_host(self):
+        """A real fetch refused with the blocked: class appends the host
+        to the run-scoped list (once, even across multiple failures)."""
+        from moira.workflow.nodes.research import _update_fetched_urls
+
+        call1 = self._make_call("https://www.bls.gov/a", "c1")
+        call2 = self._make_call("https://www.bls.gov/b", "c2")
+        results = [
+            ToolResult(
+                tool_name="url_content",
+                output="",
+                success=False,
+                error="blocked: HTTP 403 from https://www.bls.gov/a",
+                metadata={"results": []},
+            ),
+            ToolResult(
+                tool_name="url_content",
+                output="",
+                success=False,
+                error="blocked: HTTP 429 from https://www.bls.gov/b",
+                metadata={"results": []},
+            ),
+        ]
+        blocked_hosts: list[str] = []
+        fetched_urls: dict = {}
+
+        _update_fetched_urls(
+            fetched_urls, results, [call1, call2], {}, blocked_hosts=blocked_hosts
+        )
+        assert blocked_hosts == ["www.bls.gov"]  # deduplicated
+        # URL-level fetch memory still records both attempts.
+        assert set(fetched_urls) == {"https://www.bls.gov/a", "https://www.bls.gov/b"}
+
+    def test_update_ignores_non_blocked_classes(self):
+        """Timeouts and network errors don't bench a host — only refusals
+        (401/403/429) are host policy."""
+        from moira.workflow.nodes.research import _update_fetched_urls
+
+        call = self._make_call("https://slow.example.com/x")
+        result = ToolResult(
+            tool_name="url_content",
+            output="",
+            success=False,
+            error="timeout: request to https://slow.example.com/x timed out",
+            metadata={"results": []},
+        )
+        blocked_hosts: list[str] = []
+
+        _update_fetched_urls({}, [result], [call], {}, blocked_hosts=blocked_hosts)
+        assert blocked_hosts == []
+
+    def test_update_skips_synthetic_results(self):
+        """Synthetic (already-intercepted) results never grow the blocked
+        list — otherwise an interception could re-block its own host in a
+        loop (it can't here, but the invariant is cheap to pin)."""
+        from moira.workflow.nodes.research import _update_fetched_urls
+
+        call = self._make_call("https://www.bls.gov/x")
+        result = ToolResult(
+            tool_name="url_content",
+            output="",
+            success=False,
+            error="blocked: host www.bls.gov refused an earlier fetch this run",
+            metadata={"results": [], "synthetic": True, "host_blocked": True},
+        )
+        blocked_hosts: list[str] = []
+
+        _update_fetched_urls({}, [result], [call], {}, blocked_hosts=blocked_hosts)
+        assert blocked_hosts == []
+
+
 class TestExecuteWithUrlDedup:
     """Integration tests for _execute_with_url_dedup — verifies the full
     partition/execute/merge flow."""

@@ -136,6 +136,9 @@ def _extract_tool_trace(steps: list[dict]) -> list[dict]:
                     "output_preview": preview[:500],
                     "duration_ms": tr.get("duration_ms", 0),
                     "success": tr.get("success", False),
+                    # Failure reason (None on success / legacy rows);
+                    # url_content errors carry a stable class prefix.
+                    "error": tr.get("error"),
                 }
             )
     return trace

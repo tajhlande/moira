@@ -52,6 +52,7 @@ def _tool_entry(**extra):
         "result": "snippet",
         "duration_ms": 12.0,
         "success": True,
+        "error": None,
     }
     entry.update(extra)
     return entry
@@ -322,6 +323,12 @@ def test_capture_tool_trace_aligned_with_schema():
     round_log_entry = _tool_entry()
     del round_log_entry["result"]
     round_log_entry["output"] = "round-log"
+    failed_entry = _tool_entry(
+        tool="url_content",
+        success=False,
+        result="",
+        error="blocked: HTTP 403 from https://www.bls.gov/x",
+    )
     steps = [
         {
             "node_name": "research",
@@ -330,11 +337,25 @@ def test_capture_tool_trace_aligned_with_schema():
                 "tool_results": [
                     _tool_entry(result="x" * 600, request_id="req0001"),
                     round_log_entry,
+                    failed_entry,
                 ]
             },
         }
     ]
     trace = _extract_tool_trace(steps)
-    assert [t["tool"] for t in trace] == ["web_search", "web_search"]
+    assert [t["tool"] for t in trace] == ["web_search", "web_search", "url_content"]
     assert trace[0]["output_preview"] == "x" * 500
     assert trace[1]["output_preview"] == "round-log"
+    assert trace[2]["error"] == "blocked: HTTP 403 from https://www.bls.gov/x"
+    assert trace[0]["error"] is None
+
+
+def test_tool_result_error_optional_on_legacy_rows():
+    """Rows written before the error field existed (no key at all)
+    still validate — the property is optional, never required."""
+    legacy = _tool_entry()
+    del legacy["error"]
+    detail = _research_detail(tool_results=[legacy])
+    errors, matched = validate_detail("research", detail)
+    assert errors == []
+    assert matched == "research_detail"

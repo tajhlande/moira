@@ -3,7 +3,22 @@
 Uses httpx for async HTTP fetching and trafilatura for robust main-content
 extraction. By default, returns Markdown that preserves headings, links,
 tables, formatting, and embedded LaTeX/math notation. Supports XPath
-subsetting via lxml and optional plain-text output."""
+subsetting via lxml and optional plain-text output.
+
+Fetching policy: this tool sends browser-like headers and deliberately
+does NOT fetch or honor robots.txt. MOiRA is a self-hosted research
+agent whose fetch volume is trivial (a handful of GETs per host per run
+— far below any crawler), so robots.txt's crawler-politeness contract
+does not fit this usage. Politeness is enforced behaviorally instead:
+hosts that refuse fetches (401/403/429) are remembered by the research
+loop for the rest of the run, and further fetches to them are
+intercepted before execution (see research node's blocked-host memory).
+
+Every failed ToolResult carries a stable failure-class prefix in its
+error string ("blocked: ...", "timeout: ...", "not_found: ...",
+"too_large: ...", "unsupported: ...", "network: ...", "parse: ...") so
+downstream consumers (blocked-host memory, the retrieval harness's
+failure-class counts) can classify without parsing free text."""
 
 import logging
 import time
@@ -16,6 +31,41 @@ from lxml import etree
 from moira.tools.base import BaseTool, ToolResult
 
 logger = logging.getLogger(__name__)
+
+# Failure classes (stable prefixes in ToolResult.error). The set of
+# classes is part of the contract with research.py's blocked-host memory
+# and the retrieval harness's per-class failure counts — add new classes
+# at the end only, never rename existing ones.
+_FETCH_CLASSES = ("blocked", "timeout", "not_found", "too_large", "unsupported", "network")
+
+
+class _FetchError(Exception):
+    """Fetch failure carrying a stable class prefix for downstream stats.
+
+    The rendered message is ``"{cls}: {detail}"`` so consumers can classify
+    by splitting on the first colon. Classes: ``blocked`` (401/403/429 —
+    host refuses), ``timeout``, ``not_found`` (404), ``too_large``,
+    ``unsupported`` (content type), ``network`` (everything else).
+    """
+
+    def __init__(self, cls: str, detail: str) -> None:
+        super().__init__(f"{cls}: {detail}")
+        self.cls = cls
+
+
+# Content types we can meaningfully extract from. Anything else (PDFs,
+# images, binaries) would either fail trafilatura or return garbage —
+# rejecting early with an ``unsupported:`` class is more informative than
+# a downstream parse failure. An absent header is allowed (some servers
+# omit it; the size guard still protects us).
+_SUPPORTED_CONTENT_TYPES = (
+    "text/",
+    "application/xhtml+xml",
+    "application/xml",
+    "application/json",
+    "application/rss+xml",
+    "application/atom+xml",
+)
 
 # Maximum response size to accept (bytes). Prevents loading enormous pages
 # into memory. 5 MB is generous enough for most research-quality pages.
@@ -79,20 +129,25 @@ class UrlContentTool(BaseTool):
         start = time.monotonic()
         url = args.get("url", "").strip()
         if not url:
-            return self._fail(start, "Missing required parameter: url")
+            return self._fail(start, "invalid: Missing required parameter: url")
 
         text_only = args.get("text_only", False)
         xpath_expr = args.get("xpath", "")
 
         try:
             html = await self._fetch(url)
+        except _FetchError as e:
+            # Error already carries its class prefix.
+            return self._fail(start, str(e))
         except Exception as e:
-            return self._fail(start, f"Failed to fetch {url}: {e}")
+            # Unexpected (decode errors, ...) — still prefixed so every
+            # failure a run produces is classifiable.
+            return self._fail(start, f"network: fetching {url} failed: {e}")
 
         try:
             content = self._extract(html, url=url, text_only=text_only, xpath=xpath_expr)
         except Exception as e:
-            return self._fail(start, f"Failed to parse content from {url}: {e}")
+            return self._fail(start, f"parse: failed to extract content from {url}: {e}")
 
         content = content[:_MAX_OUTPUT_LENGTH]
         title = self._extract_title(html)
@@ -138,7 +193,15 @@ class UrlContentTool(BaseTool):
         )
 
     async def _fetch(self, url: str) -> str:
-        """Fetch the page HTML with a reasonable user-agent and size limit."""
+        """Fetch the page HTML with a reasonable user-agent and size limit.
+
+        All fetch failures raise :class:`_FetchError` so the caller
+        (``execute``) can surface a stable class prefix — see the module
+        docstring for the class contract. HTTP status mapping: 401/403/429
+        are "blocked" (the host refuses us, retrying won't help),
+        404 is "not_found", and any other non-2xx lands in "network" —
+        the plan's catch-all for statuses with no dedicated class.
+        """
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -148,19 +211,43 @@ class UrlContentTool(BaseTool):
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
         }
-        async with httpx.AsyncClient(
-            timeout=self._timeout,
-            follow_redirects=True,
-            max_redirects=10,
-        ) as client:
-            resp = await client.get(url, headers=headers)
-            resp.raise_for_status()
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout,
+                follow_redirects=True,
+                max_redirects=10,
+            ) as client:
+                resp = await client.get(url, headers=headers)
+        except httpx.TimeoutException as e:
+            raise _FetchError("timeout", f"request to {url} timed out") from e
+        except httpx.HTTPError as e:
+            # Connect/transport failures and non-2xx statuses without a
+            # dedicated class below.
+            raise _FetchError("network", f"fetching {url} failed: {e}") from e
 
-            if len(resp.content) > _MAX_RESPONSE_SIZE:
-                raise ValueError(
-                    f"Response too large ({len(resp.content)} bytes, max {_MAX_RESPONSE_SIZE})"
-                )
-            return resp.text
+        status = resp.status_code
+        if status in (401, 403, 429):
+            raise _FetchError("blocked", f"HTTP {status} from {url}")
+        if status == 404:
+            raise _FetchError("not_found", f"HTTP 404 from {url}")
+        if status >= 400:
+            # Remaining 4xx/5xx (500s, 502s, ...) — no dedicated class.
+            raise _FetchError("network", f"HTTP {status} from {url}")
+
+        # Content-type guard before touching the body: a PDF or image
+        # would only fail (or garbage) the trafilatura stage downstream,
+        # and "unsupported" is a more useful class than a parse error.
+        content_type = (resp.headers.get("content-type") or "").split(";", 1)[0]
+        content_type = content_type.strip().lower()
+        if content_type and not content_type.startswith(_SUPPORTED_CONTENT_TYPES):
+            raise _FetchError("unsupported", f"content type {content_type!r} from {url}")
+
+        if len(resp.content) > _MAX_RESPONSE_SIZE:
+            raise _FetchError(
+                "too_large",
+                f"response from {url} is {len(resp.content)} bytes, max {_MAX_RESPONSE_SIZE}",
+            )
+        return resp.text
 
     def _extract(
         self,

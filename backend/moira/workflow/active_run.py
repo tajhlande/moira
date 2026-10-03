@@ -626,6 +626,11 @@ class ActiveRun:
                 "result": payload.get("output", ""),
                 "duration_ms": payload.get("duration_ms", 0),
                 "success": payload.get("success", False),
+                # Failure reason, None on success. url_content failures
+                # carry a stable class prefix ("blocked:", "timeout:",
+                # ...) — the only record of WHY a fetch failed, since
+                # output is empty on failure.
+                "error": payload.get("error"),
                 # Attribution: which evidence request this call served.
                 # Absent for unattributed calls (research pops request_id
                 # out of args before execution, so it only survives here).

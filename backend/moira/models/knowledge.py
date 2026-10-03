@@ -226,6 +226,18 @@ class ExecutionState(TypedDict):
     # identical queries return ~the same results regardless of context
     # reset. Phase 4a of planning-freedom.
     issued_queries: list[str]
+    # Hosts that refused a url_content fetch with 401/403/429 (the
+    # "blocked:" failure class). Run-scoped: seeded from state at
+    # research() entry, appended when a real fetch is refused, and
+    # consulted before executing url_content calls — sibling URLs on a
+    # refused host are intercepted without executing.
+    blocked_hosts: list[str]
+    # Compact loop outcome of the latest research pass:
+    # {"rounds": int, "exhausted_rounds": bool, "stalled": bool}.
+    # Written by research for state consumers (the retrieval harness
+    # reads it from final_state); the full round log lives in
+    # workflow_steps.detail.
+    research_loop: dict
     # Structural per-pass progress signal written by the research node:
     # {"new_facts": int, "stalled": bool}. Recomputed fresh each pass.
     # The graph routers consume "stalled" to override retry

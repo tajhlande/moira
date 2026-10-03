@@ -22,6 +22,7 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, cast
+from urllib.parse import urlparse
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
@@ -514,10 +515,23 @@ def _validate_and_filter_calls(
     return valid_calls, [c.name for c in rejected]
 
 
+def _url_host(url: str) -> str:
+    """Extract the hostname from a URL, "" when unparseable.
+
+    Used by the blocked-host memory: a 401/403/429 refusal is host
+    policy, not URL policy, so the whole host is benched for the run.
+    """
+    try:
+        return urlparse(url).hostname or ""
+    except ValueError:
+        return ""
+
+
 def _partition_url_content_calls(
     valid_calls: list[ToolCall],
     fetched_urls: dict[str, dict[str, Any]],
     citations: list[Citation],
+    blocked_hosts: list[str] | None = None,
 ) -> tuple[list[ToolCall], list[tuple[ToolCall, dict[str, Any]]]]:
     """Split url_content calls into those to execute vs. synthesize.
 
@@ -536,6 +550,14 @@ def _partition_url_content_calls(
       failures as permanent — paywalled and JS-rendered sites will fail
       again on retry, so re-attempting them only wastes budget.
 
+    - **Host blocked this run:** when the URL's host is in
+      ``blocked_hosts`` (a host that returned a ``blocked:`` failure —
+      401/403/429 — earlier in this run). The refusal is host policy,
+      so sibling URLs on that host are intercepted too, before any
+      HTTP call is made. Run-scoped memory: the list is seeded from
+      execution_state at research() entry, so a host refused in an
+      earlier pass stays benched.
+
     Non-url_content calls are never deduped.
 
     Returns ``(calls_to_execute, synthetics)`` where ``synthetics`` is a
@@ -544,6 +566,7 @@ def _partition_url_content_calls(
     """
     to_execute: list[ToolCall] = []
     synthetics: list[tuple[ToolCall, dict[str, Any]]] = []
+    blocked = blocked_hosts or []
     for call in valid_calls:
         if call.name == _URL_CONTENT_TOOL_NAME:
             url = (call.arguments.get("url") or "").strip()
@@ -563,6 +586,11 @@ def _partition_url_content_calls(
                 else:
                     # Previously failed — synthesize failure
                     synthetics.append((call, info))
+                    continue
+            else:
+                host = _url_host(url) if url else ""
+                if host and host in blocked:
+                    synthetics.append((call, {"status": "host_blocked", "host": host}))
                     continue
         to_execute.append(call)
     return to_execute, synthetics
@@ -589,9 +617,30 @@ def _build_synthetic_url_result(
       ``success=False``. :func:`_process_execution_results` will route
       this through the zero-results branch, surfacing the prior error
       in the summary so the model knows why the URL is blocked.
+
+    - **Host blocked this run:** the URL's host refused an earlier
+      fetch with 401/403/429. Sibling URLs on that host are intercepted
+      without executing — the refusal is host policy. Marked synthetic
+      so the call costs no budget.
     """
     url = (call.arguments.get("url") or "").strip()
     status = info.get("status")
+
+    if status == "host_blocked":
+        host = info.get("host") or _url_host(url) or "this host"
+        return ToolResult(
+            tool_name=_URL_CONTENT_TOOL_NAME,
+            output=(
+                f"A fetch to {host} was refused earlier in this run "
+                "(HTTP 401/403/429 — the host blocks automated fetches). "
+                "Other URLs on that host will be refused too; use a "
+                "different site or search for the information another way."
+            ),
+            success=False,
+            duration_ms=0,
+            error=f"blocked: host {host} refused an earlier fetch this run",
+            metadata={"results": [], "synthetic": True, "host_blocked": True},
+        )
 
     if status == "success":
         cit_id = info.get("cit_id")
@@ -720,14 +769,16 @@ async def _execute_with_url_dedup(
     executor: ToolExecutor,
     citations: list[Citation],
     call_counts: dict[str, int],
+    blocked_hosts: list[str] | None = None,
 ) -> list[ToolResult]:
     """Execute tool calls, deduping url_content on already-fetched URLs.
 
     Partitioning happens after ``_validate_and_filter_calls`` has already
     incremented ``call_counts`` for every accepted call. This function
-    decrements the count for deduped calls so the per-run and per-step
-    limits reflect only actual executions — a deduped call is free from
-    a budgeting perspective.
+    decrements the count for deduped calls (including host-blocked
+    interceptions) so the per-run and per-step limits reflect only actual
+    executions — a deduped or intercepted call is free from a budgeting
+    perspective.
 
     Returns results in the same order as ``valid_calls``. Synthetic
     :class:`ToolResult` objects fill in for deduped calls so downstream
@@ -735,7 +786,7 @@ async def _execute_with_url_dedup(
     formatting) sees a result for every call the model emitted.
     """
     calls_to_execute, synthetics = _partition_url_content_calls(
-        valid_calls, fetched_urls, citations
+        valid_calls, fetched_urls, citations, blocked_hosts=blocked_hosts
     )
 
     # Decrement call_counts for deduped calls. _validate_and_filter_calls
@@ -775,6 +826,7 @@ async def _execute_tools(
     citations: list[Citation],
     call_counts: dict[str, int],
     issued_queries: list[str] | None = None,
+    blocked_hosts: list[str] | None = None,
 ) -> list[ToolResult]:
     """Execute tool calls with dupe interception and recall/url dedup.
 
@@ -842,7 +894,12 @@ async def _execute_tools(
     # Execute non-recall calls through url_content dedup + executor
     if batch_calls:
         results = await _execute_with_url_dedup(
-            batch_calls, fetched_urls, executor, citations, call_counts
+            batch_calls,
+            fetched_urls,
+            executor,
+            citations,
+            call_counts,
+            blocked_hosts=blocked_hosts,
         )
         results_by_id = {c.id: r for c, r in zip(batch_calls, results)}
     else:
@@ -888,6 +945,7 @@ def _update_fetched_urls(
     results: list[ToolResult],
     valid_calls: list[ToolCall],
     seen_urls: dict[str, str],
+    blocked_hosts: list[str] | None = None,
 ) -> None:
     """Record url_content outcomes for future dedup decisions.
 
@@ -898,6 +956,13 @@ def _update_fetched_urls(
 
     Synthetic results are skipped — they're already tracked in
     ``fetched_urls`` (that's why they were deduped).
+
+    When ``blocked_hosts`` is provided, a real (non-synthetic) failure
+    whose error carries the ``blocked:`` class prefix (see
+    url_content's failure classification) appends the URL's host to the
+    run-scoped blocked-host list. The list is owned by research() and
+    persisted in execution_state — hosts blocked in earlier research
+    passes stay benched for the whole run.
     """
     for result, call in zip(results, valid_calls):
         if call.name != _URL_CONTENT_TOOL_NAME:
@@ -905,6 +970,23 @@ def _update_fetched_urls(
         if result.metadata.get("synthetic"):
             continue
         url = (call.arguments.get("url") or "").strip()
+        # Host-level memory: a 401/403/429 refusal is host policy, so
+        # bench the whole host for the remainder of the run. Only real
+        # executions reach here (synthetic interceptions are skipped
+        # above), so the list never grows from an interception itself.
+        if (
+            blocked_hosts is not None
+            and not result.success
+            and (result.error or "").startswith("blocked:")
+        ):
+            host = _url_host(url)
+            if host and host not in blocked_hosts:
+                blocked_hosts.append(host)
+                logger.info(
+                    "RESEARCH: host %s refused a fetch (401/403/429) — subsequent "
+                    "url_content calls to it will be intercepted this run",
+                    host,
+                )
         if not url or url in fetched_urls:
             continue
         cit_id = seen_urls.get(url) if result.success else None
@@ -1399,6 +1481,11 @@ def _process_execution_results(
                     "output": _truncate_for_display(result.output),
                     "duration_ms": result.duration_ms,
                     "success": result.success,
+                    # Failure reason (None on success) — url_content
+                    # errors carry a stable class prefix ("blocked:",
+                    # "timeout:", ...) so persisted forensics and the
+                    # model feedback can tell refusal from timeout.
+                    "error": result.error,
                     "node": NODE_NAME,
                     # Reserved side-channel keys (full_body) never reach
                     # the stream — they can dwarf the display payload.
@@ -1424,6 +1511,7 @@ def _process_execution_results(
                     "output": result.output[:_SNIPPET_MAX_LENGTH] if result.output else "",
                     "duration_ms": result.duration_ms,
                     "success": result.success,
+                    "error": result.error,
                     "metadata": _strip_reserved_metadata(result.metadata),
                     "request_id": rid,
                 }
@@ -1490,11 +1578,19 @@ def _process_execution_results(
                 )
             if not structured:
                 # Tool returned structured metadata but zero results (e.g.,
-                # web_search with all engines suspended).  Log the call
-                # without creating a noise citation.
+                # web_search with all engines suspended, or a failed
+                # url_content fetch).  Log the call without creating a
+                # noise citation. Failures surface their error string so
+                # the model can tell a host refusal ("blocked: HTTP 403")
+                # from a timeout and steer accordingly.
                 status = "SUCCESS" if result.success else "FAILED"
+                fail_note = (
+                    f" ({result.error[:_SNIPPET_MAX_LENGTH]})"
+                    if not result.success and result.error
+                    else ""
+                )
                 tool_summary_parts.append(
-                    f"Tool: {name}\nStatus: {status}\n"
+                    f"Tool: {name}\nStatus: {status}{fail_note}\n"
                     f"Result: {result.output[:_SNIPPET_MAX_LENGTH] if result.output else ''}"
                 )
         else:
@@ -1510,8 +1606,13 @@ def _process_execution_results(
                 )
             )
             status = "SUCCESS" if result.success else "FAILED"
+            fail_note = (
+                f" ({result.error[:_SNIPPET_MAX_LENGTH]})"
+                if not result.success and result.error
+                else ""
+            )
             tool_summary_parts.append(
-                f"[{cit_id}] Tool: {name}\nStatus: {status}\nResult:\n"
+                f"[{cit_id}] Tool: {name}\nStatus: {status}{fail_note}\nResult:\n"
                 # Feedback cap applies here too: Path B stores the full output
                 # in the citation, so the model can recall the rest.
                 f"{_cap_feedback_body(result.output, cit_id)}"
@@ -1524,6 +1625,7 @@ def _process_execution_results(
                 "output": result.output[:_SNIPPET_MAX_LENGTH] if result.output else "",
                 "duration_ms": result.duration_ms,
                 "success": result.success,
+                "error": result.error,
                 "metadata": _strip_reserved_metadata(result.metadata),
                 "request_id": rid,
             }
@@ -2147,6 +2249,7 @@ async def _run_native_tool_loop(
     fetched_urls: dict[str, dict[str, Any]] | None = None,
     request_attempts: dict[str, list[dict]] | None = None,
     issued_queries: list[str] | None = None,
+    blocked_hosts: list[str] | None = None,
     run_id: str = "",
     query_writer: _QueryWriterContext | None = None,
 ) -> _LoopResult:
@@ -2242,6 +2345,7 @@ async def _run_native_tool_loop(
                 citations,
                 call_counts,
                 issued_queries=issued_queries,
+                blocked_hosts=blocked_hosts,
             )
         except Exception as e:
             logger.error("Tool execution batch error: %s", e, exc_info=True)
@@ -2269,7 +2373,9 @@ async def _run_native_tool_loop(
         # Record url_content outcomes for future dedup. Runs after
         # _process_execution_results so seen_urls is populated with the
         # citation IDs that successful fetches produced.
-        _update_fetched_urls(fetched_urls, results, valid_calls, seen_urls)
+        _update_fetched_urls(
+            fetched_urls, results, valid_calls, seen_urls, blocked_hosts=blocked_hosts
+        )
 
         # Feed results back using adapter message format so the model
         # sees its own tool calls and the corresponding results.
@@ -2332,6 +2438,7 @@ async def _run_text_tool_loop(
     fetched_urls: dict[str, dict[str, Any]] | None = None,
     request_attempts: dict[str, list[dict]] | None = None,
     issued_queries: list[str] | None = None,
+    blocked_hosts: list[str] | None = None,
     run_id: str = "",
     query_writer: _QueryWriterContext | None = None,
 ) -> _LoopResult:
@@ -2511,6 +2618,7 @@ async def _run_text_tool_loop(
                 citations,
                 call_counts,
                 issued_queries=issued_queries,
+                blocked_hosts=blocked_hosts,
             )
         except Exception as e:
             logger.error("Tool execution batch error: %s", e, exc_info=True)
@@ -2537,7 +2645,9 @@ async def _run_text_tool_loop(
         )
 
         # Record url_content outcomes for future dedup
-        _update_fetched_urls(fetched_urls, results, valid_calls, seen_urls)
+        _update_fetched_urls(
+            fetched_urls, results, valid_calls, seen_urls, blocked_hosts=blocked_hosts
+        )
 
         # Feed results back to model for next round
         tool_summary = "\n\n---\n\n".join(tool_summary_parts)
@@ -2651,6 +2761,13 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
     # returns ~the same results regardless of context reset, so this list
     # (unlike the recall dedup) is deliberately not batch- or pass-scoped.
     issued_queries: list[str] = list(es.get("issued_queries") or [])
+
+    # Run-scoped blocked-host memory: hosts that refused a fetch with
+    # 401/403/429 (url_content's "blocked:" failure class). Sibling URLs
+    # on a refused host are intercepted before execution for the rest of
+    # the run — the refusal is host policy, and retrying sibling URLs
+    # only burns budget on failures the model has already seen.
+    blocked_hosts: list[str] = list(es.get("blocked_hosts") or [])
 
     # Get tool executor
     from moira.service_setup import service_provider
@@ -2830,6 +2947,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             fetched_urls=_fetched_urls,
             request_attempts=request_attempts,
             issued_queries=issued_queries,
+            blocked_hosts=blocked_hosts,
             run_id=run_id,
             query_writer=query_writer_ctx,
         )
@@ -2857,6 +2975,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             fetched_urls=_fetched_urls,
             request_attempts=request_attempts,
             issued_queries=issued_queries,
+            blocked_hosts=blocked_hosts,
             run_id=run_id,
             query_writer=query_writer_ctx,
         )
@@ -3010,6 +3129,7 @@ async def research(state: ResearchState, config: RunnableConfig) -> dict:
             "total_tool_cost_consumed": total_tool_cost,
             "request_attempts": request_attempts,
             "issued_queries": issued_queries,
+            "blocked_hosts": blocked_hosts,
             "research_progress": research_progress,
             # Compact loop outcome for state consumers (the retrieval
             # harness reads this from final_state; detail goes only to

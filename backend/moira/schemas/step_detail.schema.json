@@ -21,7 +21,7 @@
     },
     "tool_result": {
       "type": "object",
-      "description": "One executed (or synthetically rejected) tool call. The canonical persisted shape uses 'result' (written by active_run's tool_result handler; a truncated preview). The node's internal log uses 'output' instead and appears only in round-error payloads — hence the anyOf. request_id is the echoed evidence-request id — null for model-initiated supplementary calls.",
+      "description": "One executed (or synthetically rejected) tool call. The canonical persisted shape uses 'result' (written by active_run's tool_result handler; a truncated preview). The node's internal log uses 'output' instead and appears only in round-error payloads — hence the anyOf. request_id is the echoed evidence-request id — null for model-initiated supplementary calls. error carries the failure reason (null/absent on success and on legacy rows); url_content failures prefix it with a stable class ('blocked:', 'timeout:', ...).",
       "required": ["tool", "args", "duration_ms", "success"],
       "anyOf": [{"required": ["result"]}, {"required": ["output"]}],
       "properties": {
@@ -31,6 +31,7 @@
         "output": {"type": "string"},
         "duration_ms": {"type": "number"},
         "success": {"type": "boolean"},
+        "error": {"type": ["string", "null"]},
         "metadata": {"type": ["object", "null"]},
         "request_id": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/request_id"}]}
       }

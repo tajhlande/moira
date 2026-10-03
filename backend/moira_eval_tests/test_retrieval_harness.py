@@ -133,6 +133,7 @@ def _canned_repeat(
     budget_limit=None,
     budget_consumed=None,
     unattributed=0,
+    failure_classes=None,
 ):
     counts = {
         "web_search_calls": web_search_calls,
@@ -141,6 +142,10 @@ def _canned_repeat(
         "total_tool_calls": web_search_calls + url_content_calls,
         "unattributed_web_search_calls": unattributed,
     }
+    # None = legacy artifact predating failure classification; the
+    # summary then sees zeros for every class.
+    if failure_classes is not None:
+        counts["url_content_failure_classes"] = failure_classes
     repeat = {
         "facts": [_fact(fid) for fid in fact_scores],
         "fact_scores": fact_scores,
@@ -837,6 +842,26 @@ class TestHarnessMetrics:
         assert summary["url_content_failures"]["mean"] == pytest.approx(0.5)
         assert summary["url_content_failures"]["sd"] > 0
 
+    def test_summary_breaks_failures_down_by_class(self):
+        """url_content_failures_{class} fields aggregate the per-class
+        counts; classes absent from a repeat contribute 0 (mean over all
+        repeats), and legacy repeats without classification data
+        contribute zeros rather than None — the per-class columns always
+        resolve for CSV consumers."""
+        repeat1 = _canned_repeat({"f1": _score()}, failure_classes={"blocked": 2, "other": 1})
+        repeat2 = _canned_repeat({"f1": _score()}, failure_classes={"timeout": 1})
+        summary = harness_recall_summary([repeat1, repeat2])
+        assert summary["url_content_failures_blocked"]["mean"] == pytest.approx(1.0)
+        assert summary["url_content_failures_timeout"]["mean"] == pytest.approx(0.5)
+        assert summary["url_content_failures_other"]["mean"] == pytest.approx(0.5)
+        assert summary["url_content_failures_parse"]["mean"] == pytest.approx(0.0)
+
+        # Legacy repeat: failures recorded, no class data.
+        legacy = _canned_repeat({"f1": _score()}, url_content_failures=3)
+        legacy_summary = harness_recall_summary([legacy])
+        assert legacy_summary["url_content_failures"]["mean"] == pytest.approx(3.0)
+        assert legacy_summary["url_content_failures_blocked"] == {"mean": 0.0, "sd": 0.0}
+
     def test_summary_single_repeat_has_zero_sd(self):
         repeat = _canned_repeat({"f1": _score(present=True, found_at_k=1, queries=1)})
         summary = harness_recall_summary([repeat])
@@ -930,6 +955,8 @@ class TestBuildRepeatArtifact:
             "web_search_calls": 1,
             "url_content_calls": 2,
             "url_content_failures": 1,
+            # The unprefixed legacy error string lands in "other".
+            "url_content_failure_classes": {"other": 1},
             "total_tool_calls": 3,
             # q1 is attributed via r1's attempt ledger (the deduped
             # attempt still counts), so nothing is unattributed here.
@@ -939,6 +966,40 @@ class TestBuildRepeatArtifact:
         assert artifact["duplicate_queries_intercepted"] == 1
         assert artifact["citations"][0]["content_chars"] == 10
         assert artifact["facts"][0]["status"] == "unverified"
+
+    def test_failure_classes_parsed_from_error_prefixes(self):
+        """Failed url_content calls are classified by the stable prefix in
+        their error string — blocked hosts, timeouts, ... — so the CSV can
+        break the failure rate down by class (Step 3 gate). Non-url_content
+        failures are ignored."""
+        final_state = {"knowledge": {}, "execution_state": {}}
+        recorded = [
+            {"tool": "url_content", "success": True, "error": None},
+            {
+                "tool": "url_content",
+                "success": False,
+                "error": "blocked: HTTP 403 from https://www.bls.gov/x",
+            },
+            {
+                "tool": "url_content",
+                "success": False,
+                "error": "blocked: HTTP 429 from https://www.bls.gov/y",
+            },
+            {"tool": "url_content", "success": False, "error": "timeout: timed out"},
+            {"tool": "url_content", "success": False, "error": "not_found: HTTP 404"},
+            # Unprefixed (legacy) error — bucketed as "other".
+            {"tool": "url_content", "success": False, "error": "Failed to fetch u: boom"},
+            # web_search failures don't enter the url_content breakdown.
+            {"tool": "web_search", "success": False, "error": "blocked: whatever"},
+        ]
+        artifact = build_repeat_artifact(final_state, recorded, 0)
+        assert artifact["counts"]["url_content_failures"] == 5
+        assert artifact["counts"]["url_content_failure_classes"] == {
+            "blocked": 2,
+            "timeout": 1,
+            "not_found": 1,
+            "other": 1,
+        }
 
 
 # ---------------------------------------------------------------------------
