@@ -13,12 +13,17 @@
 
 > **Superseded sequencing (2026-10-01):** this plan will not be completed
 > as written. Phases 1–3 stand as done (the query-writer stays behind its
-> default-off flag). Phases 4, 5 and 7 are paused: they improve queried
-> recall for request-attributed calls, but the Phase 1 baseline shows
-> coverage is the binding factor, and coverage is being addressed by
-> giving the research agent more freedom to choose its actions (a
-> research-agency plan on main). Phases 6 and 8 carry forward. Revised
-> order and new harness work:
+> default-off flag). Phases 4, 5 and 7 are parked (2026-10-03): they
+> improve queried recall for request-attributed calls, but the Phase 1
+> baseline shows coverage is the binding factor, and coverage is being
+> addressed by giving the research agent more freedom to choose its
+> actions (a research-agency plan on main). Their designs live in
+> [parked/query-writer-register-machinery.md](parked/query-writer-register-machinery.md)
+> as candidate internals of research-agency Phase 4's scoped sub-loop;
+> the phase sections below are stubs. Narrative mentions of Phases 4/5/7
+> in the Phase 1–3 notes below are historical record. Phase 6 carried
+> forward (deferred pending research-agency Phase 1). Phase 8 landed as
+> amended-plan Step 2 (2026-10-02). Revised order and new harness work:
 > [retrieval-quality-amended.md](retrieval-quality-amended.md). Phase
 > detail below remains the mechanism reference.
 
@@ -30,20 +35,21 @@
 | 2a | Depth rendering + serialization | `depth` survives snapshots; retry table + UI badges show snippet/page | **Complete** (2026-09-17) |
 | 2b | Source-content store + material classes | Fetched bodies stored beyond the serving cap; class upgrades; 4-class badges in UI | **Complete** (2026-09-17) |
 | 3 | Delegated query-writer pass | Harness A/B: query-writer vs freeform on same decomposition | **Gate run complete** (2026-09-18: null macro result — see implementation notes; register enforcement extracted as Phase 4) |
-| 4 | Register-enforced query generation | ≥2 distinct registers per fact set enforced in code; register distribution reported alongside recall | Not started |
-| 5 | Per-fact fan-out + fact-type templates | Fan-out variant measured by harness; budget watch | Not started |
-| 6 | Passage-level retrieval | web_search returns ranked passages; recall@k lift vs Phase-1 baseline | Not started |
-| 7 | Within-run feedback memory | Zero-yield queries force register change; PRF reformulation; harness validates | Not started |
-| 8 | Source-store lifecycle (retention/eviction) | `source_contents` size stays bounded under a configurable policy; fresh runs unaffected | Not started |
+| 4 | Register-enforced query generation | ≥2 distinct registers per fact set enforced in code; register distribution reported alongside recall | **Parked** (2026-10-03) — [parked/query-writer-register-machinery.md](parked/query-writer-register-machinery.md) |
+| 5 | Per-fact fan-out + fact-type templates | Fan-out variant measured by harness; budget watch | **Parked** (2026-10-03) — [parked/query-writer-register-machinery.md](parked/query-writer-register-machinery.md) |
+| 6 | Passage-level retrieval | web_search returns ranked passages; recall@k lift vs Phase-1 baseline | Deferred (amended-plan Step 5 — pending research-agency Phase 1) |
+| 7 | Within-run feedback memory | Zero-yield queries force register change; PRF reformulation; harness validates | **Parked** (2026-10-03) — [parked/query-writer-register-machinery.md](parked/query-writer-register-machinery.md) |
+| 8 | Source-store lifecycle (retention/eviction) | `source_contents` size stays bounded under a configurable policy; fresh runs unaffected | **Complete** (2026-10-02, landed as amended-plan Step 2) |
 
-Phases 1 and 2 are independent and can proceed in parallel. Phase 3
-depends on 1 (baseline). Phase 4 (register enforcement) depends on 3.
-Phase 5 (fan-out) depends on 4 — fanning out a single-register variant
-set would just buy more of the same miss. Phase 6 depends on 2b (store
-hydration). Phase 7 depends on 3/4 (the writer is the consumer). Phase
-8 is store hygiene: it depends only on 2b and can land at any
-point — it should land before long-running use makes unbounded growth a
-real problem.
+Current state (2026-10-03): Phases 1–3 are complete. Phase 8 landed as
+amended-plan Step 2. Phase 6 is deferred (amended-plan Step 5, pending
+research-agency Phase 1 results — it needs Phase 2b store hydration,
+which is built). Phases 4, 5 and 7 are parked; if revived, their internal
+ordering still holds (register enforcement before fan-out — fanning out
+a single-register variant set would just buy more of the same miss — and
+the writer hook is the consumer of feedback memory), with the revived
+entry point being research-agency Phase 4's director choosing which
+facts get the sub-loop.
 
 ## Grounding: what the code actually does
 
@@ -554,77 +560,35 @@ review failure) would retrieve. Full-sweep A/B gate run pending.
 - The Phase-3 gate: **run complete** (2026-09-18, results above — live
   model + SearXNG, same repeat count as the freeform baseline).
 
-## Phase 4 — Register-enforced query generation
+## Phase 4 — Register-enforced query generation (parked)
 
 **Goal:** variant sets are register-diverse by construction — enforced in
 code, not prompt-hope. Extracted from the Phase-3 gate (2026-09-18): the
-writer hook fired on ~85% of attributed calls across the sweep, but
-every rewrite came back in the `technical` register (102/102) — the
-prompt's three-register contract did not survive contact with the model.
+writer hook fired on ~85% of attributed calls across the sweep, but every
+rewrite came back in the `technical` register (102/102) — the prompt's
+three-register contract did not survive contact with the model.
 
-- **Slot assignment is code's job:** the hook assigns 2–3 distinct
-  registers per fact from the fact-type template table
-  (retrieval-quality.md §"Fact-type query templates": numeric/spec →
-  spec-sheet + product-review registers, causal/medical → scholarly,
-  cost/comparative → forum/"vs" colloquial, event/historical → news).
-  The writer does not choose registers; it fills them.
-- **Fill-and-check:** the writer prompt passes the assigned slots;
-  the response validator (`_normalize_response` in
-  `backend/moira/workflow/nodes/query_writer.py`) requires one query
-  per assigned register. A missing or off-register slot falls back to
-  a deterministic templated skeleton built from
-  `fact_needed`/`subject`; duplicate registers collapse. Compliance is
-  a structural property of the output, never an assumption.
-- **No execution change:** one query per fact still executes (first
-  variant); `queued_variants` still queue for Phase 5. The rewrite
-  ledger already records `register` per variant — it becomes a gate
-  metric (register distribution), reported alongside recall by the
-  harness.
-- **Tests:** assignment is table-driven by fact type; skeleton fallback
-  when the writer omits or echoes slots; off-register
-  relabel-or-drop; distribution shows ≥ 2 distinct registers per fact
-  set. Harness variant `query-writer-enforced` (the label exists for
-  the A/B; fold into `query-writer` if it wins).
-- **Design note:** deciding whether to classify fact type in code
-  (keyword heuristics on `fact_needed`) or to ask the writer for it
-  with the assignment — code keeps it deterministic; the decomposition
-  node already emits `subject` that can anchor it.
+**Parked** (2026-10-03, amended-plan Step 4): improves queried recall,
+which is not the binding factor. Full design (code-assigned register
+slots from the fact-type template table, `_normalize_response`
+fill-and-check, skeleton fallback, `query-writer-enforced` harness
+variant) preserved in
+[parked/query-writer-register-machinery.md](parked/query-writer-register-machinery.md)
+as a candidate internal of research-agency Phase 4's scoped sub-loop.
 
-**Gate:** enforced vs current query-writer on the same question set,
-same judge (glm-5.2): register distribution must show ≥ 2 registers in
-real sweeps, recall@5 compared against the 2026-09-18 query-writer
-numbers. Reads two ways: enforcement alone lifts recall → Phase 5
-fan-out's extra-search trade may be unnecessary; diversity moves
-nothing → the miss is ranking/snippets, and Phases 5/6 carry the
-burden.
-
-## Phase 5 — Per-fact fan-out + fact-type templates
+## Phase 5 — Per-fact fan-out + fact-type templates (parked)
 
 **Goal:** issue all register variants per fact; a fact sinks only if every
 register misses.
 
-- In the Phase-3 hook: when `research.fanout_enabled`, execute all
-  variants (each a real web_search call — costs and the 10-per-run limit
-  apply honestly). The dupe guard must compare *across variants*: variants
-  are exempt from `_partition_web_search_dupes` against each other by
-  design (they are deliberately different phrasings), but still deduped
-  against `issued_queries` from prior rounds.
-- Result merge: existing URL merge in `_find_or_merge_citation`
-  (`research.py:1688`) already unifies duplicates; per-fact attribution
-  extends `_record_request_attempt` with per-variant outcomes.
-- Budget interplay: fan-out trades breadth for depth under the same
-  `budget.default_limit` (150) and web_search `call_limit_per_run` (10).
-  The harness measures whether to raise the limit or keep breadth — no
-  default change until numbers say so.
-- Templates: the fact-type → registers table now feeds code-enforced
-  slot assignment (Phase 4); Phase 5's addition is *execution* of the
-  filled variant set, not more prompt surface.
-- **Tests:** hook issues N variants once each; cross-variant exemption +
-  prior-round dedup; merge behavior; budget accounting (N calls charged).
-  Harness variant `fanout`.
-
-**Gate:** harness variant `fanout` vs `query-writer` on the question set:
-recall lift per additional search spent.
+**Parked** (2026-10-03, amended-plan Step 4): which facts deserve fan-out
+depth is a planning choice, not a config flag — in the research-agency
+plan this shape belongs inside the director's scoped sub-loop
+([research-agency.md](research-agency.md) Phase 4; also sketched as
+grind-mode Stage 2 in [parked/grind-mode.md](parked/grind-mode.md)).
+Full design (cross-variant dupe exemption, per-variant attribution,
+budget trade, `fanout` harness variant) preserved in
+[parked/query-writer-register-machinery.md](parked/query-writer-register-machinery.md).
 
 ## Phase 6 — Passage-level retrieval
 
@@ -663,34 +627,17 @@ overhaul. **Requires Phase 2b** (fetched bodies must land in the store).
 **Gate:** recall@k(large) lift over Phase-1 baseline on ≥ 2 questions;
 cost per resolved fact reported.
 
-## Phase 7 — Within-run feedback memory
+## Phase 7 — Within-run feedback memory (parked)
 
 **Goal:** mechanical feedback instead of re-rolling guesses.
 
-- **Query outcome memory:** `_record_request_attempt` data already
-  exists; feed `queries_tried` + per-query yield into the query-writer
-  input (Phase 3 hook reads the request's ledger). Mechanical rule in the
-  writer: a zero-yield register is not re-sampled for the same fact —
-  pick a different register (code-enforced choice from the template
-  table, not prompt-hope).
-- **Pseudo-relevance feedback:** on retry for a request with irrelevant
-  results, extract salient terms from whatever snippets returned
-  (TF-based, over the returned snippets only) and pass them as
-  `corpus_terms` to the writer — reformulate with the corpus's vocabulary.
-- **Fact-level provenance (UI parity):** facts resolved by a
-  query-writer/fan-out call carry the winning query + register in
-  `request_attempts`; serialize a compact `retrieved_via` hint on the
-  fact in `knowledge_summary()` and render it on fact rows in
-  `KnowledgePanel.vue`.
-- Cross-run query playbook stays deferred (retrieval-quality.md
-  §Deferred → parked list there).
-- **Tests:** writer input assembly from ledger; register-forcing rule;
-  PRF term extraction; provenance serialization + UI badge. Harness
-  variant `feedback` (repeats should show tighter variance, not just
-  higher mean).
-
-**Gate:** harness repeats: unresolved-fact variance shrinks vs Phase 3/5
-artifacts.
+**Parked** (2026-10-03, amended-plan Step 4): like Phase 4, it improves
+queried recall on facts that get searched at all. Full design (zero-yield
+register not re-sampled, TF-based pseudo-relevance feedback via
+`corpus_terms`, `retrieved_via` fact provenance + KnowledgePanel badge,
+`feedback` harness variant) preserved in
+[parked/query-writer-register-machinery.md](parked/query-writer-register-machinery.md)
+as a candidate internal of research-agency Phase 4's scoped sub-loop.
 
 ## Phase 8 — Source-store lifecycle (retention and eviction)
 
@@ -747,7 +694,7 @@ allows reduces the table to the cap (oldest evicted); recent runs'
 | Question | Default | Revisit when |
 |----------|---------|--------------|
 | Query-writer model: small model vs same model | Same model, separate cheap prompt (Phase 3) | Harness latency/cost numbers |
-| Fan-out vs 10-call ceiling | No limit change until harness says depth wins (Phase 5) | Phase 5 results |
+| Fan-out vs 10-call ceiling | Parked with Phase 5 (director's choice in research-agency Phase 4) | Research-agency Phase 4 implementation |
 | BM25 vs embeddings for passages | Inline BM25 (Phase 6) | Recall shortfall vs manual inspection |
 | Store body cap | 100K chars, `full` only when body fit (Phase 2b) | summarize-source.md scheduling |
 | Store retention policy | Max age + size cap sweep (Phase 8) | Observed growth rate; cross-run reuse debate |

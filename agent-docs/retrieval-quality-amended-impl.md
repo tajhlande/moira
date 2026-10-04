@@ -12,7 +12,7 @@
 | 1 | Research-agency observability (Fact.origin, stop-reason, unattributed/coverage_any in harness) | Freeform 7-question sweep ×3 reports new fields; becomes "before" numbers for research-agency Phase 1 | **Done** — implemented + gate run 2026-10-02 (989 backend / 277 eval tests, ruff clean); baseline table below |
 | 2 | Source-store retention/eviction | `source_contents` bounded under policy; eviction tests | **Done** — implemented 2026-10-02 (defaults: 30-day age, 500M-char cap; 1277 tests, ruff clean); live DB currently under both limits, first sweep is a no-op |
 | 3 | Fetch unblocking (failure classes, robots decision, blocked-host memory) | Failure rate vs 2026-09-14 baseline, broken down by class | **Code done + gate runs** 2026-10-03 (two trade-policy runs; classes/memory/error-persistence verified in the wild; failure-rate reduction not demonstrated — host-mix dominated, see Step 3 section) |
-| 4 | Park original Phases 4/5/7 (doc work) | parked/ entries + index.md updated | Not started |
+| 4 | Park original Phases 4/5/7 (doc work) | parked/ entries + index.md updated | **Done** 2026-10-03 — single parked doc `parked/query-writer-register-machinery.md` (one mechanism chain); plan doc + index updated |
 | 5 | Passage-level retrieval | — | **Deferred** (research-agency Phase 1 results first) |
 
 Steps run on the `retrieval-quality` branch and merge together. Step 1
@@ -323,9 +323,22 @@ a replacing API (FRED, already on that list).
 
 ---
 
-## Step 4 — Park original Phases 4/5/7 (doc work)
+## Step 4 — Park original Phases 4/5/7 (doc work) — Done (2026-10-03)
 
 No code changes. `research.query_writer_enabled` stays default-false.
+
+**Result:** all three phases parked as one mechanism chain in
+`agent-docs/parked/query-writer-register-machinery.md` (they share the
+writer-hook pipeline; Phase 5's "which facts get fan-out" decision is the
+director's scoped sub-loop — research-agency Phase 4 / grind-mode Stage 2
+— so a single entry keeps the dependency chain readable).
+retrieval-quality-plan.md: status table rows 4/5/7 marked parked with
+pointers, phase sections replaced by stubs (headings kept as anchors),
+Phase 6 row marked deferred, Phase 8 row marked complete (landed as
+Step 2), dependency paragraph and superseded-sequencing note rewritten,
+fan-out open-question row repointed. index.md parked table entry added.
+
+Original plan (for reference):
 
 - Move the designs (mechanism intact, per parking guidelines) from
   retrieval-quality-plan.md to `agent-docs/parked/`:
