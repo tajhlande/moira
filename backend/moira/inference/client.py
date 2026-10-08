@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 import httpx
@@ -11,6 +12,13 @@ from moira.inference.defaults import DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE
 from moira.tools.base import ToolCall, ToolDefinition
 
 logger = logging.getLogger(__name__)
+
+try:
+    __version__ = version("moira-backend")  # matches what is in pyproject.toml
+except PackageNotFoundError:  # running from a checkout without install
+    __version__ = "0.1.0+source"
+
+_DEFAULT_USER_AGENT = f"MOiRA/{__version__}"
 
 # llama-swap occasionally flaps transient gateway errors (502/503/504) mid-batch
 # — the upstream model server is momentarily unavailable. These are worth a
@@ -75,6 +83,7 @@ class InferenceClient:
     ):
         self._base_url = base_url.rstrip("/")
         self._headers: dict[str, str] = {}
+        self._headers["User-Agent"] = _DEFAULT_USER_AGENT
         if api_key:
             self._headers["Authorization"] = f"Bearer {api_key}"
         self._timeout = timeout
