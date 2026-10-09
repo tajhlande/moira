@@ -28,8 +28,11 @@ def _response(status: int, payload: dict | None = None) -> httpx.Response:
 
 
 def _client_with_responses(responses: list[httpx.Response]) -> InferenceClient:
-    """Build a started client whose HTTP layer replays the given responses."""
-    client = InferenceClient(base_url="http://test")
+    """Build a started client whose HTTP layer replays the given responses.
+
+    Streaming is disabled so these tests exercise the plain POST path;
+    streaming behavior is covered in test_inference_streaming.py."""
+    client = InferenceClient(base_url="http://test", stream=False)
     http = MagicMock()
     http.post = AsyncMock(side_effect=responses)
     client._client = http

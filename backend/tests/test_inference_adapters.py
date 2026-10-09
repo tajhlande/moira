@@ -230,6 +230,7 @@ class TestInferenceClientToolCalling:
         client = InferenceClient(
             base_url="http://localhost:8080/v1",
             provider_type="completions",
+            stream=False,
         )
 
         mock_response = MagicMock()
@@ -292,6 +293,7 @@ class TestInferenceClientToolCalling:
         client = InferenceClient(
             base_url="http://localhost:8080/v1",
             provider_type="completions",
+            stream=False,
         )
 
         mock_response = MagicMock()
